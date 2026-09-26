@@ -52,9 +52,15 @@ def _col_letter(index):
 	return letters
 
 
-def _inline_cell(ref, value, bold=False):
-	text = "" if value is None else str(value)
+def _is_number(value):
+	return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _cell(ref, value, bold=False):
 	style = ' s="1"' if bold else ""
+	if _is_number(value):
+		return f'<c r="{ref}"{style}><v>{value}</v></c>'
+	text = "" if value is None else str(value)
 	return f'<c r="{ref}" t="inlineStr"{style}><is><t xml:space="preserve">{escape(text)}</t></is></c>'
 
 
@@ -64,18 +70,36 @@ def _sheet_name(name):
 	return escape(cleaned)
 
 
-def build_xlsx_bytes(headers, rows, sheet_name="Report"):
+def _cols_xml(column_widths, column_count):
+	if not column_widths:
+		return ""
+	parts = []
+	for idx in range(column_count):
+		width = column_widths[idx] if idx < len(column_widths) else column_widths[-1]
+		try:
+			width = float(width)
+		except (TypeError, ValueError):
+			width = 14.0
+		parts.append(
+			f'<col min="{idx + 1}" max="{idx + 1}" width="{width}" customWidth="1"/>'
+		)
+	return f"<cols>{''.join(parts)}</cols>"
+
+
+def build_xlsx_bytes(headers, rows, sheet_name="Report", column_widths=None):
 	body = []
 	table = [list(headers or [])]
 	table.extend(list(row) for row in (rows or []))
+	column_count = max((len(row) for row in table), default=0)
 	for row_idx, row in enumerate(table, start=1):
 		cells = []
 		for col_idx, value in enumerate(row):
-			cells.append(_inline_cell(f"{_col_letter(col_idx)}{row_idx}", value, bold=row_idx == 1))
+			cells.append(_cell(f"{_col_letter(col_idx)}{row_idx}", value, bold=row_idx == 1))
 		body.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
 	sheet = (
 		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 		'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+		f"{_cols_xml(column_widths, column_count)}"
 		f"<sheetData>{''.join(body)}</sheetData>"
 		"</worksheet>"
 	)

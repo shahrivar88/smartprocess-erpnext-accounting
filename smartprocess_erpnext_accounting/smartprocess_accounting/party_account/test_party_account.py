@@ -2,6 +2,7 @@ import unittest
 import zipfile
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.balances import (
 	add_opening_sides,
@@ -36,6 +37,10 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resol
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import (
 	build_xlsx_bytes,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx import (
+	_table_from_ledger,
+	build_party_item_ledger_xlsx,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.pdf_html import (
 	build_pdf_html,
@@ -596,6 +601,246 @@ class TestResolvers(unittest.TestCase):
 		self.assertEqual(payload["resolver"], "generic")
 		self.assertEqual(payload["doctype"], "Stock Entry")
 		self.assertFalse(payload["can_open"])
+
+
+def _sample_ledger_data(party_line_title="قلم الف", currency="IRR", is_foreign=False):
+	company_currency = "IRR"
+	lines = [
+		{
+			"posting_date": "2026-09-01",
+			"source_label": "فاکتور فروش ACC-SINV-A",
+			"account": "بدهکاران - SP",
+			"description": "",
+			"title": party_line_title,
+			"qty": 2,
+			"rate": 100,
+			"debit_account": 200 if is_foreign else 0,
+			"credit_account": 0,
+			"running_account": 200 if is_foreign else 0,
+			"debit_base": 200 if not is_foreign else 17000000,
+			"credit_base": 0,
+			"running_base": 200 if not is_foreign else 17000000,
+		}
+	]
+	return {
+		"opening_account": 0,
+		"opening_base": 50,
+		"period_debit_account": 200 if is_foreign else 0,
+		"period_credit_account": 0,
+		"period_debit_base": lines[0]["debit_base"] + 50,
+		"period_credit_base": 0,
+		"closing_account": lines[0]["running_account"],
+		"closing_base": lines[0]["running_base"],
+		"company_currency": company_currency,
+		"account_currency": currency,
+		"is_foreign": is_foreign,
+		"account": None,
+		"lines": lines,
+	}
+
+
+class TestLedgerXlsxExport(unittest.TestCase):
+	def test_xlsx_uses_get_party_item_ledger_engine(self):
+		fake = _sample_ledger_data()
+		with (
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
+				return_value=fake,
+			) as mock_ledger,
+		):
+			result = build_party_item_ledger_xlsx(
+				"پردازش هوشمند",
+				"Customer",
+				"CUST-A",
+				from_date="2026-08-01",
+				to_date="2026-09-26",
+				currency="IRR",
+			)
+		mock_ledger.assert_called_once_with(
+			company="پردازش هوشمند",
+			party_type="Customer",
+			party="CUST-A",
+			account=None,
+			from_date="2026-08-01",
+			to_date="2026-09-26",
+			currency="IRR",
+		)
+		self.assertTrue(result["content"].startswith(b"PK"))
+		self.assertTrue(result["filename"].endswith(".xlsx"))
+		self.assertEqual(result["meta"]["opening_base"], 50)
+		self.assertEqual(result["meta"]["closing_base"], 200)
+		self.assertEqual(result["meta"]["line_count"], 1)
+		sheet = zipfile.ZipFile(BytesIO(result["content"])).read("xl/worksheets/sheet1.xml").decode("utf-8")
+		self.assertIn("قلم الف", sheet)
+		self.assertIn("فاکتور فروش ACC-SINV-A", sheet)
+
+	def test_customer_a_export_excludes_customer_b_data(self):
+		fake_a = _sample_ledger_data(party_line_title="ONLY-CUSTOMER-A")
+		with (
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
+				return_value=fake_a,
+			) as mock_ledger,
+		):
+			result = build_party_item_ledger_xlsx(
+				"Co",
+				"Customer",
+				"CUST-A",
+				from_date="2026-08-01",
+				to_date="2026-09-26",
+				currency="IRR",
+			)
+		self.assertEqual(mock_ledger.call_args.kwargs["party"], "CUST-A")
+		sheet = zipfile.ZipFile(BytesIO(result["content"])).read("xl/worksheets/sheet1.xml").decode("utf-8")
+		self.assertIn("ONLY-CUSTOMER-A", sheet)
+		self.assertNotIn("ONLY-CUSTOMER-B", sheet)
+		self.assertNotIn("CUST-B", sheet)
+
+	def test_date_range_and_currency_passed_through(self):
+		fake = _sample_ledger_data(currency="USD", is_foreign=True)
+		with (
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
+				return_value=fake,
+			) as mock_ledger,
+		):
+			result = build_party_item_ledger_xlsx(
+				"Co",
+				"Customer",
+				"CUST-A",
+				from_date="2026-01-01",
+				to_date="2026-03-31",
+				currency="USD",
+			)
+		kwargs = mock_ledger.call_args.kwargs
+		self.assertEqual(kwargs["from_date"], "2026-01-01")
+		self.assertEqual(kwargs["to_date"], "2026-03-31")
+		self.assertEqual(kwargs["currency"], "USD")
+		self.assertEqual(result["meta"]["currency"], "USD")
+		self.assertTrue(result["meta"]["is_foreign"])
+		headers, rows, _widths = _table_from_ledger(fake)
+		self.assertIn("بد USD", headers)
+		self.assertIn("بد IRR", headers)
+		self.assertEqual(rows[0][headers.index("مانده USD")], 200)
+		self.assertEqual(rows[0][headers.index("مانده در خط")], 17000000)
+
+	def test_requires_currency_or_account_no_silent_mix(self):
+		with (
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger"
+			) as mock_ledger,
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.frappe.throw",
+				side_effect=RuntimeError("need currency"),
+			),
+		):
+			with self.assertRaises(RuntimeError):
+				build_party_item_ledger_xlsx("Co", "Customer", "CUST-A", from_date="2026-01-01", to_date="2026-01-31")
+		mock_ledger.assert_not_called()
+
+	def test_numeric_cells_and_column_widths(self):
+		content = build_xlsx_bytes(
+			["عنوان", "بد"],
+			[["فاکتور", 1500000]],
+			column_widths=[20, 14],
+		)
+		sheet = zipfile.ZipFile(BytesIO(content)).read("xl/worksheets/sheet1.xml").decode("utf-8")
+		self.assertIn("<cols>", sheet)
+		self.assertIn("<v>1500000</v>", sheet)
+		self.assertIn("فاکتور", sheet)
+
+
+class TestFiscalYearPeriodRange(unittest.TestCase):
+	def test_fiscal_ytd_uses_year_start_not_january_first(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
+			get_current_fiscal_year_to_date,
+		)
+
+		fake_fy = SimpleNamespace(
+			name="1405",
+			year_start_date="2026-03-21",
+			year_end_date="2027-03-20",
+		)
+		with patch(
+			"erpnext.accounts.utils.get_fiscal_year",
+			return_value=fake_fy,
+		) as mock_fy:
+			from_date, to_date = get_current_fiscal_year_to_date("پردازش هوشمند", as_of_date="2026-09-26")
+		mock_fy.assert_called_once()
+		kwargs = mock_fy.call_args.kwargs
+		self.assertEqual(str(kwargs["date"]), "2026-09-26")
+		self.assertEqual(kwargs["company"], "پردازش هوشمند")
+		self.assertEqual(str(from_date), "2026-03-21")
+		self.assertEqual(str(to_date), "2026-09-26")
+		self.assertNotEqual(str(from_date), "2026-01-01")
+
+	def test_fiscal_ytd_to_date_is_as_of(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
+			get_current_fiscal_year_to_date,
+		)
+
+		fake_fy = SimpleNamespace(name="FY", year_start_date="2025-04-01", year_end_date="2026-03-31")
+		with patch("erpnext.accounts.utils.get_fiscal_year", return_value=fake_fy):
+			_from_date, to_date = get_current_fiscal_year_to_date("Co", as_of_date="2025-12-15")
+		self.assertEqual(str(to_date), "2025-12-15")
+
+	def test_non_calendar_fiscal_year_april_start(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
+			get_current_fiscal_year_to_date,
+		)
+
+		fake_fy = SimpleNamespace(name="2025-26", year_start_date="2025-04-01", year_end_date="2026-03-31")
+		with patch("erpnext.accounts.utils.get_fiscal_year", return_value=fake_fy):
+			from_date, to_date = get_current_fiscal_year_to_date("Co", as_of_date="2026-02-01")
+		self.assertEqual(str(from_date), "2025-04-01")
+		self.assertEqual(str(to_date), "2026-02-01")
+
+	def test_missing_fiscal_year_raises_no_guess(self):
+		from erpnext.accounts.utils import FiscalYearError
+
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
+			get_current_fiscal_year_to_date,
+		)
+
+		with (
+			patch(
+				"erpnext.accounts.utils.get_fiscal_year",
+				side_effect=FiscalYearError("not in any Fiscal Year"),
+			),
+			patch(
+				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges.frappe.throw",
+				side_effect=RuntimeError("no fy"),
+			) as throw,
+		):
+			with self.assertRaises(RuntimeError):
+				get_current_fiscal_year_to_date("Co", as_of_date="2026-09-26")
+		throw.assert_called_once()
+		message = throw.call_args.args[0]
+		self.assertIn("سال مالی", message)
 
 
 if __name__ == "__main__":
