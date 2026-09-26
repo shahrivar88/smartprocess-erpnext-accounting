@@ -1,0 +1,151 @@
+.sp-conversion-form .form-layout,
+.sp-conversion-form .form-page,
+.sp-conversion-form .form-column {
+	max-width: none;
+}
+
+.sp-conversion-form .form-column .frappe-control,
+.sp-conversion-form .form-column .control-input,
+.sp-conversion-form .form-column .control-value,
+.sp-conversion-form .form-column textarea {
+	max-width: none;
+	width: 100%;
+}
+
+.sp-conversion-form .form-section .section-body {
+	display: flex;
+	flex-wrap: wrap;
+}
+
+.sp-conversion-form .form-column.col-sm-6 {
+	flex: 0 0 50% !important;
+	width: 50% !important;
+	max-width: 50% !important;
+}
+
+.sp-conversion-form .form-column.col-sm-12 {
+	flex: 0 0 100%;
+	width: 100%;
+	max-width: 100%;
+}
+
+.sp-conversion-form .form-column.col-sm-4 {
+	flex: 0 0 33.333%;
+	width: 33.333%;
+	max-width: 33.333%;
+}
+
+.sp-conversion-form [data-fieldname="remarks"] textarea {
+	min-height: 52px !important;
+	height: 56px !important;
+}
+
+.sp-conversion-form .frappe-control[data-fieldname="conversion_rows"] > .form-group > .control-label,
+.sp-conversion-form .frappe-control[data-fieldname="conversion_rows"] .grid-field > .control-label,
+.sp-conversion-form [data-fieldname="conversion_rows"] > .form-group > .control-label {
+	display: none !important;
+}
+
+.sp-conversion-form .form-grid.sp-conversion-grid .grid-heading-row .grid-static-col,
+.sp-conversion-form .form-grid.sp-conversion-grid .grid-heading-row .static-area,
+.sp-conversion-grid .grid-heading-row .grid-static-col,
+.sp-conversion-grid .grid-heading-row .static-area {
+	text-align: center !important;
+	justify-content: center !important;
+}
+
+.sp-conversion-grid .form-grid,
+.sp-conversion-grid .grid-body,
+.sp-conversion-grid .rows,
+.sp-conversion-grid .grid-heading-row,
+.sp-conversion-grid .grid-row,
+.sp-conversion-grid .data-row {
+	width: 100% !important;
+	max-width: 100% !important;
+}
+
+.sp-conversion-grid .form-grid {
+	overflow-x: hidden !important;
+}
+
+.sp-conversion-grid .grid-heading-row,
+.sp-conversion-grid .grid-row .data-row,
+.sp-conversion-grid .grid-heading-row .data-row {
+	display: flex !important;
+	flex-wrap: nowrap !important;
+	align-items: stretch;
+}
+
+.sp-conversion-grid .row-check,
+.sp-conversion-grid .grid-row-check,
+.sp-conversion-grid .sortable-handle,
+.sp-conversion-grid .btn-open-row,
+.sp-conversion-grid .row-index,
+.sp-conversion-grid .grid-static-col.col-xs-1.row-index,
+.sp-conversion-grid .grid-append-row,
+.sp-conversion-grid .grid-footer,
+.sp-conversion-grid .data-row > .col:last-child:not([data-fieldname]) {
+	display: none !important;
+	width: 0 !important;
+	min-width: 0 !important;
+	flex: 0 0 0 !important;
+	padding: 0 !important;
+	margin: 0 !important;
+}
+
+.sp-conversion-grid .grid-static-col,
+.sp-conversion-grid .data-row > .col {
+	float: none !important;
+	flex: 1 1 0 !important;
+	width: auto !important;
+	max-width: none !important;
+	min-width: 0 !important;
+	padding-left: 6px !important;
+	padding-right: 6px !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="nature"] {
+	flex: 0 0 70px !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="account_currency"] {
+	flex: 0 0 52px !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="exchange_rate"] {
+	flex: 0 0 72px !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="party_type"] {
+	flex: 0 1 96px !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="account"] {
+	flex: 2.2 1 0 !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="party"] {
+	flex: 1.8 1 0 !important;
+}
+
+.sp-conversion-grid .grid-static-col[data-fieldname="amount"],
+.sp-conversion-grid .grid-static-col[data-fieldname="base_amount"] {
+	flex: 1.4 1 0 !important;
+}
+
+.sp-conversion-grid .grid-static-col .static-area,
+.sp-conversion-grid .grid-static-col .field-area,
+.sp-conversion-grid .grid-static-col .form-control,
+.sp-conversion-grid .grid-static-col input,
+.sp-conversion-grid .grid-static-col .link-field,
+.sp-conversion-grid .grid-static-col .awesomplete,
+.sp-conversion-grid .grid-static-col .awesomplete > input {
+	width: 100% !important;
+	max-width: none !important;
+}
+
+.sp-conversion-form [data-fieldname="total_debit"] .control-label,
+.sp-conversion-form [data-fieldname="total_credit"] .control-label,
+.sp-conversion-form [data-fieldname="difference"] .control-label {
+	white-space: nowrap;
+}

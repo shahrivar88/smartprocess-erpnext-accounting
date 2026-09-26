@@ -1,0 +1,12 @@
+*.pyc
+.env
+.env.*
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+node_modules/
+.graphify_python
+graphify-out/

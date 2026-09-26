@@ -1,0 +1,89 @@
+{
+ "app": "smartprocess_erpnext_accounting",
+ "charts": [],
+ "content": "[{\"id\":\"spa-header\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>حسابداری اسمارت پروسس</b></span>\",\"col\":12}},{\"id\":\"spa-shortcut-conversion\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"تبدیل\",\"col\":4}},{\"id\":\"spa-shortcut-explorer\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"گردش و مانده طرف حساب\",\"col\":4}},{\"id\":\"spa-card-docs\",\"type\":\"card\",\"data\":{\"card_name\":\"اسناد\",\"col\":4}}]",
+ "creation": "2026-09-25 00:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "accounting",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "حسابداری اسمارت پروسس",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "اسناد",
+   "link_count": 2,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "تبدیل",
+   "link_count": 0,
+   "link_to": "SmartProcess Currency Conversion",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "گردش و مانده طرف حساب",
+   "link_count": 0,
+   "link_to": "party-account-explorer",
+   "link_type": "Page",
+   "onboard": 1,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-25 13:10:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Accounting",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Auditor"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 30,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "تبدیل",
+   "link_to": "SmartProcess Currency Conversion",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "label": "گردش و مانده طرف حساب",
+   "link_to": "party-account-explorer",
+   "type": "Page"
+  }
+ ],
+ "title": "حسابداری اسمارت پروسس",
+ "type": "Workspace"
+}
