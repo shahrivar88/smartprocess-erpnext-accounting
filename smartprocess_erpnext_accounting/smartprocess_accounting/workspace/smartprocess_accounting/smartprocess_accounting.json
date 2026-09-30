@@ -1,89 +1,29 @@
 {
  "app": "smartprocess_erpnext_accounting",
  "charts": [],
- "content": "[{\"id\":\"spa-header\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>حسابداری اسمارت پروسس</b></span>\",\"col\":12}},{\"id\":\"spa-shortcut-conversion\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"تبدیل\",\"col\":4}},{\"id\":\"spa-shortcut-explorer\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"گردش و مانده طرف حساب\",\"col\":4}},{\"id\":\"spa-card-docs\",\"type\":\"card\",\"data\":{\"card_name\":\"اسناد\",\"col\":4}}]",
+ "content": "[{\"id\":\"spa-header\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>حسابداری اسمارت پروسس</b></span>\",\"col\":12}},{\"id\":\"spa-v2-document\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"اسناد حسابداری هوشمند\",\"col\":4}},{\"id\":\"spa-v2-mapping\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"حساب‌های ارزی طرف حساب\",\"col\":4}},{\"id\":\"spa-v2-intermediary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"واسطه‌های مالی\",\"col\":4}},{\"id\":\"spa-v2-card\",\"type\":\"card\",\"data\":{\"card_name\":\"نسخه ۲ (پیش‌نمونه)\",\"col\":6}},{\"id\":\"spa-legacy-card\",\"type\":\"card\",\"data\":{\"card_name\":\"ابزارهای فعلی\",\"col\":6}}]",
  "creation": "2026-09-25 00:00:00.000000",
- "custom_blocks": [],
- "docstatus": 0,
- "doctype": "Workspace",
- "for_user": "",
- "hide_custom": 0,
- "icon": "accounting",
- "idx": 0,
- "is_hidden": 0,
- "label": "حسابداری اسمارت پروسس",
+ "custom_blocks": [], "docstatus": 0, "doctype": "Workspace", "for_user": "", "hide_custom": 0,
+ "icon": "accounting", "idx": 0, "is_hidden": 0, "label": "حسابداری اسمارت پروسس",
  "links": [
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "اسناد",
-   "link_count": 2,
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "تبدیل",
-   "link_count": 0,
-   "link_to": "SmartProcess Currency Conversion",
-   "link_type": "DocType",
-   "onboard": 1,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "گردش و مانده طرف حساب",
-   "link_count": 0,
-   "link_to": "party-account-explorer",
-   "link_type": "Page",
-   "onboard": 1,
-   "type": "Link"
-  }
+  {"hidden":0,"is_query_report":0,"label":"نسخه ۲ (پیش‌نمونه)","link_count":4,"link_type":"DocType","onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"اسناد حسابداری هوشمند","link_count":0,"link_to":"SmartProcess Accounting Document","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"واسطه‌های مالی","link_count":0,"link_to":"SmartProcess Financial Intermediary","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"حساب‌های ارزی طرف حساب","link_count":0,"link_to":"SmartProcess Party Currency Account","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"تنظیمات حسابداری","link_count":0,"link_to":"SmartProcess Accounting Settings","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"ابزارهای فعلی","link_count":2,"link_type":"DocType","onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"تبدیل","link_count":0,"link_to":"SmartProcess Currency Conversion","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"گردش و مانده طرف حساب","link_count":0,"link_to":"party-account-explorer","link_type":"Page","onboard":1,"type":"Link"}
  ],
- "modified": "2026-09-25 13:10:00.000000",
- "modified_by": "Administrator",
- "module": "SmartProcess Accounting",
- "name": "SmartProcess Accounting",
- "number_cards": [],
- "owner": "Administrator",
- "parent_page": "",
- "public": 1,
- "quick_lists": [],
- "restrict_to_domain": "",
- "roles": [
-  {
-   "role": "Accounts User"
-  },
-  {
-   "role": "Accounts Manager"
-  },
-  {
-   "role": "Auditor"
-  },
-  {
-   "role": "System Manager"
-  }
- ],
+ "modified": "2026-09-30 00:00:00.000000", "modified_by": "Administrator", "module": "SmartProcess Accounting",
+ "name": "SmartProcess Accounting", "number_cards": [], "owner": "Administrator", "parent_page": "", "public": 1,
+ "quick_lists": [], "restrict_to_domain": "",
+ "roles": [{"role":"Accounts User"},{"role":"Accounts Manager"},{"role":"Auditor"},{"role":"System Manager"}],
  "sequence_id": 30,
  "shortcuts": [
-  {
-   "color": "Blue",
-   "doc_view": "List",
-   "label": "تبدیل",
-   "link_to": "SmartProcess Currency Conversion",
-   "stats_filter": "[]",
-   "type": "DocType"
-  },
-  {
-   "color": "Green",
-   "label": "گردش و مانده طرف حساب",
-   "link_to": "party-account-explorer",
-   "type": "Page"
-  }
+  {"color":"Blue","doc_view":"List","label":"اسناد حسابداری هوشمند","link_to":"SmartProcess Accounting Document","stats_filter":"[]","type":"DocType"},
+  {"color":"Green","doc_view":"List","label":"حساب‌های ارزی طرف حساب","link_to":"SmartProcess Party Currency Account","stats_filter":"[]","type":"DocType"},
+  {"color":"Orange","doc_view":"List","label":"واسطه‌های مالی","link_to":"SmartProcess Financial Intermediary","stats_filter":"[]","type":"DocType"}
  ],
- "title": "حسابداری اسمارت پروسس",
- "type": "Workspace"
+ "title": "حسابداری اسمارت پروسس", "type": "Workspace"
 }

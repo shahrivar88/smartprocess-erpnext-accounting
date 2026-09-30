@@ -1,0 +1,39 @@
+{
+ "actions": [],
+ "creation": "2026-09-30 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Setup",
+ "engine": "InnoDB",
+ "field_order": ["feature_section", "enable_multi_currency_party_compatibility", "enable_counterpart_proposal", "enable_templates", "enable_manual_invoice_rate_feature", "display_section", "monetary_display_precision", "exchange_rate_display_precision", "base_currency_rounding_tolerance", "series_section", "receipt_naming_series", "payment_naming_series", "transfer_naming_series", "currency_conversion_naming_series"],
+ "fields": [
+  {"fieldname":"feature_section","fieldtype":"Section Break","label":"Feature Gates"},
+  {"default":"0","description":"Conservative default: standard ERPNext behavior remains unchanged.","fieldname":"enable_multi_currency_party_compatibility","fieldtype":"Check","label":"Enable Multi-Currency Party Compatibility"},
+  {"default":"1","fieldname":"enable_counterpart_proposal","fieldtype":"Check","label":"Enable Counterpart Proposal"},
+  {"default":"0","fieldname":"enable_templates","fieldtype":"Check","label":"Enable Templates"},
+  {"default":"0","fieldname":"enable_manual_invoice_rate_feature","fieldtype":"Check","label":"Enable Manual Invoice Rate Feature"},
+  {"fieldname":"display_section","fieldtype":"Section Break","label":"Display and Calculation"},
+  {"default":"2","fieldname":"monetary_display_precision","fieldtype":"Int","label":"Monetary Display Precision","non_negative":1},
+  {"default":"6","fieldname":"exchange_rate_display_precision","fieldtype":"Int","label":"Exchange Rate Display Precision","non_negative":1},
+  {"default":"0.01","fieldname":"base_currency_rounding_tolerance","fieldtype":"Float","label":"Base Currency Rounding Tolerance","precision":"9"},
+  {"fieldname":"series_section","fieldtype":"Section Break","label":"Naming Series"},
+  {"default":"SP-REC-.YYYY.-.#####","fieldname":"receipt_naming_series","fieldtype":"Data","label":"Receipt Naming Series","reqd":1},
+  {"default":"SP-PAY-.YYYY.-.#####","fieldname":"payment_naming_series","fieldtype":"Data","label":"Payment Naming Series","reqd":1},
+  {"default":"SP-TRF-.YYYY.-.#####","fieldname":"transfer_naming_series","fieldtype":"Data","label":"Transfer Naming Series","reqd":1},
+  {"default":"SP-FX-.YYYY.-.#####","fieldname":"currency_conversion_naming_series","fieldtype":"Data","label":"Currency Conversion Naming Series","reqd":1}
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Accounting Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {"read":1,"role":"Accounts Manager","write":1},
+  {"read":1,"role":"System Manager","write":1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "translated_doctype": 1
+}

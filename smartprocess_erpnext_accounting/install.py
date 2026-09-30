@@ -7,6 +7,7 @@ def after_migrate():
 	_ensure_workspace()
 	_ensure_workspace_sidebar()
 	_ensure_doctype_app()
+	_ensure_financial_intermediary_party_type()
 
 
 def _ensure_standard_module():
@@ -55,8 +56,17 @@ def _ensure_workspace_sidebar():
 			"icon": "list",
 		},
 	)
-	doc.flags.ignore_permissions = True
 	doc.save()
+
+
+def _ensure_financial_intermediary_party_type():
+	name = "SmartProcess Financial Intermediary"
+	if frappe.db.exists("Party Type", name):
+		return
+	doc = frappe.new_doc("Party Type")
+	doc.party_type = name
+	doc.account_type = "Receivable"
+	doc.insert()
 
 
 def _ensure_doctype_app():

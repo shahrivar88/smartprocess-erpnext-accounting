@@ -37,3 +37,15 @@ doc_events = {
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 	},
 }
+
+extend_doctype_class = {
+	"GL Entry": [
+		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyGLEntryMixin"
+	],
+	"Sales Invoice": [
+		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyInvoiceMixin"
+	],
+	"Purchase Invoice": [
+		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyInvoiceMixin"
+	],
+}

@@ -1,0 +1,35 @@
+{
+ "actions": [],
+ "creation": "2026-09-30 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Setup",
+ "engine": "InnoDB",
+ "field_order": ["party_type", "party", "company", "mapping_column", "currency", "account"],
+ "fields": [
+  {"fieldname":"party_type","fieldtype":"Link","in_list_view":1,"label":"Party Type","options":"Party Type","reqd":1},
+  {"fieldname":"party","fieldtype":"Dynamic Link","in_list_view":1,"label":"Party","options":"party_type","reqd":1},
+  {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","reqd":1},
+  {"fieldname":"mapping_column","fieldtype":"Column Break"},
+  {"fieldname":"currency","fieldtype":"Link","in_list_view":1,"label":"Currency","options":"Currency","reqd":1},
+  {"fieldname":"account","fieldtype":"Link","in_list_view":1,"label":"Account","options":"Account","reqd":1}
+ ],
+ "links": [],
+ "modified": "2026-09-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Party Currency Account",
+ "owner": "Administrator",
+ "permissions": [
+  {"create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"role":"Accounts Manager","share":1,"write":1},
+  {"create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"role":"System Manager","share":1,"write":1},
+  {"read":1,"report":1,"role":"Accounts User"},
+  {"read":1,"report":1,"role":"Auditor"}
+ ],
+ "search_fields": "party,company,currency,account",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "translated_doctype": 1,
+ "unique": 0
+}

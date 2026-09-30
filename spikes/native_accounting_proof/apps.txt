@@ -1,0 +1,4 @@
+frappe
+erpnext
+sp_accounting_native_proof
+smartprocess_erpnext_accounting

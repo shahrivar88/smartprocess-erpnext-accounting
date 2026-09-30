@@ -2,6 +2,17 @@ frappe.provide("smartprocess_erpnext_accounting");
 
 smartprocess_erpnext_accounting.manual_invoice_rate = {
 	message: "نرخ تبدیل ارز را به‌صورت دستی وارد کنید.",
+	_enabled: null,
+
+	async enabled() {
+		if (this._enabled === null) {
+			this._enabled = Boolean(await frappe.db.get_single_value(
+				"SmartProcess Accounting Settings",
+				"enable_manual_invoice_rate_feature",
+			));
+		}
+		return this._enabled;
+	},
 
 	company_currency(frm) {
 		return frm.doc.company ? erpnext.get_currency(frm.doc.company) : "";
@@ -19,7 +30,10 @@ smartprocess_erpnext_accounting.manual_invoice_rate = {
 		frm._sp_manual_rate = !frm.is_new() && flt(frm.doc.conversion_rate) > 0;
 	},
 
-	refresh(frm) {
+	async refresh(frm) {
+		if (!(await this.enabled())) {
+			return;
+		}
 		this.schedule_apply(frm);
 		this.bind_input(frm);
 	},
@@ -108,7 +122,10 @@ smartprocess_erpnext_accounting.manual_invoice_rate = {
 		});
 	},
 
-	currency(frm) {
+	async currency(frm) {
+		if (!(await this.enabled())) {
+			return;
+		}
 		if (frm.doc.docstatus !== 0 || !frm.is_new()) {
 			return;
 		}
@@ -119,7 +136,10 @@ smartprocess_erpnext_accounting.manual_invoice_rate = {
 		this.schedule_apply(frm);
 	},
 
-	conversion_rate(frm) {
+	async conversion_rate(frm) {
+		if (!(await this.enabled())) {
+			return;
+		}
 		if (frm._sp_clearing_rate || frm.doc.docstatus !== 0) {
 			return;
 		}
@@ -136,7 +156,10 @@ smartprocess_erpnext_accounting.manual_invoice_rate = {
 		this.schedule_apply(frm);
 	},
 
-	validate(frm) {
+	async validate(frm) {
+		if (!(await this.enabled())) {
+			return;
+		}
 		if (!this.is_foreign(frm)) {
 			return;
 		}

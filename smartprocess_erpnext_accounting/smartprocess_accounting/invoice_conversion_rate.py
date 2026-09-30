@@ -14,6 +14,12 @@ MSG_MANUAL_RATE = "نرخ تبدیل ارز را به‌صورت دستی وار
 
 
 def validate_conversion_rate(doc, method=None):
+	if not frappe.db.exists("DocType", "SmartProcess Accounting Settings"):
+		return
+	if not frappe.get_single_value(
+		"SmartProcess Accounting Settings", "enable_manual_invoice_rate_feature"
+	):
+		return
 	company_currency = frappe.get_cached_value("Company", doc.company, "default_currency")
 	if needs_manual_conversion_rate(doc.currency, company_currency, doc.conversion_rate):
 		frappe.throw(_(MSG_MANUAL_RATE))
