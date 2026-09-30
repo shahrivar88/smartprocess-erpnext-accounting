@@ -1,0 +1,61 @@
+services:
+  configurator:
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+
+  backend:
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/smartprocee_erpnext_telegram:/home/frappe/frappe-bench/apps/smartprocee_erpnext_homepage:/home/frappe/frappe-bench/apps/smartprocee_erpnext_persiant:/home/frappe/frappe-bench/apps/jalali_shamsi_datepicker
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+
+  frontend:
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}/smartprocess_erpnext_accounting/public
+        target: /home/frappe/frappe-bench/assets/smartprocess_erpnext_accounting
+        read_only: true
+
+  websocket:
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+
+  queue-short:
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/smartprocee_erpnext_telegram:/home/frappe/frappe-bench/apps/smartprocee_erpnext_homepage:/home/frappe/frappe-bench/apps/smartprocee_erpnext_persiant:/home/frappe/frappe-bench/apps/jalali_shamsi_datepicker
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+
+  queue-long:
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/smartprocee_erpnext_telegram:/home/frappe/frappe-bench/apps/smartprocee_erpnext_homepage:/home/frappe/frappe-bench/apps/smartprocee_erpnext_persiant:/home/frappe/frappe-bench/apps/jalali_shamsi_datepicker
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
+
+  scheduler:
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/smartprocee_erpnext_telegram:/home/frappe/frappe-bench/apps/smartprocee_erpnext_homepage:/home/frappe/frappe-bench/apps/smartprocee_erpnext_persiant:/home/frappe/frappe-bench/apps/jalali_shamsi_datepicker
+    volumes:
+      - type: bind
+        source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}
+        target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+        read_only: true
