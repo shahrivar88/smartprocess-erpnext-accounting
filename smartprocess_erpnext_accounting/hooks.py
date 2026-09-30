@@ -6,7 +6,7 @@ app_email = "info@smartprocess.local"
 app_license = "mit"
 app_icon = "octicon octicon-file-directory"
 app_color = "#1F4E79"
-app_home = "/app/smartprocess-accounting"
+app_home = "/desk/smartprocess-accounting"
 required_apps = ["frappe", "erpnext"]
 
 add_to_apps_screen = [

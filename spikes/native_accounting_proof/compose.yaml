@@ -37,7 +37,7 @@ services:
 
   backend:
     image: frappe/erpnext:v16.35.0
-    command: bench serve --port 8000
+    command: bench --site sp_accounting_v2_test serve --noreload --port 8000
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/sp_accounting_native_proof
@@ -90,6 +90,7 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
       - logs:/home/frappe/frappe-bench/logs
+      - ../../smartprocess_erpnext_accounting/public:/home/frappe/frappe-bench/sites/assets/smartprocess_erpnext_accounting:ro
       - ./apps.txt:/home/frappe/frappe-bench/sites/apps.txt:ro
       - ./nginx-frappe.conf.template:/templates/nginx/frappe.conf.template:ro
     networks:
