@@ -1,5 +1,7 @@
 # بازگردانی MVP تبدیل
 
+> **Legacy V1 / historical reference.** See [`docs/v2/MIGRATION_AND_ROLLBACK.md`](v2/MIGRATION_AND_ROLLBACK.md) for V2 policy.
+
 اگر لازم شد این اپ از سایت تولید برداشته شود:
 
 1. مطمئن شوید هیچ سند «تبدیل» Submit‌شده‌ای باقی نمانده، یا ابتدا همان سندها از UI لغو شوند.

@@ -1,5 +1,7 @@
 # SmartProcess_ERPNext_Accounting
 
+> **Legacy V1 / historical reference.** V2 architecture is defined in [`docs/v2/BLUEPRINT.md`](docs/v2/BLUEPRINT.md).
+
 اپ مستقل Frappe/ERPNext برای گردش حسابداری «تبدیل».
 
 نسخه فعلی یک MVP است: سند دوطرفه، ارز دستی، ثبت دفتر کل از مسیر native ERPNext، و لغو استاندارد.

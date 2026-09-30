@@ -1,5 +1,7 @@
 # تحلیل Forensic حسابداری ERPNext 16.35.0
 
+> **Legacy V1 / historical reference.** Environment facts in this document are not the V2 runtime contract.
+
 این سند خلاصهٔ همان بررسی خواندنی تأییدشده است. تحلیل از صفر تکرار نشده است.
 
 ## محیط مشاهده‌شده

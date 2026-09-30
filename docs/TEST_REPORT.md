@@ -1,5 +1,7 @@
 # گزارش تست MVP تبدیل
 
+> **Legacy V1 / historical reference.** See [`docs/v2/TEST_MATRIX.md`](v2/TEST_MATRIX.md) for the V2 test contract.
+
 تاریخ اجرا: 2026-09-25
 
 سایت: `SmartProcessERP`

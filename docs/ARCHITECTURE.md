@@ -1,5 +1,7 @@
 # معماری MVP تبدیل
 
+> **Legacy V1 / historical reference.** See [`docs/v2/BLUEPRINT.md`](v2/BLUEPRINT.md) for the V2 architecture.
+
 سند کاربری «تبدیل» یک DocType مستقل است. ERPNext Core همچنان تنها موتور دفتر کل است.
 
 ```text

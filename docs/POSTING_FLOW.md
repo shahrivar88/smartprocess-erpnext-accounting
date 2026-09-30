@@ -1,5 +1,7 @@
 # جریان ثبت تبدیل
 
+> **Legacy V1 / historical reference.** See [`docs/v2/ACCOUNTING_INVARIANTS.md`](v2/ACCOUNTING_INVARIANTS.md) for V2 rules.
+
 ## پیش‌نویس
 
 ذخیرهٔ Draft هیچ `GL Entry` یا `Payment Ledger Entry` نمی‌سازد.
