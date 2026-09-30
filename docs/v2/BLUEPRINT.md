@@ -137,17 +137,31 @@ The engine must not assume that both sides use the same Party.
 
 Standard Account metadata supplies account categories where possible. Categories such as Bank, Cash, Receivable, Payable, Expense, Income, Financial Intermediary, and Other are UX filters. They are not a second account classification system.
 
-## Financial Intermediary design question
+## Financial Intermediary model
 
 Financial Intermediary is a real counterparty with independent multi-currency balances and a ledger.
 
-Before implementation, validate these options against ERPNext party, accounting, permission, and reporting behavior:
+A dedicated custom Party DocType is compatible with native Dynamic Link, GL,
+PLE, and Frappe permissions. The isolated ERPNext 16.35 proof posted one
+Financial Intermediary identity in three Account currencies through a gated
+`extend_doctype_class` compatibility layer.
 
-1. A standard compatible party type backed by a dedicated DocType
-2. A controlled extension that uses ERPNext Party Type behavior
-3. Another native pattern proven by integration tests
+The production model is:
 
-The decision must preserve Account, Party Type, Party, and account-currency values in native GL rows. It must not create a separate balance store.
+1. A dedicated Financial Intermediary Party DocType.
+2. A Party-Currency Account mapping with no balance fields.
+3. Native GL as the only balance source.
+4. A gated compatibility layer while ERPNext keeps its historical one-currency
+   Party validation.
+
+The proof and its upgrade limits are in
+`MULTI_CURRENCY_PARTY_PROOF.md`. The production DocType is not yet authorized.
+
+The rejected options are:
+
+1. Reusing Customer or Supplier, because the business identity is false.
+2. Duplicating a Party per currency, because it fragments one real identity.
+3. Account-only posting, because it loses Party GL, PLE, and permissions.
 
 ## Conversion and reclassification
 
@@ -208,7 +222,6 @@ The feature must become independently switchable and testable. Bootstrap does no
 
 Implementation cannot start until these questions have recorded answers:
 
-- How Financial Intermediary maps to native ERPNext party behavior
 - Which ERPNext posting API supports multiple currencies and rates per voucher
 - How native PLE behaves without invoice allocation
 - Whether legacy V1 documents exist on any site other than the inspected site

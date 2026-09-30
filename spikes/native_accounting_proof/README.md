@@ -45,6 +45,18 @@ PYTHONPATH=/home/frappe/frappe-bench/apps/sp_accounting_native_proof
 
 The proof network is intentionally internal. Do not enable network access merely to install the fixture. The `PYTHONPATH` registration avoids downloading a build backend into the lab.
 
+The multi-currency Party proof uses the same isolated site:
+
+```bash
+docker compose --env-file .env.proof exec -T \
+  -e PYTHONPATH=/home/frappe/frappe-bench/apps/sp_accounting_native_proof \
+  backend bench --site sp_accounting_v2_test execute \
+  sp_accounting_native_proof.multi_currency_party_proof.run_assertions
+```
+
+See `docs/v2/MULTI_CURRENCY_PARTY_PROOF.md` for the required native baseline,
+source findings, exact results, and disable behavior.
+
 Do not attach production volumes or networks. Do not use `SmartProcessERP`.
 
 After the evidence is recorded, the operator can destroy the lab with:

@@ -2,6 +2,10 @@
 
 Status: completed proof spike on 2026-09-30. This is evidence for V2 design. It is not a production implementation.
 
+The later compatibility proof resolves the one-currency Party blocker. See
+`MULTI_CURRENCY_PARTY_PROOF.md` for the gated Frappe v16 extension, standard
+invoice results, mapping model, security tests, and uninstall risks.
+
 ## Safety boundary and exact lab
 
 The proof ran only on a new disposable Docker stack. No command targeted `SmartProcessERP` or a production container.
@@ -284,7 +288,7 @@ V2 should follow the same boundary:
 
 ## Remaining unresolved risks
 
-1. The ERPNext one-currency-per-Party/Company rule conflicts with the requirement for one Financial Intermediary or other Party to have independent balances in several account currencies.
+1. The ERPNext one-currency-per-Party/Company rule requires the gated compatibility layer proven in `MULTI_CURRENCY_PARTY_PROOF.md`. Upstream native support remains preferred.
 2. Native custom-voucher debit/credit allowance of 0.5 is too large for V2. The final controller must enforce pair and document invariants before calling ERPNext.
 3. Account-currency and transaction-currency fields can preserve different precision. The final field precision and quantization policy is not yet approved.
 4. `get_gl_dict` applies document-level transaction defaults for custom DocTypes. Per-line override behavior needs permanent regression tests.

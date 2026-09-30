@@ -114,6 +114,17 @@ The report must sum native debit and credit in account currency for that key.
 
 It must not convert another currency's balance to manufacture this balance.
 
+## Party-currency account mapping
+
+1. Standard Party Account remains the Company base-currency default.
+2. Each extra Party currency needs an explicit Party-Currency Account mapping.
+3. The mapping identity is Party Type, Party, Company, and Currency.
+4. The mapped Account must have the same Company and Account currency.
+5. The mapping stores no amount or balance.
+6. A compatibility layer can skip only ERPNext's historical one-currency Party check.
+7. Disabling the compatibility gate must restore native ERPNext behavior.
+8. Every other Account, Party, period, balance, lifecycle, and permission check remains active.
+
 ## Server authority
 
 1. The server loads Company, Account, currency, and party metadata.

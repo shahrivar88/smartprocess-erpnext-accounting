@@ -140,6 +140,29 @@ For each posting scenario, assert:
 
 No test can pass by querying a custom balance store.
 
+## Multi-currency Party compatibility proof
+
+The ERPNext 16.35 spike passed these contract cases:
+
+- Native standard-setting baseline with the extension absent
+- One Customer in Base, Foreign A, and Foreign B Accounts
+- Base, Foreign A, Base, and Foreign A sequence for one Customer
+- One Supplier in Base and Foreign A Payable Accounts
+- One Financial Intermediary in three Receivable currencies
+- One Employee in Base and Foreign A Payable Accounts
+- Base, Foreign A, and Base Sales Invoices for one Customer
+- Base and Foreign A Purchase Invoices for one Supplier
+- Native Sales and Purchase Invoice cancel reversal
+- Native GL and PLE identity and currency fields
+- Exact mapping uniqueness and validation
+- Mapping DocType permissions
+- Gate disable with unchanged historical GL
+- Upgrade guard and native-capability detection
+
+The proof also rejected another-Company, forged-currency, disabled, group,
+wrong-Party-Type, missing-Party, frozen-Party, duplicate, and mapping-mismatch
+cases. These remain mandatory production regression tests.
+
 ## Multi-company matrix
 
 - Company A document cannot use Company B Account
