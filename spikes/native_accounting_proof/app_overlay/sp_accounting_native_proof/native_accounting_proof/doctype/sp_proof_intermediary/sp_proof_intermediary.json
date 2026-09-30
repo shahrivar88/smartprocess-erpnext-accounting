@@ -1,0 +1,40 @@
+{
+ "autoname": "field:intermediary_name",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "intermediary_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "intermediary_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Intermediary Name",
+   "reqd": 1,
+   "unique": 1
+  }
+ ],
+ "module": "Native Accounting Proof",
+ "name": "SP Proof Intermediary",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts User"
+  }
+ ],
+ "track_changes": 1
+}

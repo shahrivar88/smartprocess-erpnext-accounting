@@ -1,0 +1,71 @@
+name: sp-accounting-v2-proof
+
+services:
+  db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_ROOT_PASSWORD: ${PROOF_DB_ROOT_PASSWORD}
+      MARIADB_ROOT_HOST: "%"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - proof-only
+
+  redis-cache:
+    image: redis:8.6-alpine
+    command: redis-server --save ""
+    volumes:
+      - redis-cache-data:/data
+    networks:
+      - proof-only
+
+  redis-queue:
+    image: redis:8.6-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-queue-data:/data
+    networks:
+      - proof-only
+
+  backend:
+    image: frappe/erpnext:v16.35.0
+    command: sleep infinity
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    networks:
+      - proof-only
+
+networks:
+  proof-only:
+    name: sp_accounting_v2_proof_network
+    internal: true
+
+volumes:
+  db-data:
+    name: sp_accounting_v2_proof_db
+  redis-cache-data:
+    name: sp_accounting_v2_proof_redis_cache
+  redis-queue-data:
+    name: sp_accounting_v2_proof_redis_queue
+  sites:
+    name: sp_accounting_v2_proof_sites
+  logs:
+    name: sp_accounting_v2_proof_logs

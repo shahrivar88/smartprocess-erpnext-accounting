@@ -1,6 +1,7 @@
 *.pyc
 .env
 .env.*
+!.env.proof.example
 __pycache__/
 .pytest_cache/
 .ruff_cache/

@@ -1,6 +1,6 @@
 # V2 Test Matrix
 
-Status: Required future coverage. This bootstrap stage runs no accounting tests.
+Status: Required future production coverage. The disposable ERPNext 16.35 contract spike is recorded in `NATIVE_ACCOUNTING_PROOF.md`; it does not replace production V2 tests.
 
 ## Test environment rule
 
