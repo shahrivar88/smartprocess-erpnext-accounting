@@ -13,6 +13,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	require_posting_enabled,
 	validate_document,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import canonicalize_receipt
 
 
 SERIES_FIELDS = {
@@ -44,11 +45,11 @@ class SmartProcessAccountingDocument(AccountsController):
 		self.naming_series = self._configured_series()
 
 	def validate(self):
-		validate_document(self)
+		self._validate_accounting()
 
 	def before_submit(self):
 		require_posting_enabled()
-		validate_document(self, for_posting=True)
+		self._validate_accounting(for_posting=True)
 
 	def on_submit(self):
 		post_document(self)
@@ -90,3 +91,7 @@ class SmartProcessAccountingDocument(AccountsController):
 		if not series:
 			frappe.throw(_("Naming Series is not configured for {0}.").format(self.operation_type))
 		return series
+
+	def _validate_accounting(self, *, for_posting=False):
+		canonicalize_receipt(self)
+		return validate_document(self, for_posting=for_posting)

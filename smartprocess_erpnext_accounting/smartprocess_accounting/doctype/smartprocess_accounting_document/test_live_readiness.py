@@ -31,7 +31,10 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 	def test_all_operation_types_post_and_cancel_natively(self):
 		for operation_type, prefix in SERIES_PREFIXES.items():
 			with self.subTest(operation_type=operation_type):
-				doc = self.submit_document([self.base_pair()], operation_type=operation_type)
+				if operation_type == "Receipt":
+					doc = self._submit_base_receipt()
+				else:
+					doc = self.submit_document([self.base_pair()], operation_type=operation_type)
 				rows = self.active_gl(doc)
 				self.assertTrue(doc.name.startswith(prefix))
 				self.assertEqual(len(rows), 2)
@@ -192,6 +195,28 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 			sum((Decimal(str(row.debit)) for row in rows), Decimal("0")),
 			sum((Decimal(str(row.credit)) for row in rows), Decimal("0")),
 		)
+
+	def _submit_base_receipt(self):
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": "Receipt",
+				"company": COMPANY,
+				"posting_date": frappe.utils.nowdate(),
+				"receipt_payer_currency": BASE,
+				"receipt_payer_account": "MC Receivable Base - SPV2",
+				"receipt_payer_type": "Customer",
+				"receipt_payer": "SP MC Customer",
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Account",
+						"receipt_currency": BASE,
+						"debit_account": BASE_BANK,
+						"debit_amount": 100,
+					}
+				],
+			}
+		).insert().submit()
 
 
 def run_live_readiness_suite():

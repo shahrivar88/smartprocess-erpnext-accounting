@@ -158,7 +158,7 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
-				"operation_type": "Receipt",
+				"operation_type": "Transfer",
 				"company": COMPANY,
 				"general_reference": frappe.generate_hash(length=10),
 				"operational_pairs": [self._pair(100, 10, 10)],
