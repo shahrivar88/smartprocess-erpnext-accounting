@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+from frappe.utils import nowdate
+
+
+COMPANY = "SP V2 Proof Company"
+BASE = "XBA"
+FOREIGN_A = "XFA"
+FOREIGN_B = "XFB"
+BASE_BANK = "Proof Bank Base - SPV2"
+BASE_CLEARING = "Proof Base Clearing - SPV2"
+FOREIGN_A_ACCOUNT = "Proof Foreign A - SPV2"
+FOREIGN_B_ACCOUNT = "Proof Foreign B - SPV2"
+OTHER_COMPANY = "_Test Company"
+OTHER_DEBIT_ACCOUNT = "Cash - _TC"
+OTHER_CREDIT_ACCOUNT = "Earnest Money - _TC"
+
+
+class V2IntegrationTestCase(FrappeTestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self._require_fixture()
+		settings = frappe.get_single("SmartProcess Accounting Settings")
+		settings.enable_v2_posting = 1
+		settings.enable_multi_currency_party_compatibility = 1
+		settings.save()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		super().tearDown()
+
+	def document(self, pairs, *, operation_type="Transfer", company=COMPANY):
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": operation_type,
+				"company": company,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"operational_pairs": pairs,
+			}
+		)
+
+	def submit_document(self, pairs, *, operation_type="Transfer", company=COMPANY):
+		doc = self.document(pairs, operation_type=operation_type, company=company).insert()
+		doc.submit()
+		return doc
+
+	def pair(
+		self,
+		debit_account,
+		debit_amount,
+		debit_rate,
+		credit_account,
+		credit_amount,
+		credit_rate,
+	):
+		return {
+			"debit_account": debit_account,
+			"debit_amount": debit_amount,
+			"debit_exchange_rate": debit_rate,
+			"credit_account": credit_account,
+			"credit_amount": credit_amount,
+			"credit_exchange_rate": credit_rate,
+		}
+
+	def active_gl(self, doc):
+		return frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": doc.doctype, "voucher_no": doc.name, "is_cancelled": 0},
+			fields=[
+				"account",
+				"account_currency",
+				"debit",
+				"credit",
+				"debit_in_account_currency",
+				"credit_in_account_currency",
+				"transaction_exchange_rate",
+			],
+			order_by="creation, name",
+		)
+
+	def all_gl(self, doc):
+		return frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": doc.doctype, "voucher_no": doc.name},
+			fields=["debit", "credit", "is_cancelled"],
+			order_by="creation, name",
+		)
+
+	def create_user(self, roles, *, companies=(COMPANY,)):
+		email = f"v2-{frappe.generate_hash(length=10)}@example.com"
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "V2 Permission Test",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"roles": [{"role": role} for role in roles],
+			}
+		).insert()
+		for company in companies:
+			frappe.get_doc(
+				{
+					"doctype": "User Permission",
+					"user": email,
+					"allow": "Company",
+					"for_value": company,
+					"apply_to_all_doctypes": 1,
+				}
+			).insert()
+		frappe.clear_cache(user=email)
+		return email
+
+	def base_pair(self):
+		return self.pair(BASE_BANK, 100, 1, BASE_CLEARING, 100, 1)
+
+	def other_company_pair(self):
+		return self.pair(OTHER_DEBIT_ACCOUNT, 100, 1, OTHER_CREDIT_ACCOUNT, 100, 1)
+
+	def _require_fixture(self):
+		for doctype, name in (
+			("Company", COMPANY),
+			("Account", BASE_BANK),
+			("Account", FOREIGN_A_ACCOUNT),
+			("Account", OTHER_DEBIT_ACCOUNT),
+			("Account", OTHER_CREDIT_ACCOUNT),
+		):
+			if not frappe.db.exists(doctype, name):
+				raise AssertionError(f"Isolated proof fixture is missing {doctype} {name}")

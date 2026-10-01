@@ -1,4 +1,9 @@
 frappe.ui.form.on("SmartProcess Accounting Document", {
+	refresh(frm) {
+		if (canStartCorrection(frm)) {
+			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
+		}
+	},
 	setup(frm) {
 		for (const side of ["debit", "credit"]) {
 			frm.set_query(`${side}_account`, "operational_pairs", (doc, cdt, cdn) => {
@@ -35,6 +40,43 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		});
 	},
 });
+
+function canStartCorrection(frm) {
+	const hasPermission = (permissionType) =>
+		(frm.perm || []).some((permission) => Boolean(permission[permissionType]));
+	return frm.doc.docstatus === 1
+		&& ["read", "write", "cancel", "amend", "create"].every(hasPermission);
+}
+
+function promptForCorrection(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "correction_reason",
+				fieldtype: "Small Text",
+				label: __("Correction Reason"),
+				reqd: 1,
+			},
+		],
+		(values) => startCorrection(frm, values.correction_reason),
+		__("Correction"),
+		__("Create Draft"),
+	);
+}
+
+function startCorrection(frm, correctionReason) {
+	return frm.call({
+		method: "start_correction",
+		args: { correction_reason: correctionReason },
+		freeze: true,
+		freeze_message: __("Creating correction Draft..."),
+		callback({ message }) {
+			if (message?.doctype && message?.name) {
+				frappe.set_route("Form", message.doctype, message.name);
+			}
+		},
+	});
+}
 
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {

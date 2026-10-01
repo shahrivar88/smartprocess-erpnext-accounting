@@ -4,6 +4,9 @@ import frappe
 from frappe import _
 from erpnext.controllers.accounts_controller import AccountsController
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.correction import (
+	start_correction as create_correction,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	cancel_document,
 	post_document,
@@ -60,6 +63,14 @@ class SmartProcessAccountingDocument(AccountsController):
 			"Repost Accounting Ledger Items",
 		)
 		cancel_document(self)
+
+	def before_update_after_submit(self):
+		if self.has_value_changed("correction_reason") and not self.flags.in_correction:
+			frappe.throw(_("Correction Reason can only be set through the Correction action."))
+
+	@frappe.whitelist(methods=["POST"])
+	def start_correction(self, correction_reason: str):
+		return create_correction(self.name, correction_reason)
 
 	def validate_account_currency(self, account, account_currency=None):
 		master_currency = frappe.get_cached_value("Account", account, "account_currency")
