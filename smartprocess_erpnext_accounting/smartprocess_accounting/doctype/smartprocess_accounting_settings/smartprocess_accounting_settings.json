@@ -4,9 +4,10 @@
  "doctype": "DocType",
  "document_type": "Setup",
  "engine": "InnoDB",
- "field_order": ["feature_section", "enable_multi_currency_party_compatibility", "enable_counterpart_proposal", "enable_templates", "enable_manual_invoice_rate_feature", "display_section", "monetary_display_precision", "exchange_rate_display_precision", "base_currency_rounding_tolerance", "series_section", "receipt_naming_series", "payment_naming_series", "transfer_naming_series", "currency_conversion_naming_series"],
+ "field_order": ["feature_section", "enable_v2_posting", "enable_multi_currency_party_compatibility", "enable_counterpart_proposal", "enable_templates", "enable_manual_invoice_rate_feature", "display_section", "monetary_display_precision", "exchange_rate_display_precision", "base_currency_rounding_tolerance", "series_section", "receipt_naming_series", "payment_naming_series", "transfer_naming_series", "currency_conversion_naming_series"],
  "fields": [
   {"fieldname":"feature_section","fieldtype":"Section Break","label":"Feature Gates"},
+  {"default":"0","description":"Posting stays blocked until this gate is explicitly enabled.","fieldname":"enable_v2_posting","fieldtype":"Check","label":"Enable V2 Posting"},
   {"default":"0","description":"Conservative default: standard ERPNext behavior remains unchanged.","fieldname":"enable_multi_currency_party_compatibility","fieldtype":"Check","label":"Enable Multi-Currency Party Compatibility"},
   {"default":"1","fieldname":"enable_counterpart_proposal","fieldtype":"Check","label":"Enable Counterpart Proposal"},
   {"default":"0","fieldname":"enable_templates","fieldtype":"Check","label":"Enable Templates"},

@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.model.document import Document
+from erpnext.controllers.accounts_controller import AccountsController
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import (
-	calculate_company_amount,
-	decimal_text,
-	to_decimal,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
-	get_accounts,
-	get_company_currency,
-	validate_account,
-	validate_party,
+from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
+	cancel_document,
+	post_document,
+	require_posting_enabled,
+	validate_document,
 )
 
 
@@ -31,48 +26,48 @@ SERIES_DEFAULTS = {
 }
 
 
-class SmartProcessAccountingDocument(Document):
+class SmartProcessAccountingDocument(AccountsController):
+	@property
+	def company_currency(self):
+		return self.__dict__.get("company_currency") or frappe.get_cached_value(
+			"Company", self.company, "default_currency"
+		)
+
+	@company_currency.setter
+	def company_currency(self, value):
+		self.__dict__["company_currency"] = value
+
 	def before_naming(self):
 		self.naming_series = self._configured_series()
 
 	def validate(self):
-		self.company_currency = get_company_currency(self.company)
-		accounts = {
-			account
-			for row in self.operational_pairs or []
-			for account in (row.debit_account, row.credit_account)
-			if account
-		}
-		account_details = get_accounts(accounts)
-		for number, row in enumerate(self.operational_pairs or [], start=1):
-			debit = self._validate_side(row, number, "debit", account_details)
-			credit = self._validate_side(row, number, "credit", account_details)
-			if debit is None and credit is None:
-				self._pair_error(
-					number,
-					_("Pair"),
-					_("Side"),
-					_("Both Debit and Credit sides are required."),
-				)
-			if debit is None or credit is None:
-				self._pair_error(number, _("Pair"), _("Side"), _("Both Debit and Credit sides are required."))
-			tolerance = to_decimal(
-				frappe.get_single_value(
-					"SmartProcess Accounting Settings", "base_currency_rounding_tolerance"
-				)
-				or "0.01",
-				_("Base Currency Rounding Tolerance"),
-			)
-			if abs(debit - credit) > tolerance:
-				self._pair_error(
-					number,
-					_("Pair"),
-					_("Company Currency Amount"),
-					_("Debit and Credit must balance in Company Currency."),
-				)
+		validate_document(self)
 
 	def before_submit(self):
-		frappe.throw(_("Accounting posting is not enabled in V2 Prototype 0.1."))
+		require_posting_enabled()
+		validate_document(self, for_posting=True)
+
+	def on_submit(self):
+		post_document(self)
+
+	def on_cancel(self):
+		self.ignore_linked_doctypes = (
+			"GL Entry",
+			"Payment Ledger Entry",
+			"Repost Payment Ledger",
+			"Repost Payment Ledger Items",
+			"Repost Accounting Ledger",
+			"Repost Accounting Ledger Items",
+		)
+		cancel_document(self)
+
+	def validate_account_currency(self, account, account_currency=None):
+		master_currency = frappe.get_cached_value("Account", account, "account_currency")
+		if account_currency != master_currency:
+			frappe.throw(_("Posting currency must match Account.account_currency."))
+
+	def get_value_in_transaction_currency(self, account_currency, gl_dict, field):
+		return gl_dict.get(f"{field}_in_account_currency")
 
 	def _configured_series(self):
 		fieldname = SERIES_FIELDS.get(self.operation_type)
@@ -84,50 +79,3 @@ class SmartProcessAccountingDocument(Document):
 		if not series:
 			frappe.throw(_("Naming Series is not configured for {0}.").format(self.operation_type))
 		return series
-
-	def _validate_side(self, row, number, side, account_details):
-		row.company_currency = self.company_currency
-		account_name = row.get(f"{side}_account")
-		amount_value = row.get(f"{side}_amount")
-		party_type = row.get(f"{side}_party_type")
-		party = row.get(f"{side}_party")
-		rate_value = row.get(f"{side}_exchange_rate")
-		if not any((account_name, party_type, party, amount_value, rate_value)):
-			return
-		label = _("Debit") if side == "debit" else _("Credit")
-		if not account_name:
-			self._pair_error(number, label, _("Account"), _("An Account is required."))
-		account = validate_account(account_name, self.company, account_details.get(account_name))
-		try:
-			validate_party(party_type, party, account.account_type)
-		except frappe.ValidationError as error:
-			self._pair_error(number, label, _("Party"), str(error))
-
-		amount = to_decimal(amount_value, _("Amount"))
-		if amount <= 0:
-			self._pair_error(number, label, _("Amount"), _("Amount must be greater than zero."))
-		rate_field = f"{side}_exchange_rate"
-		rate = to_decimal(row.get(rate_field), _("Exchange Rate"))
-		if account.account_currency == self.company_currency:
-			rate = to_decimal(1, _("Exchange Rate"))
-		elif rate <= 0:
-			self._pair_error(
-				number, label, _("Exchange Rate"), _("Exchange Rate must be greater than zero.")
-			)
-
-		company_amount = calculate_company_amount(amount, rate)
-		row.set(f"{side}_account_currency", account.account_currency)
-		row.set(rate_field, decimal_text(rate))
-		row.set(f"{side}_company_amount", decimal_text(company_amount))
-		row.set(
-			f"{side}_rate_direction",
-			_("1 {0} = {1} {2}").format(
-				account.account_currency, decimal_text(rate), self.company_currency
-			),
-		)
-		return company_amount
-
-	def _pair_error(self, pair_number, side, field, problem):
-		frappe.throw(
-			_("Pair {0} · {1} · {2}: {3}").format(pair_number, side, field, problem)
-		)

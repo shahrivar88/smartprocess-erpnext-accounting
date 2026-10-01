@@ -40,10 +40,13 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		self.assertEqual(meta.get_field("debit_party").fieldtype, "Dynamic Link")
 		self.assertEqual(meta.get_field("debit_party").options, "debit_party_type")
 
-	def test_company_and_account_currency_are_authoritative(self):
+	def test_company_currency_is_authoritative_and_forged_account_currency_is_rejected(self):
 		doc = self._document()
 		doc.company_currency = "XFA"
 		doc.operational_pairs[0].credit_account_currency = "XBA"
+		with self.assertRaisesRegex(frappe.ValidationError, "Account Currency"):
+			doc.validate()
+		doc.operational_pairs[0].credit_account_currency = None
 		doc.validate()
 		self.assertEqual(doc.company_currency, "XBA")
 		self.assertEqual(doc.operational_pairs[0].credit_account_currency, "XFA")
@@ -86,7 +89,7 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		self.assertEqual(doc.docstatus, 0)
 		self.assertEqual(frappe.db.count("GL Entry"), gl_before)
 		self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
-		with self.assertRaisesRegex(frappe.ValidationError, "posting is not enabled"):
+		with self.assertRaisesRegex(frappe.ValidationError, "V2 posting is disabled"):
 			doc.submit()
 		self.assertEqual(frappe.db.count("GL Entry"), gl_before)
 		self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
