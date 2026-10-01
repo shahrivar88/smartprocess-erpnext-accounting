@@ -32,8 +32,10 @@ def canonicalize_receipt(doc) -> None:
 
 	company_currency = get_company_currency(doc.company)
 	doc.company_currency = company_currency
+	rows = doc.operational_pairs or []
+	_validate_receipt_currencies(doc, rows)
 	account_names = {doc.receipt_payer_account}
-	account_names.update(row.get("debit_account") for row in doc.operational_pairs or [])
+	account_names.update(row.get("debit_account") for row in rows)
 	account_names.discard(None)
 	account_names.discard("")
 	account_details = get_accounts(account_names)
@@ -45,7 +47,6 @@ def canonicalize_receipt(doc) -> None:
 	payer = _validate_payer(doc, accounts, approved_party_accounts)
 	payer_rate = _payer_exchange_rate(doc, payer, company_currency)
 	precision = _company_currency_precision(company_currency)
-	rows = doc.operational_pairs or []
 	if not rows:
 		frappe.throw(_("حداقل یک ردیف دریافت لازم است."))
 
@@ -168,6 +169,26 @@ def _validate_payer(doc, accounts: dict, approved_party_accounts: set):
 		approved_party_accounts,
 	)
 	return account
+
+
+def _validate_receipt_currencies(doc, rows) -> None:
+	currencies = {doc.receipt_payer_currency}
+	currencies.update(row.get("receipt_currency") for row in rows)
+	currencies.discard(None)
+	currencies.discard("")
+	enabled = set(
+		frappe.get_all(
+			"Currency",
+			filters={"enabled": 1, "name": ["in", sorted(currencies)]},
+			pluck="name",
+		)
+	)
+	if doc.receipt_payer_currency and doc.receipt_payer_currency not in enabled:
+		frappe.throw(_("ارز پرداخت‌کننده باید یک ارز فعال و معتبر باشد."))
+	for number, row in enumerate(rows, start=1):
+		currency = row.get("receipt_currency")
+		if currency and currency not in enabled:
+			_receipt_error(number, _("ارز"), _("ارز ردیف باید فعال و معتبر باشد."))
 
 
 def _payer_exchange_rate(doc, payer, company_currency: str) -> Decimal:

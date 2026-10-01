@@ -27,15 +27,90 @@ const TECHNICAL_RECEIPT_FIELDS = [
 	"credit_rate_direction",
 	"credit_description",
 ];
+const RECEIPT_NUMBER_FIELDS = ["debit_amount", "debit_exchange_rate", "debit_company_amount"];
+
+function numberFormatForField(df, doc) {
+	const currency = df.fieldtype === "Currency"
+		? frappe.meta.get_field_currency(df, doc)
+		: null;
+	return get_number_format(currency);
+}
+
+function compactFormattedValue(formattedValue, df, doc) {
+	const numeric = window.smartprocessAccounting?.numeric;
+	if (!numeric) {
+		return formattedValue;
+	}
+	const format = numberFormatForField(df, doc);
+	const decimalSeparator = get_number_format_info(format).decimal_str;
+	return numeric.compactFormattedNumber(formattedValue, decimalSeparator);
+}
+
+function compactNumberFormatter(value, df, options, doc) {
+	const standardField = { ...df, formatter: null };
+	const formatter = frappe.form.get_formatter(df.fieldtype);
+	const formatted = formatter(
+		value,
+		standardField,
+		{ ...(options || {}), inline: true, only_value: true },
+		doc,
+	);
+	return compactFormattedValue(formatted, standardField, doc);
+}
+
+function receiptCompactNumberFormatter(value, df, options, doc) {
+	const parent = doc?.parenttype && doc?.parent
+		? locals[doc.parenttype]?.[doc.parent]
+		: doc;
+	const standardField = { ...df, formatter: null };
+	if (parent?.operation_type !== RECEIPT) {
+		return frappe.form.get_formatter(df.fieldtype)(value, standardField, options, doc);
+	}
+	return compactNumberFormatter(value, standardField, options, doc);
+}
+
+function installReceiptNumberFormatters(frm) {
+	for (const fieldname of RECEIPT_NUMBER_FIELDS) {
+		const fields = [
+			frappe.meta.docfield_map["SmartProcess Accounting Pair"]?.[fieldname],
+			frappe.meta.get_docfield("SmartProcess Accounting Pair", fieldname, frm.docname),
+		];
+		for (const field of fields) {
+			if (!field) {
+				continue;
+			}
+			field.formatter = receiptCompactNumberFormatter;
+		}
+	}
+}
+
+function configureCompactNumberInput(control) {
+	if (!control?.format_for_input || !["Currency", "Float"].includes(control.df?.fieldtype)) {
+		return;
+	}
+	if (!control.__sp_original_format_for_input) {
+		control.__sp_original_format_for_input = control.format_for_input;
+		control.format_for_input = function (value) {
+			const formatted = this.__sp_original_format_for_input.call(this, value);
+			return compactFormattedValue(formatted, this.df, this.doc || this.frm?.doc);
+		};
+	}
+	if (control.$input && document.activeElement !== control.$input.get(0)) {
+		control.set_formatted_input(control.value);
+	}
+}
 
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	refresh(frm) {
+		installReceiptNumberFormatters(frm);
 		if (canStartCorrection(frm)) {
 			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
 		}
 		receiptForm.configure(frm);
+		void receiptForm.loadCurrencyOptions(frm);
 	},
 	setup(frm) {
+		installReceiptNumberFormatters(frm);
 		frm.set_query("receipt_payer_type", () => ({ filters: { name: ["in", PARTY_TYPES] } }));
 		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
 			filters: { name: ["in", RECEIPT_RECIPIENT_TYPES] },
@@ -77,6 +152,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 	operation_type(frm) {
 		receiptForm.configure(frm);
+		return receiptForm.loadCurrencyOptions(frm);
 	},
 	posting_date(frm) {
 		return receiptForm.parentPostingDateChanged(frm);
@@ -87,6 +163,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 			if (frm.doc.operation_type === RECEIPT) {
 				await frm.set_value("receipt_payer_account", "");
 			}
+			receiptForm.applyCurrencyOptions(frm, []);
 			return;
 		}
 		const { message } = await frappe.call({
@@ -102,6 +179,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		}
 		if (frm.doc.operation_type === RECEIPT) {
 			await frm.set_value("receipt_payer_account", "");
+			await receiptForm.loadCurrencyOptions(frm, true);
 			await receiptForm.payerCurrencyChanged(frm);
 		}
 	},
@@ -160,6 +238,9 @@ function renderGridProperties(grid, properties) {
 			for (const [fieldname, property, value] of this.__sp_properties || []) {
 				updateGridProperty(this, fieldname, property, value);
 			}
+			if (this.__sp_receipt_currency_options !== undefined) {
+				updateGridProperty(this, "receipt_currency", "options", this.__sp_receipt_currency_options);
+			}
 		};
 		grid.__sp_setup_fields = true;
 	}
@@ -214,6 +295,14 @@ const receiptForm = {
 			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
 		frm.toggle_display("receipt_payer_exchange_rate", Boolean(foreignPayer));
 		frm.toggle_reqd("receipt_payer_exchange_rate", Boolean(foreignPayer));
+		frm.set_df_property(
+			"receipt_payer_exchange_rate",
+			"formatter",
+			isReceipt ? compactNumberFormatter : null,
+		);
+		if (isReceipt) {
+			configureCompactNumberInput(frm.fields_dict.receipt_payer_exchange_rate);
+		}
 		this.updatePayerRateMeaning(frm);
 		frm.toggle_display("company_currency", !isReceipt);
 	},
@@ -274,6 +363,7 @@ const receiptForm = {
 				["debit_account", "columns", 3],
 				["debit_amount", "columns", 2],
 				["debit_amount", "label", "Amount"],
+				...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", null]),
 			]);
 			return;
 		}
@@ -314,10 +404,15 @@ const receiptForm = {
 			["deposit_identifier", "label", "شناسه واریز"],
 			["depositor_name", "label", "نام واریزکننده"],
 			["bank_name", "label", "نام بانک / بانک مبدأ"],
+			["receipt_posting_date", "columns", 1],
+			["receipt_recipient_type", "columns", 1],
+			["receipt_recipient", "columns", 2],
+			["receipt_currency", "columns", 1],
 			["debit_exchange_rate", "columns", 1],
-			["debit_company_amount", "columns", 2],
+			["debit_company_amount", "columns", 1],
 			["debit_account", "columns", 2],
 			["debit_amount", "columns", 1],
+			...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", compactNumberFormatter]),
 			[
 				"debit_amount",
 				"label",
@@ -339,6 +434,10 @@ const receiptForm = {
 			return;
 		}
 		const foreign = row.receipt_currency && row.receipt_currency !== frm.doc.company_currency;
+		const hasForeign = (frm.doc.operational_pairs || []).some(
+			(candidate) => candidate.receipt_currency
+				&& candidate.receipt_currency !== frm.doc.company_currency,
+		);
 		for (const [fieldname, label] of [
 			["debit_section", "دریافت"],
 			["debit_account", "معین دریافتی"],
@@ -360,11 +459,74 @@ const receiptForm = {
 			gridRow.set_field_property(fieldname, "label", label);
 		}
 		gridRow.toggle_display("receipt_recipient", row.receipt_recipient_type !== ACCOUNT_RECIPIENT);
-		gridRow.toggle_display("debit_exchange_rate", Boolean(foreign));
-		gridRow.toggle_display("debit_company_amount", Boolean(foreign));
+		gridRow.toggle_display("debit_exchange_rate", hasForeign);
+		gridRow.toggle_display("debit_company_amount", hasForeign);
 		gridRow.toggle_display("debit_rate_direction", Boolean(foreign));
 		gridRow.toggle_display("debit_description", true);
 		gridRow.toggle_display("receipt_payer_exchange_rate", false);
+		for (const fieldname of RECEIPT_NUMBER_FIELDS) {
+			configureCompactNumberInput(gridRow.on_grid_fields_dict?.[fieldname]);
+			configureCompactNumberInput(gridRow.grid_form?.fields_dict?.[fieldname]);
+		}
+	},
+	async loadCurrencyOptions(frm, force = false) {
+		if (frm.doc.operation_type !== RECEIPT || !frm.doc.company) {
+			this.applyCurrencyOptions(frm, []);
+			return;
+		}
+		if (!force && frm.__sp_currency_options_company === frm.doc.company) {
+			this.applyCurrencyOptions(frm, frm.__sp_currency_options || []);
+			return;
+		}
+
+		const requestedCompany = frm.doc.company;
+		const requestNumber = (frm.__sp_currency_options_request || 0) + 1;
+		frm.__sp_currency_options_request = requestNumber;
+		const { message } = await frappe.call({
+			type: "GET",
+			method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_currency_options",
+			args: { company: requestedCompany },
+		});
+		if (frm.doc.company !== requestedCompany || frm.__sp_currency_options_request !== requestNumber) {
+			return;
+		}
+		frm.__sp_currency_options_company = requestedCompany;
+		frm.__sp_currency_options = message || [];
+		this.applyCurrencyOptions(frm, frm.__sp_currency_options);
+	},
+	applyCurrencyOptions(frm, availableCurrencies) {
+		const storedCurrencies = [
+			frm.doc.receipt_payer_currency,
+			...(frm.doc.operational_pairs || []).map((row) => row.receipt_currency),
+		].filter(Boolean);
+		const options = ["", ...new Set([...availableCurrencies, ...storedCurrencies])];
+		const optionText = options.join("\n");
+		frm.set_df_property("receipt_payer_currency", "options", optionText);
+
+		const grid = frm.fields_dict.operational_pairs?.grid;
+		if (!grid) {
+			return;
+		}
+		for (const field of [
+			frappe.meta.docfield_map["SmartProcess Accounting Pair"]?.receipt_currency,
+			frappe.meta.get_docfield("SmartProcess Accounting Pair", "receipt_currency", frm.docname),
+		]) {
+			if (field) {
+				field.options = optionText;
+			}
+		}
+		grid.__sp_receipt_currency_options = optionText;
+		updateGridProperty(grid, "receipt_currency", "options", optionText);
+		grid.refresh();
+		for (const gridRow of grid.grid_rows || []) {
+			const rowField = gridRow.docfields?.find(
+				(field) => field.fieldname === "receipt_currency",
+			);
+			if (rowField) {
+				rowField.options = optionText;
+			}
+			gridRow.set_field_property("receipt_currency", "options", optionText);
+		}
 	},
 	async payerChanged(frm, clearAccount) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -731,6 +893,11 @@ const events = {
 	},
 	operational_pairs_add(frm, cdt, cdn) {
 		return spAccountingPair.copyPreviousReceiptRow(frm, cdt, cdn);
+	},
+	operational_pairs_remove(frm) {
+		if (frm.doc.operation_type === RECEIPT) {
+			receiptForm.configureGrid(frm, true);
+		}
 	},
 	receipt_recipient_type(frm, cdt, cdn) {
 		return spAccountingPair.receiptRecipientChanged(frm, cdt, cdn, true);

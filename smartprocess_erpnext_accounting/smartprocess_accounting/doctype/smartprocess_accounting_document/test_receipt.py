@@ -10,6 +10,7 @@ from frappe.core.doctype.doctype.doctype import validate_fields_for_doctype
 from frappe.utils import add_days, getdate, nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
+	get_receipt_currency_options,
 	get_receipt_party_account_suggestion,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_posting import (
@@ -138,6 +139,20 @@ class TestReceiptUX(V2IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "ارز حساب"):
 			doc.validate()
 
+	def test_forged_or_disabled_row_currency_is_rejected(self):
+		doc = self.receipt([self.receipt_row(BASE_BANK, "FORGED-CURRENCY", 10, 10)])
+		with self.assertRaisesRegex(frappe.ValidationError, "فعال و معتبر"):
+			doc.validate()
+
+	def test_forged_or_disabled_payer_currency_is_rejected(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 100)],
+			payer_currency="FORGED-CURRENCY",
+			payer_account=CUSTOMER_BASE,
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "فعال و معتبر"):
+			doc.validate()
+
 	def test_payer_account_currency_mismatch_is_rejected(self):
 		doc = self.receipt(
 			[self.receipt_row(BASE_BANK, BASE, 100)],
@@ -164,16 +179,76 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertIn('set_value(cdt, cdn, "debit_account", "")', source)
 		self.assertIn('frm.set_value("receipt_payer_exchange_rate", "")', source)
 
-	def test_base_currency_client_contract_hides_fx_fields(self):
+	def test_all_base_currency_client_contract_hides_fx_fields(self):
 		source = self.client_source()
-		self.assertIn('gridRow.toggle_display("debit_exchange_rate", Boolean(foreign))', source)
-		self.assertIn('gridRow.toggle_display("debit_company_amount", Boolean(foreign))', source)
+		self.assertIn('gridRow.toggle_display("debit_exchange_rate", hasForeign)', source)
+		self.assertIn('gridRow.toggle_display("debit_company_amount", hasForeign)', source)
 
 	def test_foreign_currency_client_contract_shows_amount_rate_and_base_preview(self):
 		source = self.client_source()
 		self.assertIn('grid.toggle_display("debit_exchange_rate", hasForeign)', source)
 		self.assertIn('grid.toggle_display("debit_company_amount", hasForeign)', source)
 		self.assertIn('hasForeign ? __("مبلغ ارز") : __("مبلغ")', source)
+
+	def test_mixed_currency_grid_uses_uniform_fx_columns(self):
+		source = self.client_source()
+		self.assertIn("const hasForeign = (frm.doc.operational_pairs || []).some", source)
+		self.assertIn('["debit_exchange_rate", "columns", 1]', source)
+		self.assertIn('["debit_company_amount", "columns", 1]', source)
+
+	def test_currency_changes_add_and_remove_refresh_grid_without_reload(self):
+		source = self.client_source()
+		self.assertIn("receiptForm.configureGrid(frm, true)", source)
+		self.assertIn("operational_pairs_remove(frm)", source)
+		self.assertIn("copyPreviousReceiptRow", source)
+		self.assertNotIn("window.location.reload", source)
+
+	def test_currency_fields_are_dynamic_selects(self):
+		parent = frappe.get_meta("SmartProcess Accounting Document").get_field(
+			"receipt_payer_currency"
+		)
+		row = frappe.get_meta("SmartProcess Accounting Pair").get_field("receipt_currency")
+		self.assertEqual(parent.fieldtype, "Select")
+		self.assertEqual(row.fieldtype, "Select")
+		self.assertFalse(parent.options)
+		self.assertFalse(row.options)
+
+	def test_currency_dropdown_options_include_company_base_and_foreign_accounts(self):
+		options = get_receipt_currency_options(COMPANY)
+		self.assertEqual(options[0], BASE)
+		self.assertTrue({BASE, FOREIGN_A, FOREIGN_B}.issubset(options))
+		self.assertEqual(options[1:], sorted(options[1:]))
+		self.assertFalse(
+			frappe.get_all(
+				"Currency",
+				filters={"name": ["in", options], "enabled": 0},
+				pluck="name",
+			)
+		)
+
+	def test_currency_dropdown_client_preserves_stored_codes_and_updates_filters(self):
+		source = self.client_source()
+		self.assertIn("...(frm.doc.operational_pairs || []).map((row) => row.receipt_currency)", source)
+		self.assertIn('frm.set_df_property("receipt_payer_currency", "options", optionText)', source)
+		self.assertIn('updateGridProperty(grid, "receipt_currency", "options", optionText)', source)
+		self.assertIn("row.receipt_currency", source)
+		self.assertIn("receiptAccountFilters", source)
+
+	def test_existing_document_currency_codes_reload_unchanged(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]
+		).insert()
+		reloaded = frappe.get_doc(doc.doctype, doc.name)
+		self.assertEqual(reloaded.receipt_payer_currency, FOREIGN_A)
+		self.assertEqual(reloaded.operational_pairs[0].receipt_currency, FOREIGN_A)
+
+	def test_receipt_number_fields_use_local_compact_formatter(self):
+		source = self.client_source()
+		self.assertIn("compactNumberFormatter", source)
+		self.assertIn("configureCompactNumberInput", source)
+		self.assertIn("RECEIPT_NUMBER_FIELDS", source)
+		self.assertNotIn("frappe.form.formatters.Currency =", source)
+		self.assertNotIn("frappe.form.formatters.Float =", source)
 
 	def test_cross_currency_requires_explicit_payer_rate(self):
 		doc = self.receipt(

@@ -24,6 +24,10 @@ app_include_css = [
 	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css",
 ]
 
+app_include_js = [
+	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.7.2",
+]
+
 doctype_js = {
 	"Sales Invoice": "public/js/manual_invoice_conversion_rate.js",
 	"Purchase Invoice": "public/js/manual_invoice_conversion_rate.js",

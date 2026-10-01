@@ -11,7 +11,7 @@
   {"columns":1,"fieldname":"receipt_posting_date","fieldtype":"Date","in_list_view":1,"label":"تاریخ"},
   {"columns":1,"fieldname":"receipt_recipient_type","fieldtype":"Link","in_list_view":1,"label":"نوع دریافت‌کننده","options":"DocType"},
   {"columns":1,"fieldname":"receipt_recipient","fieldtype":"Dynamic Link","in_list_view":1,"label":"نام دریافت‌کننده","options":"receipt_recipient_type"},
-  {"columns":1,"fieldname":"receipt_currency","fieldtype":"Link","in_list_view":1,"label":"ارز","options":"Currency"},
+  {"columns":1,"fieldname":"receipt_currency","fieldtype":"Select","in_list_view":1,"label":"ارز"},
   {"fieldname":"receipt_payer_exchange_rate","fieldtype":"Float","hidden":1,"label":"Legacy Payer Exchange Rate","precision":"12"},
   {"fieldname":"debit_section","fieldtype":"Section Break","label":"Debit"},
   {"fieldname":"debit_account_category","fieldtype":"Select","label":"Account Category","options":"\nBank\nCash\nReceivable\nPayable\nExpense\nIncome\nFinancial Intermediary\nOther"},

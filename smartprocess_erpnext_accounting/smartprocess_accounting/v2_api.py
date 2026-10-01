@@ -17,6 +17,45 @@ def get_company_currency(company: str) -> str:
 	return _get_company_currency(company)
 
 
+@frappe.whitelist(methods=["GET"])
+def get_receipt_currency_options(company: str) -> list[str]:
+	"""Return enabled currencies that are usable in the selected Company's accounts."""
+	company_currency = _get_company_currency(company)
+	if not frappe.has_permission("Company", "read", doc=company):
+		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)
+
+	currencies = {company_currency}
+	currencies.update(
+		frappe.get_list(
+			"Account",
+			filters={"company": company, "disabled": 0, "is_group": 0},
+			pluck="account_currency",
+			limit=0,
+		)
+	)
+	currencies.update(
+		frappe.get_list(
+			"SmartProcess Party Currency Account",
+			filters={"company": company},
+			pluck="currency",
+			limit=0,
+		)
+	)
+	currencies.discard(None)
+	currencies.discard("")
+
+	enabled = set(
+		frappe.get_list(
+			"Currency",
+			filters={"enabled": 1, "name": ["in", sorted(currencies)]},
+			pluck="name",
+			limit=0,
+		)
+	)
+	ordered = [company_currency] if company_currency in enabled else []
+	return [*ordered, *sorted(enabled - {company_currency})]
+
+
 @frappe.whitelist()
 def get_account_details(account: str, company: str) -> dict:
 	account_doc = validate_account(account, company)
