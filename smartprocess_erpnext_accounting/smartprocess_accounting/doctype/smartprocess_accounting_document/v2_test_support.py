@@ -67,10 +67,17 @@ class V2IntegrationTestCase(FrappeTestCase):
 		}
 
 	def active_gl(self, doc):
+		voucher_type, voucher_names = self.accounting_vouchers(doc)
+		if not voucher_names:
+			return []
 		return frappe.get_all(
 			"GL Entry",
-			filters={"voucher_type": doc.doctype, "voucher_no": doc.name, "is_cancelled": 0},
+			filters={"voucher_type": voucher_type, "voucher_no": ["in", voucher_names], "is_cancelled": 0},
 			fields=[
+				"voucher_type",
+				"voucher_no",
+				"voucher_detail_no",
+				"posting_date",
 				"account",
 				"account_currency",
 				"debit",
@@ -78,16 +85,45 @@ class V2IntegrationTestCase(FrappeTestCase):
 				"debit_in_account_currency",
 				"credit_in_account_currency",
 				"transaction_exchange_rate",
+				"remarks",
 			],
 			order_by="creation, name",
 		)
 
 	def all_gl(self, doc):
+		voucher_type, voucher_names = self.accounting_vouchers(doc, include_cancelled=True)
+		if not voucher_names:
+			return []
 		return frappe.get_all(
 			"GL Entry",
-			filters={"voucher_type": doc.doctype, "voucher_no": doc.name},
-			fields=["debit", "credit", "is_cancelled"],
+			filters={"voucher_type": voucher_type, "voucher_no": ["in", voucher_names]},
+			fields=["voucher_no", "posting_date", "debit", "credit", "is_cancelled"],
 			order_by="creation, name",
+		)
+
+	def active_ple(self, doc):
+		voucher_type, voucher_names = self.accounting_vouchers(doc)
+		if not voucher_names:
+			return []
+		return frappe.get_all(
+			"Payment Ledger Entry",
+			filters={
+				"voucher_type": voucher_type,
+				"voucher_no": ["in", voucher_names],
+				"delinked": 0,
+			},
+			fields=["voucher_no", "posting_date", "account", "party_type", "party"],
+		)
+
+	def accounting_vouchers(self, doc, *, include_cancelled=False):
+		if doc.operation_type != "Receipt":
+			return doc.doctype, [doc.name]
+		filters = {"source_document": doc.name}
+		if not include_cancelled:
+			filters["docstatus"] = 1
+		return (
+			"SmartProcess Accounting Posting",
+			frappe.get_all("SmartProcess Accounting Posting", filters=filters, pluck="name"),
 		)
 
 	def create_user(self, roles, *, companies=(COMPANY,)):

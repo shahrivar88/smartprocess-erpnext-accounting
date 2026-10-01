@@ -50,12 +50,26 @@ class SmartProcessAccountingDocument(AccountsController):
 	def before_submit(self):
 		require_posting_enabled()
 		self._validate_accounting(for_posting=True)
+		if self.operation_type == "Receipt":
+			post_document(self)
 
 	def on_submit(self):
-		post_document(self)
+		if self.operation_type != "Receipt":
+			post_document(self)
+
+	def before_cancel(self):
+		if self.operation_type == "Receipt":
+			self._set_cancel_link_exceptions()
+			cancel_document(self)
 
 	def on_cancel(self):
+		self._set_cancel_link_exceptions()
+		if self.operation_type != "Receipt":
+			cancel_document(self)
+
+	def _set_cancel_link_exceptions(self):
 		self.ignore_linked_doctypes = (
+			"SmartProcess Accounting Posting",
 			"GL Entry",
 			"Payment Ledger Entry",
 			"Repost Payment Ledger",
@@ -63,7 +77,6 @@ class SmartProcessAccountingDocument(AccountsController):
 			"Repost Accounting Ledger",
 			"Repost Accounting Ledger Items",
 		)
-		cancel_document(self)
 
 	def before_update_after_submit(self):
 		if self.has_value_changed("correction_reason") and not self.flags.in_correction:

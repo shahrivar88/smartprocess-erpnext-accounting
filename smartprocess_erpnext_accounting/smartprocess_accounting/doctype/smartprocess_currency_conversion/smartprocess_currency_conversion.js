@@ -85,7 +85,9 @@ function account_query(frm) {
 
 function party_type_query() {
 	return {
-		filters: {},
+		filters: {
+			name: ["in", ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"]],
+		},
 	};
 }
 

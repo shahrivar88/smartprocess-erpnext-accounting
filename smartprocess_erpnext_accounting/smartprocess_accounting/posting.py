@@ -34,7 +34,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 
 SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
-VOUCHER_DOCTYPE = "SmartProcess Accounting Document"
 
 
 @dataclass(frozen=True)
@@ -42,6 +41,7 @@ class PostingLine:
 	pair_number: int
 	side: str
 	voucher_detail_no: str
+	posting_date: object
 	account: str
 	account_currency: str
 	party_type: str | None
@@ -66,8 +66,13 @@ def validate_document(doc, *, for_posting: bool = False) -> list[PostingLine]:
 	total_credit = Decimal("0")
 	for number, row in enumerate(rows, start=1):
 		row.company_currency = doc.company_currency
-		debit = _validate_side(doc, row, number, "debit", account_details, precision, for_posting)
-		credit = _validate_side(doc, row, number, "credit", account_details, precision, for_posting)
+		posting_date = _effective_posting_date(doc, row)
+		debit = _validate_side(
+			doc, row, number, "debit", account_details, precision, for_posting, posting_date
+		)
+		credit = _validate_side(
+			doc, row, number, "credit", account_details, precision, for_posting, posting_date
+		)
 		if debit is None or credit is None:
 			_pair_error(number, _("Pair"), _("Side"), _("Both Debit and Credit sides are required."))
 		if debit.company_amount != credit.company_amount:
@@ -96,7 +101,18 @@ def post_document(doc) -> None:
 	if cint(doc.docstatus) != 1:
 		frappe.throw(_("Only a submitted SmartProcess Accounting Document can post."))
 	assert_native_posting_contract()
+	if doc.operation_type == "Receipt":
+		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
+			submit_receipt,
+		)
+
+		submit_receipt(doc)
+		return
 	lines = validate_document(doc, for_posting=True)
+	post_lines(doc, lines)
+
+
+def post_lines(doc, lines: list[PostingLine]) -> None:
 	_lock_voucher(doc, expected_docstatus=1)
 	_assert_not_posted(doc)
 	gl_map = [_make_gl_entry(doc, line) for line in lines]
@@ -113,15 +129,26 @@ def cancel_document(doc) -> None:
 	if cint(doc.docstatus) != 2:
 		frappe.throw(_("Only a cancelled SmartProcess Accounting Document can reverse its ledger."))
 	assert_native_posting_contract()
+	if doc.operation_type == "Receipt":
+		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
+			cancel_receipt,
+		)
+
+		cancel_receipt(doc)
+		return
+	cancel_voucher(doc)
+
+
+def cancel_voucher(doc) -> None:
 	_lock_voucher(doc, expected_docstatus=2)
 	if not frappe.db.exists(
 		"GL Entry",
-		{"voucher_type": VOUCHER_DOCTYPE, "voucher_no": doc.name, "is_cancelled": 0},
+		{"voucher_type": doc.doctype, "voucher_no": doc.name, "is_cancelled": 0},
 	):
 		frappe.throw(_("No active General Ledger entries exist for this document."))
 	_run_atomically(
 		lambda: make_reverse_gl_entries(
-			voucher_type=VOUCHER_DOCTYPE,
+			voucher_type=doc.doctype,
 			voucher_no=doc.name,
 			update_outstanding="No",
 		)
@@ -143,7 +170,7 @@ def assert_native_posting_contract() -> None:
 		frappe.throw(_("ERPNext reversal contract changed. V2 cancellation is disabled."))
 
 
-def _validate_side(doc, row, number, side, account_details, precision, for_posting):
+def _validate_side(doc, row, number, side, account_details, precision, for_posting, posting_date):
 	account_name = row.get(f"{side}_account")
 	amount_value = row.get(f"{side}_amount")
 	party_type = row.get(f"{side}_party_type")
@@ -210,6 +237,7 @@ def _validate_side(doc, row, number, side, account_details, precision, for_posti
 		pair_number=number,
 		side=side,
 		voucher_detail_no=row.name,
+		posting_date=posting_date,
 		account=account.name,
 		account_currency=account.account_currency,
 		party_type=party_type or None,
@@ -248,7 +276,7 @@ def _make_gl_entry(doc, line: PostingLine):
 			"party": line.party,
 			"account_currency": line.account_currency,
 			"transaction_exchange_rate": float(line.exchange_rate),
-			"posting_date": getdate(doc.posting_date),
+			"posting_date": line.posting_date,
 			"voucher_detail_no": line.voucher_detail_no,
 			"remarks": line.remarks,
 			"against": line.against,
@@ -289,17 +317,23 @@ def _account_names(rows) -> set[str]:
 	}
 
 
+def _effective_posting_date(doc, row):
+	if doc.operation_type == "Receipt":
+		return getdate(row.get("receipt_posting_date") or doc.posting_date)
+	return getdate(doc.posting_date)
+
+
 def _assert_not_posted(doc) -> None:
 	if frappe.db.exists(
 		"GL Entry",
-		{"voucher_type": VOUCHER_DOCTYPE, "voucher_no": doc.name, "is_cancelled": 0},
+		{"voucher_type": doc.doctype, "voucher_no": doc.name, "is_cancelled": 0},
 	):
 		frappe.throw(_("This document already has active General Ledger entries."))
 
 
 def _lock_voucher(doc, *, expected_docstatus: int) -> None:
 	stored_docstatus = frappe.db.get_value(
-		VOUCHER_DOCTYPE,
+		doc.doctype,
 		doc.name,
 		"docstatus",
 		for_update=True,

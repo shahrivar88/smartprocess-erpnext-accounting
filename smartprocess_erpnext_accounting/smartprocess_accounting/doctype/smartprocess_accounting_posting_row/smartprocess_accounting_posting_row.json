@@ -1,0 +1,24 @@
+{
+ "actions": [],
+ "creation": "2026-10-01 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": ["pair_index", "source_pair"],
+ "fields": [
+  {"fieldname":"pair_index","fieldtype":"Int","in_list_view":1,"label":"Receipt Row","read_only":1,"reqd":1},
+  {"fieldname":"source_pair","fieldtype":"Data","in_list_view":1,"label":"Source Pair ID","read_only":1,"reqd":1}
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Accounting Posting Row",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import frappe
 from frappe import _
 from frappe.model.meta import get_field_precision
+from frappe.utils import getdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party import (
 	is_approved_party_account,
@@ -42,6 +43,7 @@ def canonicalize_receipt(doc) -> None:
 	}
 	approved_party_accounts = set()
 	payer = _validate_payer(doc, accounts, approved_party_accounts)
+	payer_rate = _payer_exchange_rate(doc, payer, company_currency)
 	precision = _company_currency_precision(company_currency)
 	rows = doc.operational_pairs or []
 	if not rows:
@@ -57,6 +59,7 @@ def canonicalize_receipt(doc) -> None:
 			precision,
 			accounts,
 			approved_party_accounts,
+			payer_rate,
 		)
 
 
@@ -69,6 +72,7 @@ def canonicalize_receipt_row(
 	precision: int,
 	accounts: dict,
 	approved_party_accounts: set,
+	payer_rate: Decimal,
 ) -> None:
 	recipient_type = row.get("receipt_recipient_type")
 	recipient = row.get("receipt_recipient")
@@ -128,22 +132,10 @@ def canonicalize_receipt_row(
 	row.credit_account_currency = payer.account_currency
 	row.credit_suggested_account = None
 	row.credit_description = row.get("debit_description")
+	row.receipt_posting_date = getdate(row.get("receipt_posting_date") or doc.posting_date)
+	row.receipt_payer_exchange_rate = None
 
-	if payer.account_currency == company_currency:
-		payer_rate = Decimal("1")
-		payer_amount = company_amount
-	elif payer.account_currency == receipt_currency:
-		payer_rate = debit_rate
-		payer_amount = debit_amount
-	else:
-		payer_rate = to_decimal(row.get("receipt_payer_exchange_rate"), _("نرخ ارز پرداخت‌کننده"))
-		if payer_rate <= 0:
-			_receipt_error(
-				number,
-				_("نرخ ارز پرداخت‌کننده"),
-				_("برای دریافت چندارزی، نرخ ارز پرداخت‌کننده الزامی و باید بزرگ‌تر از صفر باشد."),
-			)
-		payer_amount = company_amount / payer_rate
+	payer_amount = company_amount if payer.account_currency == company_currency else company_amount / payer_rate
 
 	row.credit_amount = decimal_text(payer_amount)
 	row.credit_exchange_rate = decimal_text(payer_rate)
@@ -176,6 +168,19 @@ def _validate_payer(doc, accounts: dict, approved_party_accounts: set):
 		approved_party_accounts,
 	)
 	return account
+
+
+def _payer_exchange_rate(doc, payer, company_currency: str) -> Decimal:
+	if payer.account_currency == company_currency:
+		rate = Decimal("1")
+	else:
+		rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز پرداخت‌کننده"))
+		if rate <= 0:
+			frappe.throw(
+				_("برای پرداخت‌کننده ارزی، نرخ ارز پرداخت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
+			)
+	doc.receipt_payer_exchange_rate = decimal_text(rate)
+	return rate
 
 
 def _validate_approved_party_account(

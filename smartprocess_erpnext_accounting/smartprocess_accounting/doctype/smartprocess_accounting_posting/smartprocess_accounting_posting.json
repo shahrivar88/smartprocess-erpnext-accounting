@@ -1,0 +1,37 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:SP-POST-{YYYY}-{#####}",
+ "creation": "2026-10-01 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": ["source_document", "company", "posting_date", "group_identity", "source_rows"],
+ "fields": [
+  {"fieldname":"source_document","fieldtype":"Link","in_list_view":1,"label":"Source Receipt","options":"SmartProcess Accounting Document","read_only":1,"reqd":1},
+  {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","read_only":1,"reqd":1},
+  {"fieldname":"posting_date","fieldtype":"Date","in_list_view":1,"label":"Posting Date","read_only":1,"reqd":1},
+  {"fieldname":"group_identity","fieldtype":"Data","label":"Group Identity","read_only":1,"reqd":1,"unique":1},
+  {"fieldname":"source_rows","fieldtype":"Table","label":"Source Receipt Rows","options":"SmartProcess Accounting Posting Row","read_only":1,"reqd":1}
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-10-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Accounting Posting",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"cancel":1,"create":1,"read":1,"role":"Accounts Manager","submit":1,"write":1},
+  {"cancel":1,"create":1,"read":1,"role":"System Manager","submit":1,"write":1},
+  {"read":1,"role":"Accounts User"},
+  {"read":1,"role":"Auditor"}
+ ],
+ "search_fields": "source_document,group_identity",
+ "sort_field": "posting_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "source_document",
+ "track_changes": 1
+}

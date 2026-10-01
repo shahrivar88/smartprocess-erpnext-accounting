@@ -6,7 +6,7 @@
  "engine": "InnoDB",
  "field_order": ["party_type", "party", "company", "mapping_column", "currency", "account"],
  "fields": [
-  {"fieldname":"party_type","fieldtype":"Link","in_list_view":1,"label":"Party Type","options":"Party Type","reqd":1},
+  {"fieldname":"party_type","fieldtype":"Link","in_list_view":1,"label":"Party Type","options":"DocType","reqd":1},
   {"fieldname":"party","fieldtype":"Dynamic Link","in_list_view":1,"label":"Party","options":"party_type","reqd":1},
   {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","reqd":1},
   {"fieldname":"mapping_column","fieldtype":"Column Break"},
@@ -14,7 +14,7 @@
   {"fieldname":"account","fieldtype":"Link","in_list_view":1,"label":"Account","options":"Account","reqd":1}
  ],
  "links": [],
- "modified": "2026-09-30 00:00:00.000000",
+ "modified": "2026-10-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "SmartProcess Accounting",
  "name": "SmartProcess Party Currency Account",

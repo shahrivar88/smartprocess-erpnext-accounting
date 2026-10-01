@@ -1,3 +1,5 @@
+import unittest
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import cint
@@ -22,3 +24,14 @@ class TestSmartProcessCurrencyConversion(FrappeTestCase):
 		table = parent.get_field("conversion_rows")
 		self.assertEqual(table.options, "SmartProcess Conversion Row")
 		self.assertIsNone(parent.get_field("side_1_account"))
+
+
+def run_currency_conversion_metadata_suite():
+	suite = unittest.defaultTestLoader.loadTestsFromTestCase(TestSmartProcessCurrencyConversion)
+	result = unittest.TextTestRunner(verbosity=2).run(suite)
+	if not result.wasSuccessful():
+		raise AssertionError(
+			f"Currency Conversion metadata suite failed: "
+			f"failures={len(result.failures)}, errors={len(result.errors)}"
+		)
+	return {"tests_run": result.testsRun, "failures": 0, "errors": 0}

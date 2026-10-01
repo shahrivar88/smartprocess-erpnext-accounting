@@ -1,21 +1,19 @@
 const RECEIPT = "Receipt";
 const ACCOUNT_RECIPIENT = "Account";
 const PARTY_TYPES = ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"];
+const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, ACCOUNT_RECIPIENT];
 const RECEIPT_FIELDS = [
+	"receipt_posting_date",
 	"receipt_recipient_type",
 	"receipt_recipient",
 	"receipt_currency",
-	"receipt_payer_exchange_rate",
 ];
 const TECHNICAL_RECEIPT_FIELDS = [
-	"debit_section",
 	"debit_account_category",
 	"debit_suggested_account",
 	"debit_party_type",
 	"debit_party",
 	"debit_account_currency",
-	"debit_rate_direction",
-	"debit_description",
 	"credit_column",
 	"credit_account_category",
 	"credit_account",
@@ -39,6 +37,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 	setup(frm) {
 		frm.set_query("receipt_payer_type", () => ({ filters: { name: ["in", PARTY_TYPES] } }));
+		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
+			filters: { name: ["in", RECEIPT_RECIPIENT_TYPES] },
+		}));
 		frm.set_query("receipt_payer_account", () => ({
 			filters: receiptAccountFilters(
 				frm.doc.company,
@@ -77,6 +78,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	operation_type(frm) {
 		receiptForm.configure(frm);
 	},
+	posting_date(frm) {
+		return receiptForm.parentPostingDateChanged(frm);
+	},
 	async company(frm) {
 		if (!frm.doc.company) {
 			await frm.set_value("company_currency", "");
@@ -98,7 +102,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		}
 		if (frm.doc.operation_type === RECEIPT) {
 			await frm.set_value("receipt_payer_account", "");
-			receiptForm.configure(frm);
+			await receiptForm.payerCurrencyChanged(frm);
 		}
 	},
 	receipt_payer_type(frm) {
@@ -109,6 +113,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 	receipt_payer_currency(frm) {
 		return receiptForm.payerCurrencyChanged(frm);
+	},
+	receipt_payer_exchange_rate(frm) {
+		return receiptForm.payerRateChanged(frm);
 	},
 	receipt_payer_account(frm) {
 		return receiptForm.validatePayerAccount(frm);
@@ -166,6 +173,9 @@ const receiptForm = {
 		const isReceipt = frm.doc.operation_type === RECEIPT;
 		this.configureHeader(frm, isReceipt);
 		this.configureGrid(frm, isReceipt);
+		if (isReceipt && frm.__sp_previous_payer_currency === undefined) {
+			frm.__sp_previous_payer_currency = frm.doc.receipt_payer_currency || "";
+		}
 	},
 	configureHeader(frm, isReceipt) {
 		const labels = isReceipt
@@ -199,12 +209,30 @@ const receiptForm = {
 			frm.toggle_display(fieldname, isReceipt);
 			frm.toggle_reqd(fieldname, isReceipt);
 		}
+		const foreignPayer = isReceipt
+			&& frm.doc.receipt_payer_currency
+			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
+		frm.toggle_display("receipt_payer_exchange_rate", Boolean(foreignPayer));
+		frm.toggle_reqd("receipt_payer_exchange_rate", Boolean(foreignPayer));
+		this.updatePayerRateMeaning(frm);
 		frm.toggle_display("company_currency", !isReceipt);
 	},
 	configureGrid(frm, isReceipt) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
 		if (!grid) {
 			return;
+		}
+		if (isReceipt && frm.doc.posting_date) {
+			for (const row of frm.doc.operational_pairs || []) {
+				if (!row.receipt_posting_date) {
+					void frappe.model.set_value(
+						row.doctype,
+						row.name,
+						"receipt_posting_date",
+						frm.doc.posting_date,
+					);
+				}
+			}
 		}
 		for (const fieldname of RECEIPT_FIELDS) {
 			grid.toggle_display(fieldname, isReceipt);
@@ -215,6 +243,11 @@ const receiptForm = {
 		grid.set_column_disp_in_list_view(RECEIPT_FIELDS, isReceipt);
 		grid.set_column_disp_in_list_view(TECHNICAL_RECEIPT_FIELDS, !isReceipt);
 		grid.set_column_disp_in_list_view(["debit_account", "debit_amount"], true);
+		grid.toggle_display("receipt_payer_exchange_rate", false);
+		grid.set_column_disp_in_list_view("receipt_payer_exchange_rate", false);
+		grid.toggle_display("debit_description", true);
+		grid.toggle_display("debit_rate_direction", true);
+		grid.set_column_disp_in_list_view(["debit_description", "debit_rate_direction"], false);
 		if (!isReceipt) {
 			grid.set_column_disp_in_list_view(["debit_exchange_rate", "debit_company_amount"], false);
 			grid.toggle_display("debit_exchange_rate", true);
@@ -227,7 +260,17 @@ const receiptForm = {
 				["debit_account", "label", "Account"],
 				["debit_exchange_rate", "label", "Exchange Rate"],
 				["debit_company_amount", "label", "Company Currency Amount"],
+				["debit_rate_direction", "label", "Rate Meaning"],
+				["debit_description", "label", "Line Description"],
 				["details_section", "label", "More Details"],
+				["tracking_number", "label", "Tracking Number"],
+				["transfer_reference", "label", "Transfer Reference"],
+				["cheque_number", "label", "Cheque Number"],
+				["cheque_date", "label", "Cheque Date"],
+				["bank_reference", "label", "Bank Reference"],
+				["deposit_identifier", "label", "Deposit Identifier"],
+				["depositor_name", "label", "Depositor Name"],
+				["bank_name", "label", "Bank Name"],
 				["debit_account", "columns", 3],
 				["debit_amount", "columns", 2],
 				["debit_amount", "label", "Amount"],
@@ -240,7 +283,6 @@ const receiptForm = {
 		const hasForeign = rows.some(
 			(row) => row.receipt_currency && row.receipt_currency !== frm.doc.company_currency,
 		);
-		const hasCrossCurrency = rows.some((row) => this.isCrossCurrency(frm, row));
 		const hasPartyRecipient = rows.some(
 			(row) => row.receipt_recipient_type !== ACCOUNT_RECIPIENT,
 		);
@@ -250,11 +292,9 @@ const receiptForm = {
 		);
 		grid.toggle_display("debit_exchange_rate", hasForeign);
 		grid.toggle_display("debit_company_amount", hasForeign);
-		grid.toggle_display("receipt_payer_exchange_rate", hasCrossCurrency);
 		grid.set_column_disp_in_list_view("receipt_recipient", hasPartyRecipient);
 		grid.set_column_disp_in_list_view("debit_exchange_rate", hasForeign);
 		grid.set_column_disp_in_list_view("debit_company_amount", hasForeign);
-		grid.set_column_disp_in_list_view("receipt_payer_exchange_rate", hasCrossCurrency);
 		renderGridProperties(grid, [
 			["receipt_recipient_type", "reqd", 1],
 			["receipt_currency", "reqd", 1],
@@ -263,9 +303,19 @@ const receiptForm = {
 			["debit_account", "label", "معین دریافتی"],
 			["debit_exchange_rate", "label", "نرخ"],
 			["debit_company_amount", "label", "مبلغ ارز پایه"],
+			["debit_rate_direction", "label", "معنی نرخ"],
+			["debit_description", "label", "توضیح"],
 			["details_section", "label", "جزئیات بیشتر"],
+			["tracking_number", "label", "شماره پیگیری"],
+			["transfer_reference", "label", "مرجع انتقال"],
+			["cheque_number", "label", "شماره چک"],
+			["cheque_date", "label", "تاریخ چک"],
+			["bank_reference", "label", "مرجع بانکی"],
+			["deposit_identifier", "label", "شناسه واریز"],
+			["depositor_name", "label", "نام واریزکننده"],
+			["bank_name", "label", "نام بانک / بانک مبدأ"],
 			["debit_exchange_rate", "columns", 1],
-			["debit_company_amount", "columns", hasCrossCurrency ? 1 : 2],
+			["debit_company_amount", "columns", 2],
 			["debit_account", "columns", 2],
 			["debit_amount", "columns", 1],
 			[
@@ -283,23 +333,38 @@ const receiptForm = {
 	},
 	configureGridRow(frm, row) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
-		const gridRow = grid?.grid_rows_by_docname?.[row.name];
+		const activeGridRow = frm.cur_grid?.doc?.name === row.name ? frm.cur_grid : null;
+		const gridRow = activeGridRow || grid?.grid_rows_by_docname?.[row.name];
 		if (!gridRow) {
 			return;
 		}
 		const foreign = row.receipt_currency && row.receipt_currency !== frm.doc.company_currency;
+		for (const [fieldname, label] of [
+			["debit_section", "دریافت"],
+			["debit_account", "معین دریافتی"],
+			["debit_amount", foreign ? "مبلغ ارز" : "مبلغ"],
+			["debit_exchange_rate", "نرخ"],
+			["debit_company_amount", "مبلغ ارز پایه"],
+			["debit_rate_direction", "معنی نرخ"],
+			["debit_description", "توضیح"],
+			["details_section", "جزئیات بیشتر"],
+			["tracking_number", "شماره پیگیری"],
+			["transfer_reference", "مرجع انتقال"],
+			["cheque_number", "شماره چک"],
+			["cheque_date", "تاریخ چک"],
+			["bank_reference", "مرجع بانکی"],
+			["deposit_identifier", "شناسه واریز"],
+			["depositor_name", "نام واریزکننده"],
+			["bank_name", "نام بانک / بانک مبدأ"],
+		]) {
+			gridRow.set_field_property(fieldname, "label", label);
+		}
 		gridRow.toggle_display("receipt_recipient", row.receipt_recipient_type !== ACCOUNT_RECIPIENT);
 		gridRow.toggle_display("debit_exchange_rate", Boolean(foreign));
 		gridRow.toggle_display("debit_company_amount", Boolean(foreign));
-		gridRow.toggle_display("receipt_payer_exchange_rate", this.isCrossCurrency(frm, row));
-	},
-	isCrossCurrency(frm, row) {
-		return Boolean(
-			frm.doc.receipt_payer_currency
-			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency
-			&& row.receipt_currency
-			&& frm.doc.receipt_payer_currency !== row.receipt_currency,
-		);
+		gridRow.toggle_display("debit_rate_direction", Boolean(foreign));
+		gridRow.toggle_display("debit_description", true);
+		gridRow.toggle_display("receipt_payer_exchange_rate", false);
 	},
 	async payerChanged(frm, clearAccount) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -314,12 +379,59 @@ const receiptForm = {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
+		const previousCurrency = frm.__sp_previous_payer_currency || "";
+		const currentCurrency = frm.doc.receipt_payer_currency || "";
+		frm.__sp_previous_payer_currency = currentCurrency;
 		await this.clearMismatchedPayerAccount(frm);
-		for (const row of frm.doc.operational_pairs || []) {
-			await frappe.model.set_value(row.doctype, row.name, "receipt_payer_exchange_rate", "");
+		if (currentCurrency && currentCurrency === frm.doc.company_currency) {
+			await frm.set_value("receipt_payer_exchange_rate", 1);
+		} else if (currentCurrency !== previousCurrency) {
+			await frm.set_value("receipt_payer_exchange_rate", "");
 		}
 		await this.suggestPayerAccount(frm);
+		await this.recalculatePayerRows(frm);
+		this.configureHeader(frm, true);
 		this.configureGrid(frm, true);
+	},
+	async payerRateChanged(frm) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return;
+		}
+		if (frm.doc.receipt_payer_currency === frm.doc.company_currency) {
+			if (Number(frm.doc.receipt_payer_exchange_rate) !== 1) {
+				await frm.set_value("receipt_payer_exchange_rate", 1);
+			}
+		}
+		this.updatePayerRateMeaning(frm);
+		await this.recalculatePayerRows(frm);
+	},
+	updatePayerRateMeaning(frm) {
+		const currency = frm.doc.receipt_payer_currency;
+		const rate = Number(frm.doc.receipt_payer_exchange_rate || 0);
+		const meaning = currency && frm.doc.company_currency && rate > 0
+			? `1 ${currency} = ${rate} ${frm.doc.company_currency}`
+			: "";
+		frm.set_df_property("receipt_payer_exchange_rate", "description", meaning);
+	},
+	async recalculatePayerRows(frm) {
+		for (const row of frm.doc.operational_pairs || []) {
+			await spAccountingPair.calculateReceiptPayer(frm, row.doctype, row.name);
+		}
+	},
+	async parentPostingDateChanged(frm) {
+		if (frm.doc.operation_type !== RECEIPT || !frm.doc.posting_date) {
+			return;
+		}
+		for (const row of frm.doc.operational_pairs || []) {
+			if (!row.receipt_posting_date) {
+				await frappe.model.set_value(
+					row.doctype,
+					row.name,
+					"receipt_posting_date",
+					frm.doc.posting_date,
+				);
+			}
+		}
 	},
 	async validatePayerAccount(frm) {
 		if (frm.doc.operation_type !== RECEIPT || !frm.doc.receipt_payer_account) {
@@ -470,9 +582,33 @@ const spAccountingPair = {
 				? `1 ${accountCurrency} = ${rate} ${frm.doc.company_currency}`
 				: "";
 			await frappe.model.set_value(cdt, cdn, `${side}_rate_direction`, meaning);
+			if (frm.doc.operation_type === RECEIPT && side === "debit") {
+				await this.calculateReceiptPayer(frm, cdt, cdn);
+			}
 		} finally {
 			row.__sp_calculating = false;
 		}
+	},
+	async calculateReceiptPayer(frm, cdt, cdn) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return;
+		}
+		const row = locals[cdt][cdn];
+		const companyAmount = Number(row.debit_company_amount || 0);
+		const payerCurrency = frm.doc.receipt_payer_currency;
+		const basePayer = payerCurrency && payerCurrency === frm.doc.company_currency;
+		const payerRate = basePayer ? 1 : Number(frm.doc.receipt_payer_exchange_rate || 0);
+		const payerAmount = companyAmount > 0 && payerRate > 0
+			? companyAmount / payerRate
+			: 0;
+		await frappe.model.set_value(cdt, cdn, "credit_account_currency", payerCurrency || "");
+		await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", payerRate || "");
+		await frappe.model.set_value(cdt, cdn, "credit_amount", payerAmount || "");
+		await frappe.model.set_value(cdt, cdn, "credit_company_amount", companyAmount || "");
+		const meaning = payerCurrency && frm.doc.company_currency && payerRate > 0
+			? `1 ${payerCurrency} = ${payerRate} ${frm.doc.company_currency}`
+			: "";
+		await frappe.model.set_value(cdt, cdn, "credit_rate_direction", meaning);
 	},
 	async suggest(frm, cdt, cdn, side) {
 		const row = locals[cdt][cdn];
@@ -513,7 +649,6 @@ const spAccountingPair = {
 		await frappe.model.set_value(cdt, cdn, "debit_account_currency", row.receipt_currency || "");
 		if (changed && !row.__sp_receipt_copying) {
 			await frappe.model.set_value(cdt, cdn, "debit_exchange_rate", "");
-			await frappe.model.set_value(cdt, cdn, "receipt_payer_exchange_rate", "");
 		}
 		if (row.receipt_currency === frm.doc.company_currency) {
 			await frappe.model.set_value(cdt, cdn, "debit_exchange_rate", 1);
@@ -557,6 +692,7 @@ const spAccountingPair = {
 		const rows = frm.doc.operational_pairs || [];
 		const index = rows.findIndex((candidate) => candidate.name === cdn);
 		if (index < 1) {
+			await frappe.model.set_value(cdt, cdn, "receipt_posting_date", frm.doc.posting_date || "");
 			receiptForm.configureGrid(frm, true);
 			return;
 		}
@@ -565,14 +701,17 @@ const spAccountingPair = {
 		row.__sp_receipt_copying = true;
 		try {
 			for (const fieldname of [
+				"receipt_posting_date",
 				"receipt_recipient_type",
 				"receipt_recipient",
 				"receipt_currency",
 				"debit_account",
 				"debit_exchange_rate",
-				"receipt_payer_exchange_rate",
 			]) {
-				await frappe.model.set_value(cdt, cdn, fieldname, previous[fieldname] || "");
+				const value = fieldname === "receipt_posting_date"
+					? previous[fieldname] || frm.doc.posting_date || ""
+					: previous[fieldname] || "";
+				await frappe.model.set_value(cdt, cdn, fieldname, value);
 			}
 			for (const fieldname of ["debit_amount", "debit_company_amount", "credit_amount", "credit_company_amount"]) {
 				await frappe.model.set_value(cdt, cdn, fieldname, "");
