@@ -78,6 +78,59 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc.validate()
 		self.assertFalse(frappe.db.exists("SmartProcess Party Currency Account", filters))
 
+	def test_header_account_receiver_uses_real_account_without_fake_party(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_CLEARING, BASE, 100)],
+			payer_currency=BASE,
+			payer_account=BASE_BANK,
+			receiver_kind="بانک",
+		)
+		doc.validate()
+		row = doc.operational_pairs[0]
+		self.assertEqual(row.debit_account, BASE_BANK)
+		self.assertFalse(row.debit_party_type)
+		self.assertFalse(row.debit_party)
+
+	def test_header_account_receiver_category_is_enforced(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_CLEARING, BASE, 100)],
+			payer_currency=BASE,
+			payer_account=CUSTOMER_BASE,
+			receiver_kind="بانک",
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "Bank"):
+			doc.validate()
+
+	def test_receipt_header_types_and_supplementary_section_contract(self):
+		meta = frappe.get_meta("SmartProcess Accounting Document")
+		receiver = meta.get_field("receipt_receiver_kind")
+		for option in (
+			"Customer",
+			"Supplier",
+			"Employee",
+			"SmartProcess Financial Intermediary",
+			"بانک",
+			"صندوق",
+			"سایر حساب‌ها",
+		):
+			self.assertIn(option, receiver.options)
+		section = meta.get_field("supplementary_section")
+		self.assertTrue(section.collapsible)
+		self.assertLess(meta.get_field("operational_pairs").idx, section.idx)
+		self.assertLess(section.idx, meta.get_field("general_reference").idx)
+
+	def test_receipt_live_summary_and_wide_grid_client_contract(self):
+		source = self.client_source()
+		for contract in (
+			"summarizeReceiptRows",
+			"جمع کل به ارز پایه",
+			"میانگین وزنی نرخ",
+			"sp-receipt-wide-grid",
+			"operational_pairs_remove",
+			"receiptForm.renderSummary(frm)",
+		):
+			self.assertIn(contract, source)
+
 	def test_customer_foreign_payer_to_base_account(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])
 		doc.validate()
@@ -681,6 +734,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		payer_currency=FOREIGN_A,
 		payer_account=CUSTOMER_A,
 		payer_rate=10,
+		receiver_kind=None,
 	):
 		return frappe.get_doc(
 			{
@@ -693,6 +747,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 				"receipt_payer_exchange_rate": payer_rate,
 				"receipt_payer_type": payer_type,
 				"receipt_payer": payer,
+				"receipt_receiver_kind": receiver_kind,
 				"general_reference": frappe.generate_hash(length=10),
 				"operational_pairs": rows,
 			}

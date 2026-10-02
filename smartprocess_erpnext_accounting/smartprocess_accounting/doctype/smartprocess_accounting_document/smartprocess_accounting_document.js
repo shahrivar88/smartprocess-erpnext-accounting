@@ -1,6 +1,11 @@
 const RECEIPT = "Receipt";
 const ACCOUNT_RECIPIENT = "Account";
 const PARTY_TYPES = ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"];
+const RECEIVER_ACCOUNT_TYPES = {
+	"بانک": "Bank",
+	"صندوق": "Cash",
+	"سایر حساب‌ها": null,
+};
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, ACCOUNT_RECIPIENT];
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
@@ -58,6 +63,15 @@ function compactNumberFormatter(value, df, options, doc) {
 	return compactFormattedValue(formatted, standardField, doc);
 }
 
+function formatReceiptSummaryValue(value) {
+	return compactNumberFormatter(
+		value,
+		{ fieldtype: "Float", precision: 9 },
+		{ inline: true, only_value: true },
+		{},
+	);
+}
+
 function receiptCompactNumberFormatter(value, df, options, doc) {
 	const parent = doc?.parenttype && doc?.parent
 		? locals[doc.parenttype]?.[doc.parent]
@@ -107,7 +121,6 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		void receiptForm.loadCurrencyOptions(frm);
 	},
 	setup(frm) {
-		frm.set_query("receipt_payer_type", () => ({ filters: { name: ["in", PARTY_TYPES] } }));
 		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
 			filters: { name: ["in", RECEIPT_RECIPIENT_TYPES] },
 		}));
@@ -116,6 +129,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 				frm.doc.company,
 				frm.doc.receipt_payer_currency,
 				frm.doc.receipt_payer_type,
+				frm.doc.receipt_receiver_kind,
 			),
 		}));
 		for (const side of ["debit", "credit"]) {
@@ -182,6 +196,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	receipt_payer_type(frm) {
 		return receiptForm.payerChanged(frm, true);
 	},
+	receipt_receiver_kind(frm) {
+		return receiptForm.receiverKindChanged(frm);
+	},
 	receipt_payer(frm) {
 		return receiptForm.payerChanged(frm, true);
 	},
@@ -196,8 +213,16 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 });
 
-function receiptAccountFilters(company, currency, partyType) {
+function receiptAccountFilters(company, currency, partyType, receiverKind = null) {
 	const filters = { company, disabled: 0, is_group: 0, account_currency: currency };
+	if (receiverKind === "بانک" || receiverKind === "صندوق") {
+		filters.account_type = RECEIVER_ACCOUNT_TYPES[receiverKind];
+		return filters;
+	}
+	if (receiverKind === "سایر حساب‌ها") {
+		filters.account_type = ["not in", ["Bank", "Cash", "Receivable", "Payable"]];
+		return filters;
+	}
 	const accountType = receiptPartyAccountType(partyType);
 	if (accountType) {
 		filters.account_type = accountType;
@@ -320,6 +345,10 @@ function renderGridProperties(grid, properties, receiptColumns = null) {
 const receiptForm = {
 	configure(frm) {
 		const isReceipt = frm.doc.operation_type === RECEIPT;
+		if (isReceipt && !frm.doc.receipt_receiver_kind && frm.doc.receipt_payer_type) {
+			frm.doc.receipt_receiver_kind = frm.doc.receipt_payer_type;
+			frm.refresh_field("receipt_receiver_kind");
+		}
 		this.configureHeader(frm, isReceipt);
 		this.configureGrid(frm, isReceipt);
 		if (isReceipt && frm.__sp_previous_payer_currency === undefined) {
@@ -354,15 +383,20 @@ const receiptForm = {
 		for (const [fieldname, label] of Object.entries(labels)) {
 			frm.set_df_property(fieldname, "label", label);
 		}
-		for (const fieldname of [
-			"receipt_payer_currency",
-			"receipt_payer_account",
-			"receipt_payer_type",
-			"receipt_payer",
-		]) {
+		for (const fieldname of ["receipt_receiver_kind", "receipt_payer_currency", "receipt_payer_account"]) {
 			frm.toggle_display(fieldname, isReceipt);
 			frm.toggle_reqd(fieldname, isReceipt);
 		}
+		const partyReceiver = isReceipt && PARTY_TYPES.includes(frm.doc.receipt_receiver_kind);
+		frm.toggle_display("receipt_payer_type", false);
+		frm.toggle_reqd("receipt_payer_type", false);
+		frm.toggle_display("receipt_payer", partyReceiver);
+		frm.toggle_reqd("receipt_payer", partyReceiver);
+		frm.set_df_property(
+			"supplementary_section",
+			"label",
+			isReceipt ? "اطلاعات تکمیلی" : "Additional Information",
+		);
 		const foreignPayer = isReceipt
 			&& frm.doc.receipt_payer_currency
 			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
@@ -384,6 +418,8 @@ const receiptForm = {
 		if (!grid) {
 			return;
 		}
+		frm.fields_dict.operational_pairs.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
+		frm.fields_dict.receipt_summary?.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
 		if (isReceipt && frm.doc.posting_date) {
 			for (const row of frm.doc.operational_pairs || []) {
 				if (!row.receipt_posting_date) {
@@ -446,6 +482,7 @@ const receiptForm = {
 				["credit_amount", "label", "Amount"],
 				...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", null]),
 			]);
+			this.renderSummary(frm);
 			return;
 		}
 
@@ -509,6 +546,36 @@ const receiptForm = {
 			}
 			this.configureGridRow(frm, row);
 		}
+		this.renderSummary(frm);
+	},
+	renderSummary(frm) {
+		const field = frm.fields_dict.receipt_summary;
+		if (!field || frm.doc.operation_type !== RECEIPT) {
+			field?.$wrapper.empty();
+			return;
+		}
+		const summarize = window.smartprocessAccounting?.numeric?.summarizeReceiptRows;
+		if (!summarize) {
+			field.$wrapper.empty();
+			return;
+		}
+		const summary = summarize(frm.doc.operational_pairs || [], frm.doc.company_currency);
+		const rows = summary.currencies.map((row) => {
+			const rate = row.weightedRate === null ? "—" : formatReceiptSummaryValue(row.weightedRate);
+			return `<tr>
+				<td>${frappe.utils.escape_html(row.currency)}</td>
+				<td>${formatReceiptSummaryValue(row.amount)}</td>
+				<td>${rate}</td>
+				<td>${formatReceiptSummaryValue(row.baseAmount)}</td>
+			</tr>`;
+		}).join("");
+		field.$wrapper.html(`<div class="sp-receipt-summary">
+			<table class="table table-bordered">
+				<thead><tr><th>ارز</th><th>مجموع دریافت همان ارز</th><th>میانگین وزنی نرخ</th><th>مجموع به ارز پایه</th></tr></thead>
+				<tbody>${rows || '<tr><td colspan="4" class="text-muted">ردیف معتبری برای خلاصه وجود ندارد.</td></tr>'}</tbody>
+			</table>
+			<div class="sp-receipt-summary-total"><strong>جمع کل به ارز پایه:</strong> ${formatReceiptSummaryValue(summary.companyTotal)}</div>
+		</div>`);
 	},
 	configureGridRow(frm, row) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
@@ -620,6 +687,18 @@ const receiptForm = {
 			await frm.set_value("receipt_payer_account", "");
 		}
 		await this.suggestPayerAccount(frm);
+	},
+	async receiverKindChanged(frm) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return;
+		}
+		const partyType = PARTY_TYPES.includes(frm.doc.receipt_receiver_kind)
+			? frm.doc.receipt_receiver_kind
+			: "";
+		await frm.set_value("receipt_payer_type", partyType);
+		await frm.set_value("receipt_payer", "");
+		await frm.set_value("receipt_payer_account", "");
+		this.configureHeader(frm, true);
 	},
 	async payerCurrencyChanged(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -830,6 +909,7 @@ const spAccountingPair = {
 			await frappe.model.set_value(cdt, cdn, `${side}_rate_direction`, meaning);
 			if (frm.doc.operation_type === RECEIPT && side === "credit") {
 				await this.calculateReceiptReceiver(frm, cdt, cdn);
+				receiptForm.renderSummary(frm);
 			}
 		} finally {
 			row.__sp_calculating = false;
@@ -985,6 +1065,7 @@ const events = {
 	operational_pairs_remove(frm) {
 		if (frm.doc.operation_type === RECEIPT) {
 			receiptForm.configureGrid(frm, true);
+			receiptForm.renderSummary(frm);
 		}
 	},
 	receipt_recipient_type(frm, cdt, cdn) {

@@ -23,6 +23,11 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 
 ACCOUNT_RECIPIENT = "Account"
+ACCOUNT_RECEIVER_TYPES = {
+	"بانک": "Bank",
+	"صندوق": "Cash",
+	"سایر حساب‌ها": None,
+}
 
 
 def canonicalize_receipt(doc) -> None:
@@ -149,15 +154,15 @@ def canonicalize_receipt_row(
 
 
 def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
+	receiver_kind = doc.get("receipt_receiver_kind") or doc.receipt_payer_type
 	for value, label in (
+		(receiver_kind, _("نوع دریافت‌کننده")),
 		(doc.receipt_payer_currency, _("ارز دریافت‌کننده")),
 		(doc.receipt_payer_account, _("معین دریافت‌کننده")),
-		(doc.receipt_payer_type, _("نوع دریافت‌کننده")),
-		(doc.receipt_payer, _("دریافت‌کننده")),
 	):
 		if not value:
 			frappe.throw(_("{0} الزامی است.").format(label))
-	if doc.receipt_payer_type not in ALLOWED_PARTY_TYPES:
+	if receiver_kind not in (*ALLOWED_PARTY_TYPES, *ACCOUNT_RECEIVER_TYPES):
 		frappe.throw(_("نوع دریافت‌کننده انتخاب‌شده مجاز نیست."))
 
 	account = accounts.get(doc.receipt_payer_account)
@@ -165,6 +170,16 @@ def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
 		frappe.throw(_("یک معین دریافت‌کننده معتبر انتخاب کنید."))
 	if account.account_currency != doc.receipt_payer_currency:
 		frappe.throw(_("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."))
+	if receiver_kind in ACCOUNT_RECEIVER_TYPES:
+		_validate_account_receiver(receiver_kind, account)
+		doc.receipt_receiver_kind = receiver_kind
+		doc.receipt_payer_type = None
+		doc.receipt_payer = None
+		return account
+	if not doc.receipt_payer:
+		frappe.throw(_("دریافت‌کننده الزامی است."))
+	doc.receipt_receiver_kind = receiver_kind
+	doc.receipt_payer_type = receiver_kind
 	_validate_approved_party_account(
 		doc.receipt_payer_type,
 		doc.receipt_payer,
@@ -175,6 +190,22 @@ def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
 		get_company_currency(doc.company),
 	)
 	return account
+
+
+def _validate_account_receiver(receiver_kind, account) -> None:
+	required_account_type = ACCOUNT_RECEIVER_TYPES[receiver_kind]
+	if required_account_type and account.account_type != required_account_type:
+		frappe.throw(
+			_("نوع حساب معین دریافت‌کننده باید {0} باشد.").format(required_account_type)
+		)
+	if receiver_kind == "سایر حساب‌ها" and account.account_type in (
+		"Bank",
+		"Cash",
+		"Receivable",
+		"Payable",
+	):
+		frappe.throw(_("برای سایر حساب‌ها، یک حساب معتبر غیر بانکی، غیر صندوق و غیر طرف حساب انتخاب کنید."))
+	validate_party(None, None, account.account_type)
 
 
 def _validate_receipt_currencies(doc, rows) -> None:

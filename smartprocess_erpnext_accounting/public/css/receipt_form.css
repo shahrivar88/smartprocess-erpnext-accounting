@@ -1,0 +1,43 @@
+.sp-receipt-wide-grid {
+	left: 50%;
+	position: relative;
+	transform: translateX(-50%);
+	width: min(1500px, calc(100vw - 3rem));
+}
+
+.sp-receipt-summary {
+	margin-top: 1rem;
+}
+
+.sp-receipt-summary .table {
+	margin-bottom: 0.75rem;
+	table-layout: fixed;
+}
+
+.sp-receipt-summary th,
+.sp-receipt-summary td {
+	text-align: center;
+	vertical-align: middle;
+}
+
+.sp-receipt-summary-total {
+	font-size: var(--text-md);
+	text-align: end;
+}
+
+@media (max-width: 768px) {
+	.sp-receipt-wide-grid {
+		left: auto;
+		max-width: 100%;
+		transform: none;
+		width: 100%;
+	}
+
+	.sp-receipt-summary {
+		overflow-x: auto;
+	}
+
+	.sp-receipt-summary .table {
+		min-width: 680px;
+	}
+}
