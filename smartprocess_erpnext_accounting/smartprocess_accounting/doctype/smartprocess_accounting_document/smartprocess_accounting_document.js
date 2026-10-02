@@ -210,12 +210,51 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 			query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.bank_account_query",
 			filters: { company: frm.doc.company, currency: frm.doc.receipt_payer_currency },
 		}));
+		// Currency is the first Receipt choice: the Party list is filtered by the
+		// selected currency using the single-currency Party rule server-side.
+		frm.set_query("receipt_payer", () => {
+			if (frm.doc.operation_type !== RECEIPT) {
+				return {};
+			}
+			return {
+				query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.party_currency_query",
+				filters: {
+					party_type: frm.doc.receipt_payer_type,
+					company: frm.doc.company,
+					currency: frm.doc.receipt_payer_currency,
+				},
+			};
+		});
 		frm.set_query("receipt_recipient", "operational_pairs", (doc, cdt, cdn) => {
 			const row = locals[cdt][cdn];
+			if (frm.doc.operation_type !== RECEIPT) {
+				return {};
+			}
 			if (row?.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
 				return {
 					query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.bank_account_query",
 					filters: { company: frm.doc.company, currency: row.receipt_currency },
+				};
+			}
+			if (PARTY_TYPES.includes(row?.receipt_recipient_type)) {
+				return {
+					query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.party_currency_query",
+					filters: {
+						party_type: row.receipt_recipient_type,
+						company: frm.doc.company,
+						currency: row.receipt_currency,
+					},
+				};
+			}
+			if (row?.receipt_recipient_type === ACCOUNT_RECIPIENT) {
+				return {
+					filters: {
+						company: frm.doc.company,
+						disabled: 0,
+						is_group: 0,
+						account_currency: row.receipt_currency,
+						account_type: ["not in", ["Receivable", "Payable"]],
+					},
 				};
 			}
 			return {};
@@ -311,6 +350,10 @@ function receiptAccountFilters(company, currency, partyType, receiverKind = null
 	const filters = { company, disabled: 0, is_group: 0, account_currency: currency };
 	if (partyType === BANK_ACCOUNT_RECIPIENT) {
 		filters.account_type = "Bank";
+		return filters;
+	}
+	if (partyType === ACCOUNT_RECIPIENT) {
+		filters.account_type = ["not in", ["Receivable", "Payable"]];
 		return filters;
 	}
 	if (receiverKind === "بانک" || receiverKind === "صندوق") {
@@ -418,14 +461,15 @@ function receiptGridColumns(hasPartyRecipient, hasForeign) {
 	// proportional flex rules in public/css/receipt_form.css. All states keep
 	// the total above 10 on purpose so frappe's redistribution loop does not
 	// inflate these values.
+	// Row cascade order is Currency → Type → Entity → Account → Amount/Rate.
 	const columns = [
+		["receipt_currency", 1],
 		["receipt_recipient_type", 2],
 	];
 	if (hasPartyRecipient) {
 		columns.push(["receipt_recipient", 5]);
 	}
 	columns.push(
-		["receipt_currency", 1],
 		["credit_account", hasPartyRecipient ? 4 : 5],
 		["credit_amount", 2],
 	);
@@ -685,13 +729,13 @@ const receiptForm = {
 			["depositor_name", "label", "نام واریزکننده"],
 			["bank_name", "label", "نام بانک / بانک مبدأ"],
 			["receipt_posting_date", "columns", 1],
+			["receipt_currency", "columns", 1],
 			["receipt_recipient_type", "columns", 2],
 			["receipt_recipient", "columns", 5],
-			["receipt_currency", "columns", 1],
-			["credit_exchange_rate", "columns", 2],
-			["credit_company_amount", "columns", 3],
 			["credit_account", "columns", 4],
 			["credit_amount", "columns", 2],
+			["credit_exchange_rate", "columns", 2],
+			["credit_company_amount", "columns", 3],
 			...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", compactNumberFormatter]),
 			[
 				"credit_amount",
@@ -918,19 +962,46 @@ const receiptForm = {
 		if (frm.doc.receipt_payer_account) {
 			await frm.set_value("receipt_payer_account", "");
 		}
-		await this.syncReceiverCurrencyFromParty(frm);
+		// Currency is chosen first and is authoritative: the Party must match it.
+		// Server-side compatibility (ledger currency, then native account currency)
+		// confirms the choice; an incompatible Party is rejected and cleared.
+		const context = await getHeaderPartyContext(frm);
+		if (context) {
+			const partyCurrency = context.ledger_currency || context.account_currency || "";
+			if (frm.doc.receipt_payer_currency) {
+				if (partyCurrency && partyCurrency !== frm.doc.receipt_payer_currency) {
+					const rejectedParty = frm.doc.receipt_payer;
+					await frm.set_value("receipt_payer", "");
+					frappe.msgprint(
+						partyCurrencyMismatchMessage(
+							rejectedParty,
+							partyCurrency,
+							frm.doc.receipt_payer_currency,
+						),
+					);
+					await this.refreshReceiptView(frm);
+					return;
+				}
+			} else if (partyCurrency) {
+				// Convenience fill only when no currency has been chosen yet.
+				frm.__sp_receiver_currency_explicit = false;
+				await this.setProgrammaticReceiverCurrency(frm, partyCurrency);
+			}
+		}
 		await this.suggestPayerAccount(frm);
 		await this.refreshReceiptView(frm);
 	},
 	async syncReceiverCurrencyFromParty(frm) {
+		// Draft-load convenience: fill an empty currency from the Party, never
+		// override a currency the user already chose.
 		if (
 			frm.doc.operation_type !== RECEIPT
 			|| !frm.doc.company
 			|| !frm.doc.receipt_payer_type
 			|| !frm.doc.receipt_payer
 			|| !PARTY_TYPES.includes(frm.doc.receipt_payer_type)
+			|| frm.doc.receipt_payer_currency
 		) {
-			frm.__sp_receiver_party_ledger = "";
 			return;
 		}
 		const context = await getPartyCurrencyContextSafely(
@@ -938,9 +1009,8 @@ const receiptForm = {
 			frm.doc.receipt_payer,
 			frm.doc.company,
 		);
-		frm.__sp_receiver_party_ledger = context.ledger_currency || "";
 		const currency = context.ledger_currency || context.account_currency || "";
-		if (currency && frm.doc.receipt_payer_currency !== currency) {
+		if (currency) {
 			frm.__sp_receiver_currency_explicit = false;
 			await this.setProgrammaticReceiverCurrency(frm, currency);
 		}
@@ -960,7 +1030,6 @@ const receiptForm = {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
-		frm.__sp_receiver_party_ledger = "";
 		frm.__sp_receiver_currency_explicit = false;
 		const receiverKind = frm.doc.receipt_receiver_kind;
 		const partyType = PARTY_TYPES.includes(receiverKind) ? receiverKind : "";
@@ -981,23 +1050,39 @@ const receiptForm = {
 		if (frm.doc.receipt_payer_currency) {
 			frm.__sp_receiver_currency_explicit = true;
 		}
-		const ledgerCurrency = frm.__sp_receiver_party_ledger || "";
-		if (
-			ledgerCurrency
-			&& frm.doc.receipt_payer_currency
-			&& frm.doc.receipt_payer_currency !== ledgerCurrency
-		) {
-			frappe.msgprint(
-				partyLedgerMessage(frm.doc.receipt_payer, ledgerCurrency, frm.doc.receipt_payer_currency),
-			);
-			await this.setProgrammaticReceiverCurrency(frm, ledgerCurrency);
+		// Currency is the first choice: dependents that do not match the new
+		// currency are cleared at once, and the queries rebuild from live state.
+		await this.clearIncompatibleHeaderReceiver(frm);
+		return this.applyReceiverCurrency(frm);
+	},
+	async clearIncompatibleHeaderReceiver(frm) {
+		const currency = frm.doc.receipt_payer_currency;
+		if (!currency || !frm.doc.company) {
 			return;
 		}
 		if (frm.doc.receipt_receiver_kind === "بانک" && frm.doc.receipt_bank_account) {
-			await frm.set_value("receipt_bank_account", "");
-			await frm.set_value("receipt_payer_account", "");
+			const details = await getBankAccountDetailsSafely(
+				frm.doc.receipt_bank_account,
+				frm.doc.company,
+			);
+			if (details?.account_currency && details.account_currency !== currency) {
+				await frm.set_value("receipt_bank_account", "");
+				await frm.set_value("receipt_payer_account", "");
+			}
+			return;
 		}
-		return this.applyReceiverCurrency(frm);
+		if (PARTY_TYPES.includes(frm.doc.receipt_payer_type) && frm.doc.receipt_payer) {
+			const context = await getPartyCurrencyContextSafely(
+				frm.doc.receipt_payer_type,
+				frm.doc.receipt_payer,
+				frm.doc.company,
+			);
+			const partyCurrency = context.ledger_currency || context.account_currency || "";
+			if (partyCurrency && partyCurrency !== currency) {
+				await frm.set_value("receipt_payer", "");
+				await frm.set_value("receipt_payer_account", "");
+			}
+		}
 	},
 	async applyReceiverCurrency(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -1041,11 +1126,15 @@ const receiptForm = {
 			: "";
 		frm.set_df_property("receipt_payer_exchange_rate", "description", meaning);
 	},
-	// Staged header readiness, in interaction order: نوع دریافت‌کننده → دریافت‌کننده →
-	// ارز → نرخ (foreign only) → معین. Returns null when the header is complete enough.
+	// Staged header readiness, in interaction order: ارز → نوع دریافت‌کننده →
+	// دریافت‌کننده → نرخ (foreign only) → معین. Returns null when the header is
+	// complete enough.
 	headerReadinessIssue(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return null;
+		}
+		if (!frm.doc.receipt_payer_currency) {
+			return ["receipt_payer_currency", __("ابتدا ارز دریافت‌کننده را تعیین کنید.")];
 		}
 		if (!frm.doc.receipt_receiver_kind) {
 			return ["receipt_receiver_kind", __("ابتدا نوع دریافت‌کننده را انتخاب کنید.")];
@@ -1055,9 +1144,6 @@ const receiptForm = {
 		}
 		if (frm.doc.receipt_receiver_kind === "بانک" && !frm.doc.receipt_bank_account) {
 			return ["receipt_bank_account", __("ابتدا حساب بانکی دریافت‌کننده را انتخاب کنید.")];
-		}
-		if (!frm.doc.receipt_payer_currency) {
-			return ["receipt_payer_currency", __("ابتدا ارز دریافت‌کننده را تعیین کنید.")];
 		}
 		if (
 			frm.doc.receipt_payer_currency !== frm.doc.company_currency
@@ -1152,7 +1238,22 @@ const receiptForm = {
 			return;
 		}
 		const details = await getBankAccountDetails(frm.doc.receipt_bank_account, frm.doc.company);
-		await this.setProgrammaticReceiverCurrency(frm, details.account_currency);
+		// The Bank Account list is filtered by the selected currency, so a mismatch
+		// here is stale state: reject the Bank Account instead of changing currency.
+		if (
+			frm.doc.receipt_payer_currency
+			&& details.account_currency
+			&& frm.doc.receipt_payer_currency !== details.account_currency
+		) {
+			await frm.set_value("receipt_bank_account", "");
+			await frm.set_value("receipt_payer_account", "");
+			frappe.msgprint(__("حساب بانکی انتخاب‌شده با ارز دریافت‌کننده یکسان نیست."));
+			await this.refreshReceiptView(frm);
+			return;
+		}
+		if (!frm.doc.receipt_payer_currency) {
+			await this.setProgrammaticReceiverCurrency(frm, details.account_currency);
+		}
 		frm.__sp_setting_payer_account = true;
 		try {
 			await frm.set_value("receipt_payer_account", details.account);
@@ -1294,10 +1395,32 @@ async function getBankAccountDetails(bankAccount, company) {
 	return message || {};
 }
 
-function partyLedgerMessage(party, ledgerCurrency, targetCurrency) {
+async function getBankAccountDetailsSafely(bankAccount, company) {
+	try {
+		return await getBankAccountDetails(bankAccount, company);
+	} catch (error) {
+		if (error?.exc_type === "ValidationError") {
+			return null;
+		}
+		throw error;
+	}
+}
+
+async function getHeaderPartyContext(frm) {
+	if (!PARTY_TYPES.includes(frm.doc.receipt_payer_type) || !frm.doc.receipt_payer) {
+		return null;
+	}
+	return getPartyCurrencyContextSafely(
+		frm.doc.receipt_payer_type,
+		frm.doc.receipt_payer,
+		frm.doc.company,
+	);
+}
+
+function partyCurrencyMismatchMessage(party, partyCurrency, targetCurrency) {
 	return __(
-		"طرف حساب «{0}» در این شرکت قبلاً به ارز {1} ثبت شده است؛ برای ارز {2} یک رکورد طرف حساب جداگانه انتخاب کنید.",
-		[party, ledgerCurrency, targetCurrency],
+		"«{0}» با ارز {1} ثبت یا تعریف شده است و با ارز {2} همخوان نیست؛ دریافت‌کنندهٔ دیگری انتخاب کنید.",
+		[party, partyCurrency, targetCurrency],
 	);
 }
 
@@ -1409,7 +1532,6 @@ const spAccountingPair = {
 		}
 		// The user is starting to enter this row: the header must be staged-complete.
 		receiptForm.ensureHeaderReadyForRows(frm);
-		row.__sp_party_ledger = "";
 		// Clearing receipt_recipient is a side effect of this one user action, not a
 		// second row entry: keep rowPartyChanged from re-running the header check.
 		row.__sp_row_party_guard = true;
@@ -1419,7 +1541,11 @@ const spAccountingPair = {
 			row.__sp_row_party_guard = false;
 		}
 		await frappe.model.set_value(cdt, cdn, "credit_account", "");
-		await this.setRowReceiptCurrency(frm, cdt, cdn, frm.doc.company_currency || "");
+		// Currency comes first in the row: default it only when the user has not
+		// chosen one; an existing choice (possibly foreign) is kept on Type change.
+		if (!row.receipt_currency) {
+			await this.setRowReceiptCurrency(frm, cdt, cdn, frm.doc.company_currency || "");
+		}
 		receiptForm.configureGrid(frm, true);
 		receiptForm.renderSummary(frm);
 	},
@@ -1432,12 +1558,11 @@ const spAccountingPair = {
 			return;
 		}
 		receiptForm.ensureHeaderReadyForRows(frm);
-		row.__sp_party_ledger = "";
 		await frappe.model.set_value(cdt, cdn, "credit_account", "");
 		if (row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
 			await this.applyRowBankAccount(frm, cdt, cdn);
 		} else {
-			await this.syncRowCurrencyFromParty(frm, cdt, cdn);
+			await this.verifyRowEntityMatchesCurrency(frm, cdt, cdn);
 			await this.suggestReceiptAccount(frm, cdt, cdn);
 		}
 		receiptForm.configureGrid(frm, true);
@@ -1449,22 +1574,50 @@ const spAccountingPair = {
 			return;
 		}
 		const details = await getBankAccountDetails(row.receipt_recipient, frm.doc.company);
-		if (details.account_currency && row.receipt_currency !== details.account_currency) {
+		// The Bank Account list is filtered by the row currency, so a mismatch here
+		// is stale state: reject the Bank Account instead of changing the currency.
+		if (row.receipt_currency && details.account_currency && row.receipt_currency !== details.account_currency) {
+			await this.rejectRowEntity(
+				frm,
+				cdt,
+				cdn,
+				__("حساب بانکی انتخاب‌شده با ارز ردیف یکسان نیست."),
+			);
+			return;
+		}
+		if (!row.receipt_currency && details.account_currency) {
 			await this.setRowReceiptCurrency(frm, cdt, cdn, details.account_currency);
 		}
 		await frappe.model.set_value(cdt, cdn, "credit_account", details.account);
 		await this.calculate(frm, cdt, cdn, "credit");
 	},
-	async syncRowCurrencyFromParty(frm, cdt, cdn) {
+	// The row Entity (Party or Account) must match the row currency chosen first.
+	// Server-side compatibility (ledger currency, then native account currency)
+	// confirms the choice; an incompatible Entity is rejected and cleared, and an
+	// empty row currency is filled from the Entity as a convenience only.
+	async verifyRowEntityMatchesCurrency(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		if (!frm.doc.company || !row.receipt_recipient_type || !row.receipt_recipient) {
 			return;
 		}
 		if (row.receipt_recipient_type === ACCOUNT_RECIPIENT) {
 			const details = await getAccountDetailsSafely(row.receipt_recipient, frm.doc.company);
-			if (details?.account_currency && row.receipt_currency !== details.account_currency) {
-				await this.setRowReceiptCurrency(frm, cdt, cdn, details.account_currency);
+			const accountCurrency = details?.account_currency || "";
+			if (!accountCurrency) {
+				return;
 			}
+			if (row.receipt_currency) {
+				if (row.receipt_currency !== accountCurrency) {
+					await this.rejectRowEntity(
+						frm,
+						cdt,
+						cdn,
+						__("حساب انتخاب‌شده با ارز ردیف یکسان نیست."),
+					);
+				}
+				return;
+			}
+			await this.setRowReceiptCurrency(frm, cdt, cdn, accountCurrency);
 			return;
 		}
 		if (!PARTY_TYPES.includes(row.receipt_recipient_type)) {
@@ -1475,11 +1628,33 @@ const spAccountingPair = {
 			row.receipt_recipient,
 			frm.doc.company,
 		);
-		row.__sp_party_ledger = context.ledger_currency || "";
 		const currency = context.ledger_currency || context.account_currency || "";
-		if (currency && row.receipt_currency !== currency) {
-			await this.setRowReceiptCurrency(frm, cdt, cdn, currency);
+		if (!currency) {
+			return;
 		}
+		if (row.receipt_currency) {
+			if (row.receipt_currency !== currency) {
+				await this.rejectRowEntity(
+					frm,
+					cdt,
+					cdn,
+					partyCurrencyMismatchMessage(row.receipt_recipient, currency, row.receipt_currency),
+				);
+			}
+			return;
+		}
+		await this.setRowReceiptCurrency(frm, cdt, cdn, currency);
+	},
+	async rejectRowEntity(frm, cdt, cdn, message) {
+		const row = locals[cdt][cdn];
+		row.__sp_row_party_guard = true;
+		try {
+			await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
+		} finally {
+			row.__sp_row_party_guard = false;
+		}
+		await frappe.model.set_value(cdt, cdn, "credit_account", "");
+		frappe.msgprint(message);
 	},
 	async setRowReceiptCurrency(frm, cdt, cdn, currency) {
 		const row = locals[cdt][cdn];
@@ -1501,20 +1676,54 @@ const spAccountingPair = {
 		if (!row.__sp_receipt_currency_guard) {
 			// Only a user-initiated row Currency choice starts (or continues) row entry.
 			receiptForm.ensureHeaderReadyForRows(frm);
-			const ledgerCurrency = row.__sp_party_ledger || "";
-			if (
-				ledgerCurrency
-				&& row.receipt_currency
-				&& row.receipt_currency !== ledgerCurrency
-			) {
-				frappe.msgprint(
-					partyLedgerMessage(row.receipt_recipient, ledgerCurrency, row.receipt_currency),
-				);
-				await this.setRowReceiptCurrency(frm, cdt, cdn, ledgerCurrency);
-				return;
-			}
+			// Currency is the first row choice: an Entity that does not match the new
+			// currency is cleared at once instead of reverting the currency.
+			await this.clearIncompatibleRowEntity(frm, cdt, cdn);
 		}
 		return this.applyRowCurrency(frm, cdt, cdn);
+	},
+	async clearIncompatibleRowEntity(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.receipt_currency || !row.receipt_recipient || !row.receipt_recipient_type) {
+			return;
+		}
+		const entityCurrency = await this.rowEntityCurrencySafely(frm, cdt, cdn);
+		if (entityCurrency && entityCurrency !== row.receipt_currency) {
+			row.__sp_row_party_guard = true;
+			try {
+				await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
+			} finally {
+				row.__sp_row_party_guard = false;
+			}
+			await frappe.model.set_value(cdt, cdn, "credit_account", "");
+		}
+	},
+	async rowEntityCurrencySafely(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		try {
+			if (row.receipt_recipient_type === ACCOUNT_RECIPIENT) {
+				const details = await getAccountDetailsSafely(row.receipt_recipient, frm.doc.company);
+				return details?.account_currency || "";
+			}
+			if (row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
+				const details = await getBankAccountDetails(row.receipt_recipient, frm.doc.company);
+				return details.account_currency || "";
+			}
+			if (PARTY_TYPES.includes(row.receipt_recipient_type)) {
+				const context = await getPartyCurrencyContextSafely(
+					row.receipt_recipient_type,
+					row.receipt_recipient,
+					frm.doc.company,
+				);
+				return context.ledger_currency || context.account_currency || "";
+			}
+		} catch (error) {
+			if (error?.exc_type === "ValidationError") {
+				return "";
+			}
+			throw error;
+		}
+		return "";
 	},
 	async applyRowCurrency(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];

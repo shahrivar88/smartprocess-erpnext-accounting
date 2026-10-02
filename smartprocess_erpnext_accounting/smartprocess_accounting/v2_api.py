@@ -18,6 +18,13 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 	validate_account,
 )
 
+PARTY_DISPLAY_FIELDS = {
+	"Customer": "customer_name",
+	"Supplier": "supplier_name",
+	"Employee": "employee_name",
+	"SmartProcess Financial Intermediary": "intermediary_name",
+}
+
 
 @frappe.whitelist()
 def get_company_currency(company: str) -> str:
@@ -166,6 +173,152 @@ def get_receipt_receiver_total(doc: dict) -> dict | None:
 		"company_amount": decimal_text(company_amount),
 		"company_currency": receipt.company_currency,
 	}
+
+
+@frappe.whitelist(methods=["GET"])
+def party_currency_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Parties of one type whose single-currency context matches the selected currency.
+
+	The authoritative Party currency is the same rule the Receipt validation uses:
+	a GL-active Party is locked to its ledger currency (ERPNext
+	``get_party_gle_currency``); otherwise the native Party Account mapping chain
+	(``get_party_account``: mapping → group → company default) decides. Parties
+	with no determinable currency stay selectable for every currency, matching
+	ERPNext's own validation, which accepts them until their first GL entry.
+	"""
+	company = filters.get("company") if isinstance(filters, dict) else None
+	currency = filters.get("currency") if isinstance(filters, dict) else None
+	party_type = filters.get("party_type") if isinstance(filters, dict) else None
+	if not company or doctype not in ALLOWED_PARTY_TYPES:
+		return []
+	if party_type and doctype != party_type:
+		return []
+	if not frappe.has_permission("Company", "read", doc=company):
+		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You do not have permission to read {0}.").format(doctype), frappe.PermissionError)
+	start = int(start or 0)
+	page_len = int(page_len or 20)
+
+	conditions = {}
+	if frappe.get_meta(doctype).has_field("disabled"):
+		conditions["disabled"] = 0
+	search = (txt or "").strip().lower()
+	or_filters = None
+	if search:
+		or_filters = [["name", "like", f"%{search}%"]]
+		for fieldname in {searchfield or "", PARTY_DISPLAY_FIELDS.get(doctype, "name")} - {"", "name"}:
+			or_filters.append([fieldname, "like", f"%{search}%"])
+	names = frappe.get_all(doctype, filters=conditions, or_filters=or_filters, pluck="name", limit=0)
+
+	effective_currencies = _batch_party_currencies(doctype, company, names)
+	if currency:
+		names = [name for name in names if effective_currencies.get(name) in (None, currency)]
+	names = names[start : start + page_len]
+	if not names:
+		return []
+
+	display_field = PARTY_DISPLAY_FIELDS.get(doctype, "name")
+	fields = ["name", display_field] if display_field != "name" else ["name"]
+	rows = {
+		row.name: row
+		for row in frappe.get_all(doctype, filters={"name": ["in", names]}, fields=fields)
+	}
+	return [[name, rows[name].get(display_field, "") or ""] for name in names if name in rows]
+
+
+def _batch_party_currencies(doctype: str, company: str, names: list[str]) -> dict[str, str | None]:
+	"""name → effective currency: locked ledger currency, else native account currency."""
+	if not names:
+		return {}
+	ledger = {}
+	# Mirrors get_party_gle_currency: first active GL Entry decides, so the first
+	# row per party wins; GL-inactive Parties fall back to the native account chain.
+	for row in frappe.get_all(
+		"GL Entry",
+		filters={
+			"party_type": doctype,
+			"party": ["in", names],
+			"company": company,
+			"docstatus": 1,
+			"is_cancelled": 0,
+		},
+		fields=["party", "account_currency"],
+		limit=0,
+	):
+		ledger.setdefault(row.party, row.account_currency)
+	account_currency = _batch_native_party_accounts(
+		doctype, company, [name for name in names if not ledger.get(name)]
+	)
+	return {
+		name: ledger.get(name) or account_currency.get(name)
+		for name in names
+	}
+
+
+def _batch_native_party_accounts(doctype: str, company: str, names: list[str]) -> dict[str, str]:
+	"""Batch replica of erpnext.accounts.party.get_party_account's account chain.
+
+	Only used as the no-GL fallback currency of a Party, so the resolved account's
+	currency is all that is kept; per-account read permission checks are skipped
+	here exactly like the cached lookups in get_party_currency_context.
+	"""
+	if not names:
+		return {}
+	mapping: dict[str, str] = {}
+	for row in frappe.get_all(
+		"Party Account",
+		filters={"parenttype": doctype, "parent": ["in", names], "company": company},
+		fields=["parent", "account"],
+	):
+		mapping.setdefault(row.parent, row.account)
+
+	pending = [name for name in names if not mapping.get(name)]
+	if doctype in ("Customer", "Supplier") and pending:
+		group_doctype = "Customer Group" if doctype == "Customer" else "Supplier Group"
+		group_field = "customer_group" if doctype == "Customer" else "supplier_group"
+		groups = {
+			row.name: row.get(group_field)
+			for row in frappe.get_all(
+				doctype, filters={"name": ["in", pending]}, fields=["name", group_field]
+			)
+		}
+		group_accounts: dict[str, str] = {}
+		group_names = sorted({group for group in groups.values() if group})
+		if group_names:
+			for row in frappe.get_all(
+				"Party Account",
+				filters={"parenttype": group_doctype, "parent": ["in", group_names], "company": company},
+				fields=["parent", "account"],
+			):
+				group_accounts.setdefault(row.parent, row.account)
+		for name in pending:
+			account = group_accounts.get(groups.get(name))
+			if account:
+				mapping[name] = account
+
+	pending = [name for name in names if not mapping.get(name)]
+	if pending:
+		if doctype == "Customer":
+			default_field = "default_receivable_account"
+		elif doctype == "Supplier":
+			default_field = "default_payable_account"
+		else:
+			account_type = frappe.get_cached_value("Party Type", doctype, "account_type")
+			default_field = f"default_{ (account_type or 'payable').lower() }_account"
+		default_account = frappe.get_cached_value("Company", company, default_field)
+		if default_account:
+			for name in pending:
+				mapping[name] = default_account
+
+	account_names = sorted({account for account in mapping.values() if account})
+	currencies = {
+		row.name: row.account_currency
+		for row in frappe.get_all(
+			"Account", filters={"name": ["in", account_names]}, fields=["name", "account_currency"]
+		)
+	}
+	return {name: currencies.get(account) for name, account in mapping.items() if account}
 
 
 @frappe.whitelist(methods=["GET"])
