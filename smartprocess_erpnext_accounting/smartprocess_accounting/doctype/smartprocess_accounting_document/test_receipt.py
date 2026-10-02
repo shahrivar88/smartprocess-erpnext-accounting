@@ -104,6 +104,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_receipt_header_types_and_supplementary_section_contract(self):
 		meta = frappe.get_meta("SmartProcess Accounting Document")
 		receiver = meta.get_field("receipt_receiver_kind")
+		self.assertEqual(receiver.default, "Customer")
 		for option in (
 			"Customer",
 			"Supplier",
@@ -143,6 +144,21 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertIn("max-width: 100%", css)
 		self.assertNotIn("100vw", css)
 		self.assertNotIn("translateX", css)
+
+	def test_receipt_initial_defaults_and_row_editor_contract(self):
+		source = self.client_source()
+		pair_meta = frappe.get_meta("SmartProcess Accounting Pair")
+		self.assertFalse(pair_meta.get_field("receipt_posting_date").in_list_view)
+		self.assertFalse(pair_meta.get_field("credit_description").in_list_view)
+		for contract in (
+			"initializeReceiverType",
+			'frm.refresh_field("receipt_payer")',
+			"defaultReceiverCurrency",
+			'grid.set_column_disp_in_list_view("receipt_posting_date", false)',
+			'gridRow.toggle_display("credit_description", true)',
+		):
+			self.assertIn(contract, source)
+		self.assertNotIn('["receipt_posting_date", 1]', source)
 
 	def test_customer_foreign_payer_to_base_account(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])

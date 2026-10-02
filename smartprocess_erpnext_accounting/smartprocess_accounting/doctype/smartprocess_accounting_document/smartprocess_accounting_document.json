@@ -14,7 +14,7 @@
   {"fieldname":"operation_type","fieldtype":"Select","in_list_view":1,"label":"Operation Type","options":"Receipt\nPayment\nTransfer\nCurrency Conversion","reqd":1},
   {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","reqd":1},
   {"default":"Today","fieldname":"posting_date","fieldtype":"Date","in_list_view":1,"label":"Posting Date","reqd":1},
-  {"depends_on":"eval:doc.operation_type == 'Receipt'","fieldname":"receipt_receiver_kind","fieldtype":"Select","label":"نوع دریافت‌کننده","options":"Customer\nSupplier\nEmployee\nSmartProcess Financial Intermediary\nبانک\nصندوق\nسایر حساب‌ها"},
+  {"default":"Customer","depends_on":"eval:doc.operation_type == 'Receipt'","fieldname":"receipt_receiver_kind","fieldtype":"Select","label":"نوع دریافت‌کننده","options":"Customer\nSupplier\nEmployee\nSmartProcess Financial Intermediary\nبانک\nصندوق\nسایر حساب‌ها"},
   {"depends_on":"eval:doc.operation_type == 'Receipt'","fieldname":"receipt_payer_currency","fieldtype":"Select","label":"ارز دریافت‌کننده"},
   {"depends_on":"eval:doc.operation_type == 'Receipt'","fieldname":"receipt_payer_account","fieldtype":"Link","label":"معین دریافت‌کننده","options":"Account"},
   {"depends_on":"eval:doc.operation_type == 'Receipt'","fieldname":"receipt_payer_exchange_rate","fieldtype":"Float","label":"نرخ ارز دریافت‌کننده","precision":"12"},

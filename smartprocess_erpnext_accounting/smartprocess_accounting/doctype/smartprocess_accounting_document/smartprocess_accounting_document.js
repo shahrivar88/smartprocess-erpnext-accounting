@@ -118,7 +118,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
 		}
 		receiptForm.configure(frm);
-		void receiptForm.loadCurrencyOptions(frm);
+		void receiptForm.initialize(frm);
 	},
 	setup(frm) {
 		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
@@ -162,7 +162,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 	operation_type(frm) {
 		receiptForm.configure(frm);
-		return receiptForm.loadCurrencyOptions(frm);
+		return receiptForm.initialize(frm);
 	},
 	posting_date(frm) {
 		return receiptForm.parentPostingDateChanged(frm);
@@ -190,6 +190,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		if (frm.doc.operation_type === RECEIPT) {
 			await frm.set_value("receipt_payer_account", "");
 			await receiptForm.loadCurrencyOptions(frm, true);
+			await receiptForm.defaultReceiverCurrency(frm, message || "");
 			await receiptForm.payerCurrencyChanged(frm);
 		}
 	},
@@ -203,6 +204,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		return receiptForm.payerChanged(frm, true);
 	},
 	receipt_payer_currency(frm) {
+		if (!frm.__sp_setting_receiver_currency && frm.doc.receipt_payer_currency) {
+			frm.__sp_receiver_currency_explicit = true;
+		}
 		return receiptForm.payerCurrencyChanged(frm);
 	},
 	receipt_payer_exchange_rate(frm) {
@@ -316,7 +320,6 @@ function installReceiptGridLifecycle(grid) {
 
 function receiptGridColumns(hasPartyRecipient, hasForeign) {
 	const columns = [
-		["receipt_posting_date", 1],
 		["receipt_recipient_type", 1],
 	];
 	if (hasPartyRecipient) {
@@ -353,6 +356,47 @@ const receiptForm = {
 		this.configureGrid(frm, isReceipt);
 		if (isReceipt && frm.__sp_previous_payer_currency === undefined) {
 			frm.__sp_previous_payer_currency = frm.doc.receipt_payer_currency || "";
+			frm.__sp_receiver_currency_explicit = !frm.is_new()
+				&& Boolean(frm.doc.receipt_payer_currency);
+		}
+	},
+	async initialize(frm) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return;
+		}
+		await this.initializeReceiverType(frm);
+		await this.loadCurrencyOptions(frm);
+		await this.defaultReceiverCurrency(frm, frm.doc.company_currency || "");
+	},
+	async initializeReceiverType(frm) {
+		const receiverKind = frm.doc.receipt_receiver_kind || "Customer";
+		if (frm.doc.receipt_receiver_kind !== receiverKind) {
+			await frm.set_value("receipt_receiver_kind", receiverKind);
+		}
+		const partyType = PARTY_TYPES.includes(receiverKind) ? receiverKind : "";
+		if (frm.doc.receipt_payer_type !== partyType) {
+			await frm.set_value("receipt_payer_type", partyType);
+		}
+		frm.refresh_field("receipt_payer");
+		this.configureHeader(frm, true);
+	},
+	async defaultReceiverCurrency(frm, companyCurrency) {
+		if (!companyCurrency) {
+			return;
+		}
+		const currentCurrency = frm.doc.receipt_payer_currency || "";
+		const currentIsValid = (frm.__sp_currency_options || []).includes(currentCurrency);
+		if (frm.__sp_receiver_currency_explicit && currentIsValid) {
+			return;
+		}
+		frm.__sp_setting_receiver_currency = true;
+		try {
+			if (currentCurrency !== companyCurrency) {
+				await frm.set_value("receipt_payer_currency", companyCurrency);
+			}
+			frm.__sp_receiver_currency_explicit = false;
+		} finally {
+			frm.__sp_setting_receiver_currency = false;
 		}
 	},
 	configureHeader(frm, isReceipt) {
@@ -441,6 +485,7 @@ const receiptForm = {
 			grid.toggle_display(fieldname, !isReceipt);
 		}
 		grid.set_column_disp_in_list_view(RECEIPT_FIELDS, isReceipt);
+		grid.set_column_disp_in_list_view("receipt_posting_date", false);
 		grid.set_column_disp_in_list_view(TECHNICAL_RECEIPT_FIELDS, !isReceipt);
 		grid.set_column_disp_in_list_view(["credit_account", "credit_amount"], true);
 		grid.toggle_display("receipt_payer_exchange_rate", false);
