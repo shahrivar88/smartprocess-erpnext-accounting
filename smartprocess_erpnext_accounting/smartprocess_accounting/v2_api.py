@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import frappe
 from frappe import _
 
 from erpnext.accounts.party import get_party_account
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import canonicalize_receipt
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
 	get_company_currency as _get_company_currency,
@@ -126,6 +130,32 @@ def _mapped_party_account(party_type: str, party: str, company: str) -> str | No
 		return get_party_account(party_type, party, company)
 	except frappe.PermissionError:
 		return None
+
+
+@frappe.whitelist()
+def get_receipt_receiver_total(doc: dict) -> dict:
+	"""Exact total that Receipt posting will debit to the header receiver (display-only).
+
+	Runs the same canonicalization the document lifecycle runs before posting, so the
+	returned amounts are the canonical debit sums, not a second client-side formula.
+	"""
+	receipt = frappe.get_doc(doc)
+	if receipt.operation_type != "Receipt":
+		frappe.throw(_("Receiver totals apply to Receipt documents only."))
+	canonicalize_receipt(receipt)
+	amount = Decimal("0")
+	company_amount = Decimal("0")
+	for row in receipt.operational_pairs or []:
+		amount += to_decimal(row.debit_amount, _("Amount"))
+		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
+	return {
+		"account": receipt.receipt_payer_account,
+		"party": receipt.receipt_payer or "",
+		"currency": receipt.receipt_payer_currency,
+		"amount": decimal_text(amount),
+		"company_amount": decimal_text(company_amount),
+		"company_currency": receipt.company_currency,
+	}
 
 
 def _require_party(party_type: str, party: str, company: str, currency: str | None = None) -> None:

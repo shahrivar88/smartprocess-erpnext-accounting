@@ -43,6 +43,29 @@
 	text-align: end;
 }
 
+.sp-receipt-receiver-total {
+	align-items: center;
+	border-top: 1px solid var(--border-color, #d1d8dd);
+	display: flex;
+	flex-wrap: wrap;
+	font-size: var(--text-md);
+	gap: 0.5rem 1rem;
+	justify-content: space-between;
+	margin-top: 0.75rem;
+	padding-top: 0.75rem;
+}
+
+.sp-receipt-receiver-title {
+	font-weight: var(--weight-bold, 600);
+}
+
+.sp-receipt-receiver-values {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1rem;
+	justify-content: flex-end;
+}
+
 @media (max-width: 768px) {
 	.sp-receipt-layout-section > .section-body > .form-column {
 		padding-inline: 15px;

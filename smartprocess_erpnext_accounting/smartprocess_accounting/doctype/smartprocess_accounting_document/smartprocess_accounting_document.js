@@ -72,6 +72,50 @@ function formatReceiptSummaryValue(value) {
 	);
 }
 
+function receiverTotalMarkup() {
+	return `<div class="sp-receipt-receiver-total">
+		<div class="sp-receipt-receiver-title">مجموع واریزی به دریافت‌کننده</div>
+		<div class="sp-receipt-receiver-values text-muted">—</div>
+	</div>`;
+}
+
+function receiverTotalLine(message) {
+	const receiver = message.party ? `${message.account} · ${message.party}` : message.account;
+	return [
+		`<span class="sp-receipt-receiver-name">${frappe.utils.escape_html(receiver)}</span>`,
+		`<span class="sp-receipt-receiver-amount">${frappe.utils.escape_html(message.currency)} ${formatReceiptSummaryValue(Number(message.amount))}</span>`,
+		`<span class="sp-receipt-receiver-base">معادل ${formatReceiptSummaryValue(Number(message.company_amount))} ${frappe.utils.escape_html(message.company_currency)}</span>`,
+	].join(" | ");
+}
+
+function receiptReceiverTotalPayload(frm) {
+	return {
+		doctype: frm.doc.doctype,
+		name: frm.doc.name,
+		operation_type: frm.doc.operation_type,
+		company: frm.doc.company,
+		posting_date: frm.doc.posting_date,
+		receipt_receiver_kind: frm.doc.receipt_receiver_kind,
+		receipt_payer_type: frm.doc.receipt_payer_type,
+		receipt_payer: frm.doc.receipt_payer,
+		receipt_payer_currency: frm.doc.receipt_payer_currency,
+		receipt_payer_exchange_rate: frm.doc.receipt_payer_exchange_rate,
+		receipt_payer_account: frm.doc.receipt_payer_account,
+		operational_pairs: (frm.doc.operational_pairs || []).map((row) => ({
+			doctype: row.doctype,
+			name: row.name,
+			receipt_posting_date: row.receipt_posting_date,
+			receipt_recipient_type: row.receipt_recipient_type,
+			receipt_recipient: row.receipt_recipient,
+			receipt_currency: row.receipt_currency,
+			credit_account: row.credit_account,
+			credit_amount: row.credit_amount,
+			credit_exchange_rate: row.credit_exchange_rate,
+			credit_description: row.credit_description,
+		})),
+	};
+}
+
 function receiptCompactNumberFormatter(value, df, options, doc) {
 	const parent = doc?.parenttype && doc?.parent
 		? locals[doc.parenttype]?.[doc.parent]
@@ -631,7 +675,50 @@ const receiptForm = {
 				<tbody>${rows || '<tr><td colspan="4" class="text-muted">ردیف معتبری برای خلاصه وجود ندارد.</td></tr>'}</tbody>
 			</table>
 			<div class="sp-receipt-summary-total"><strong>جمع کل به ارز پایه:</strong> ${formatReceiptSummaryValue(summary.companyTotal)}</div>
+			${receiverTotalMarkup()}
 		</div>`);
+		this.scheduleReceiverTotalRefresh(frm);
+	},
+	scheduleReceiverTotalRefresh(frm) {
+		clearTimeout(frm.__sp_receiver_total_timeout);
+		frm.__sp_receiver_total_timeout = setTimeout(() => {
+			void this.refreshReceiverTotal(frm);
+		}, 300);
+	},
+	async refreshReceiverTotal(frm) {
+		const target = frm.fields_dict.receipt_summary?.$wrapper
+			.find(".sp-receipt-receiver-values").get(0);
+		if (!target || frm.doc.operation_type !== RECEIPT || !frm.doc.company) {
+			return;
+		}
+		const requestNumber = (frm.__sp_receiver_total_request || 0) + 1;
+		frm.__sp_receiver_total_request = requestNumber;
+		try {
+			const { message } = await frappe.call({
+				method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_receiver_total",
+				args: { doc: receiptReceiverTotalPayload(frm) },
+			});
+			if (frm.__sp_receiver_total_request !== requestNumber) {
+				return;
+			}
+			const currentTarget = frm.fields_dict.receipt_summary?.$wrapper
+				.find(".sp-receipt-receiver-values").get(0);
+			if (!currentTarget) {
+				return;
+			}
+			currentTarget.classList.remove("text-muted");
+			currentTarget.innerHTML = receiverTotalLine(message);
+		} catch (error) {
+			if (frm.__sp_receiver_total_request !== requestNumber) {
+				return;
+			}
+			const currentTarget = frm.fields_dict.receipt_summary?.$wrapper
+				.find(".sp-receipt-receiver-values").get(0);
+			if (currentTarget) {
+				currentTarget.classList.add("text-muted");
+				currentTarget.innerHTML = "—";
+			}
+		}
 	},
 	configureGridRow(frm, row) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
@@ -744,6 +831,7 @@ const receiptForm = {
 		}
 		await this.syncReceiverPartyCurrency(frm);
 		await this.suggestPayerAccount(frm);
+		this.renderSummary(frm);
 	},
 	async syncReceiverPartyCurrency(frm) {
 		if (
@@ -764,14 +852,16 @@ const receiptForm = {
 		frm.__sp_receiver_party_ledger = context.ledger_currency || "";
 		const currentCurrency = frm.doc.receipt_payer_currency || "";
 		if (context.ledger_currency) {
-			if (currentCurrency && currentCurrency !== context.ledger_currency) {
-				frappe.msgprint(
-					partyLedgerMessage(
-						frm.doc.receipt_payer,
-						context.ledger_currency,
-						currentCurrency,
-					),
-				);
+			if (currentCurrency !== context.ledger_currency) {
+				if (frm.__sp_receiver_currency_explicit) {
+					frappe.msgprint(
+						partyLedgerMessage(
+							frm.doc.receipt_payer,
+							context.ledger_currency,
+							currentCurrency,
+						),
+					);
+				}
 				await this.setProgrammaticReceiverCurrency(frm, context.ledger_currency);
 			}
 			return;
@@ -819,6 +909,7 @@ const receiptForm = {
 		await frm.set_value("receipt_payer", "");
 		await frm.set_value("receipt_payer_account", "");
 		this.configureHeader(frm, true);
+		this.renderSummary(frm);
 	},
 	async payerCurrencyChanged(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -849,6 +940,7 @@ const receiptForm = {
 		}
 		this.updatePayerRateMeaning(frm);
 		await this.recalculatePayerRows(frm);
+		this.renderSummary(frm);
 	},
 	updatePayerRateMeaning(frm) {
 		const currency = frm.doc.receipt_payer_currency;
@@ -887,6 +979,7 @@ const receiptForm = {
 			await frm.set_value("receipt_payer_account", "");
 			frappe.msgprint(__("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."));
 		}
+		this.renderSummary(frm);
 	},
 	async clearMismatchedPayerAccount(frm) {
 		if (!frm.doc.receipt_payer_account || !frm.doc.company) {
@@ -1121,7 +1214,9 @@ const spAccountingPair = {
 		row.__sp_party_ledger = context.ledger_currency || "";
 		const currentCurrency = row.receipt_currency || "";
 		if (context.ledger_currency) {
-			if (currentCurrency && currentCurrency !== context.ledger_currency) {
+			if (!currentCurrency) {
+				await this.setRowReceiptCurrency(frm, cdt, cdn, context.ledger_currency);
+			} else if (currentCurrency !== context.ledger_currency) {
 				frappe.msgprint(
 					partyLedgerMessage(
 						row.receipt_recipient,
