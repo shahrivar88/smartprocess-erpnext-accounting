@@ -1,4 +1,12 @@
-"""Narrow ERPNext v16 compatibility boundary for approved Party currency accounts."""
+"""DEPRECATED reference module for the retired multi-currency Party design.
+
+This module is no longer wired through ``extend_doctype_class`` and no runtime
+code imports it. It is kept read-only as documentation of the abandoned design
+(a Party carrying several independent accounting currencies through
+``SmartProcess Party Currency Account`` rows). ERPNext-native single-currency
+per Party behavior is authoritative again; legacy ``SmartProcess Party Currency
+Account`` rows stay in the database untouched for historical reference.
+"""
 
 from __future__ import annotations
 

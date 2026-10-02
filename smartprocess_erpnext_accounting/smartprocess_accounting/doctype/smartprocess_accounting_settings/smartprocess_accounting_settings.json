@@ -8,7 +8,7 @@
  "fields": [
   {"fieldname":"feature_section","fieldtype":"Section Break","label":"Feature Gates"},
   {"default":"0","description":"Posting stays blocked until this gate is explicitly enabled.","fieldname":"enable_v2_posting","fieldtype":"Check","label":"Enable V2 Posting"},
-  {"default":"0","description":"Conservative default: standard ERPNext behavior remains unchanged.","fieldname":"enable_multi_currency_party_compatibility","fieldtype":"Check","label":"Enable Multi-Currency Party Compatibility"},
+  {"default":"0","description":"RETIRED (legacy, kept read-only). The multi-currency Party override is no longer wired; ERPNext-native single-currency-per-Party behavior is authoritative and this flag has no runtime effect.","fieldname":"enable_multi_currency_party_compatibility","fieldtype":"Check","label":"Enable Multi-Currency Party Compatibility (Retired)"},
   {"default":"1","fieldname":"enable_counterpart_proposal","fieldtype":"Check","label":"Enable Counterpart Proposal"},
   {"default":"0","fieldname":"enable_templates","fieldtype":"Check","label":"Enable Templates"},
   {"default":"0","fieldname":"enable_manual_invoice_rate_feature","fieldtype":"Check","label":"Enable Manual Invoice Rate Feature"},

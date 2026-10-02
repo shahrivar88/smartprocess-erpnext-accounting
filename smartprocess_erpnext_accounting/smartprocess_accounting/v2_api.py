@@ -5,9 +5,12 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
+from erpnext.accounts.party import get_party_account
+
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
 	get_company_currency as _get_company_currency,
+	get_party_ledger_currency,
 	validate_account,
 )
 
@@ -30,14 +33,6 @@ def get_receipt_currency_options(company: str) -> list[str]:
 			"Account",
 			filters={"company": company, "disabled": 0, "is_group": 0},
 			pluck="account_currency",
-			limit=0,
-		)
-	)
-	currencies.update(
-		frappe.get_list(
-			"SmartProcess Party Currency Account",
-			filters={"company": company},
-			pluck="currency",
 			limit=0,
 		)
 	)
@@ -87,77 +82,68 @@ def get_receipt_party_account_suggestion(
 	company: str,
 	currency: str,
 ) -> str | None:
-	"""Return the one unambiguous Receipt mapping without changing other operation settings."""
+	"""Return the native Party Account mapping for the currency without changing other settings."""
 	return _get_exact_party_account(party_type, party, company, currency)
 
 
+@frappe.whitelist(methods=["GET"])
+def get_party_currency_context(party_type: str, party: str, company: str) -> dict:
+	"""Native currency context: locked ledger currency (if any) and mapped account currency."""
+	_require_party(party_type, party, company)
+	account = _mapped_party_account(party_type, party, company)
+	account_currency = frappe.get_cached_value("Account", account, "account_currency") if account else None
+	return {
+		"ledger_currency": get_party_ledger_currency(party_type, party, company),
+		"account": account,
+		"account_currency": account_currency,
+	}
+
+
 def _get_exact_party_account(party_type: str, party: str, company: str, currency: str) -> str | None:
+	_require_party(party_type, party, company, currency)
+	if get_party_ledger_currency(party_type, party, company) not in (None, currency):
+		return None
+	account = _mapped_party_account(party_type, party, company)
+	if not account:
+		return None
+	details = frappe.get_cached_value(
+		"Account",
+		account,
+		["name", "company", "account_currency", "account_type", "disabled", "is_group"],
+		as_dict=True,
+	)
+	if not details or details.company != company or details.disabled or details.is_group:
+		return None
+	if details.account_currency != currency:
+		return None
+	if details.account_type != frappe.get_cached_value("Party Type", party_type, "account_type"):
+		return None
+	return details.name
+
+
+def _mapped_party_account(party_type: str, party: str, company: str) -> str | None:
+	try:
+		return get_party_account(party_type, party, company)
+	except frappe.PermissionError:
+		return None
+
+
+def _require_party(party_type: str, party: str, company: str, currency: str | None = None) -> None:
 	for value, fieldname in (
 		(party_type, "party_type"),
 		(party, "party"),
 		(company, "company"),
 		(currency, "currency"),
 	):
+		if value is None:
+			continue
 		if not isinstance(value, str) or not value.strip():
 			frappe.throw(_("{0} must be a non-empty string.").format(fieldname))
 	if party_type not in ALLOWED_PARTY_TYPES:
 		frappe.throw(_("Party Type {0} is not enabled for V2.").format(party_type))
-	company_currency = _get_company_currency(company)
 	if not frappe.db.exists("Party Type", party_type) or not frappe.db.exists(party_type, party):
 		frappe.throw(_("Party {0} {1} does not exist.").format(party_type, party))
 	if not frappe.has_permission(party_type, "read", doc=party):
 		frappe.throw(_("You do not have permission to read the selected Party."), frappe.PermissionError)
-	if currency == company_currency:
-		return _get_native_base_party_account(party_type, party, company, currency)
-	rows = frappe.get_list(
-		"SmartProcess Party Currency Account",
-		filters={
-			"party_type": party_type,
-			"party": party,
-			"company": company,
-			"currency": currency,
-		},
-		fields=["account"],
-		limit=2,
-	)
-	if len(rows) != 1:
-		return None
-	account = validate_account(rows[0].account, company)
-	if account.account_currency != currency:
-		frappe.throw(_("Mapped Account currency does not match the requested Currency."))
-	return account.name
-
-
-def _get_native_base_party_account(
-	party_type: str,
-	party: str,
-	company: str,
-	currency: str,
-) -> str | None:
-	rows = frappe.get_all(
-		"Party Account",
-		filters={"parenttype": party_type, "parent": party, "company": company},
-		pluck="account",
-		limit=2,
-	)
-	if len(rows) == 1:
-		return _validate_base_party_account(rows[0], party_type, company, currency)
-	if rows:
-		return None
-	account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
-	fieldname = {
-		"Receivable": "default_receivable_account",
-		"Payable": "default_payable_account",
-	}.get(account_type)
-	if not fieldname:
-		return None
-	account = frappe.get_cached_value("Company", company, fieldname)
-	return _validate_base_party_account(account, party_type, company, currency) if account else None
-
-
-def _validate_base_party_account(account_name, party_type, company, currency) -> str | None:
-	account = validate_account(account_name, company)
-	party_account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
-	if account.account_currency != currency or account.account_type != party_account_type:
-		return None
-	return account.name
+	if not frappe.has_permission("Company", "read", doc=company):
+		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)

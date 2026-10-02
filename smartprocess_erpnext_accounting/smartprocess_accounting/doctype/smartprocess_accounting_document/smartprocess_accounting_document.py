@@ -49,7 +49,7 @@ class SmartProcessAccountingDocument(AccountsController):
 
 	def before_submit(self):
 		require_posting_enabled()
-		self._validate_accounting(for_posting=True)
+		self._validate_accounting()
 		if self.operation_type == "Receipt":
 			post_document(self)
 
@@ -105,6 +105,6 @@ class SmartProcessAccountingDocument(AccountsController):
 			frappe.throw(_("Naming Series is not configured for {0}.").format(self.operation_type))
 		return series
 
-	def _validate_accounting(self, *, for_posting=False):
+	def _validate_accounting(self):
 		canonicalize_receipt(self)
-		return validate_document(self, for_posting=for_posting)
+		return validate_document(self)

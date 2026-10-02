@@ -16,20 +16,18 @@ from frappe.utils import cint, getdate
 from erpnext.accounts.general_ledger import make_gl_entries, make_reverse_gl_entries
 from erpnext.controllers.accounts_controller import AccountsController
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party import (
-	is_approved_party_account,
-	is_compatibility_enabled,
-)
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import (
 	calculate_company_amount,
 	decimal_text,
 	to_decimal,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
+	assert_one_currency_per_party,
 	get_accounts,
 	get_company_currency,
 	validate_account,
 	validate_party,
+	validate_party_ledger_currency,
 )
 
 
@@ -53,7 +51,7 @@ class PostingLine:
 	against: str
 
 
-def validate_document(doc, *, for_posting: bool = False) -> list[PostingLine]:
+def validate_document(doc) -> list[PostingLine]:
 	doc.company_currency = get_company_currency(doc.company)
 	precision = _company_currency_precision(doc.company_currency)
 	rows = doc.operational_pairs or []
@@ -61,6 +59,7 @@ def validate_document(doc, *, for_posting: bool = False) -> list[PostingLine]:
 		frappe.throw(_("At least one Operational Pair is required."))
 
 	account_details = get_accounts(_account_names(rows))
+	party_currency_entries = []
 	lines = []
 	total_debit = Decimal("0")
 	total_credit = Decimal("0")
@@ -68,10 +67,10 @@ def validate_document(doc, *, for_posting: bool = False) -> list[PostingLine]:
 		row.company_currency = doc.company_currency
 		posting_date = _effective_posting_date(doc, row)
 		debit = _validate_side(
-			doc, row, number, "debit", account_details, precision, for_posting, posting_date
+			doc, row, number, "debit", account_details, precision, party_currency_entries, posting_date
 		)
 		credit = _validate_side(
-			doc, row, number, "credit", account_details, precision, for_posting, posting_date
+			doc, row, number, "credit", account_details, precision, party_currency_entries, posting_date
 		)
 		if debit is None or credit is None:
 			_pair_error(number, _("Pair"), _("Side"), _("Both Debit and Credit sides are required."))
@@ -86,6 +85,7 @@ def validate_document(doc, *, for_posting: bool = False) -> list[PostingLine]:
 		total_debit += debit.company_amount
 		total_credit += credit.company_amount
 
+	assert_one_currency_per_party(party_currency_entries)
 	if total_debit != total_credit:
 		frappe.throw(_("The complete document must balance in Company Currency."))
 	return lines
@@ -108,7 +108,7 @@ def post_document(doc) -> None:
 
 		submit_receipt(doc)
 		return
-	lines = validate_document(doc, for_posting=True)
+	lines = validate_document(doc)
 	post_lines(doc, lines)
 
 
@@ -170,7 +170,7 @@ def assert_native_posting_contract() -> None:
 		frappe.throw(_("ERPNext reversal contract changed. V2 cancellation is disabled."))
 
 
-def _validate_side(doc, row, number, side, account_details, precision, for_posting, posting_date):
+def _validate_side(doc, row, number, side, account_details, precision, party_currency_entries, posting_date):
 	account_name = row.get(f"{side}_account")
 	amount_value = row.get(f"{side}_amount")
 	party_type = row.get(f"{side}_party_type")
@@ -193,16 +193,13 @@ def _validate_side(doc, row, number, side, account_details, precision, for_posti
 		)
 	try:
 		validate_party(party_type, party, account.account_type)
-		_validate_party_account(
-			party_type,
-			party,
-			doc.company,
-			doc.company_currency,
-			account,
-			for_posting,
-		)
+		validate_party_ledger_currency(party_type, party, doc.company, account.account_currency)
 	except frappe.ValidationError as error:
 		_pair_error(number, label, _("Party"), str(error))
+	if party_type and party:
+		party_currency_entries.append(
+			(party_type, party, account.account_currency, _("Pair {0} · {1}").format(number, label))
+		)
 
 	amount = to_decimal(amount_value, _("Amount"))
 	if amount <= 0:
@@ -248,23 +245,6 @@ def _validate_side(doc, row, number, side, account_details, precision, for_posti
 		remarks=row.get(f"{side}_description") or doc.general_description,
 		against=row.credit_account if side == "debit" else row.debit_account,
 	)
-
-
-def _validate_party_account(party_type, party, company, company_currency, account, for_posting):
-	if not (party_type and party):
-		return
-	if account.account_currency == company_currency:
-		return
-	if not is_approved_party_account(
-		party_type,
-		party,
-		company,
-		account.account_currency,
-		account.name,
-	):
-		frappe.throw(_("The selected Account is not approved for this Party, Company, and Currency."))
-	if for_posting and account.account_currency != company_currency and not is_compatibility_enabled():
-		frappe.throw(_("Multi-currency Party compatibility must be enabled for this posting."))
 
 
 def _make_gl_entry(doc, line: PostingLine):

@@ -22,16 +22,18 @@ from .v2_test_support import (
 	BASE_BANK,
 	BASE_CLEARING,
 	COMPANY,
+	CUSTOMER_A as CUSTOMER_A_PARTY,
+	CUSTOMER_B as CUSTOMER_B_PARTY,
+	CUSTOMER_BASE as CUSTOMER_BASE_PARTY,
 	FOREIGN_A,
 	FOREIGN_A_ACCOUNT,
 	FOREIGN_B,
 	FOREIGN_B_ACCOUNT,
+	SUPPLIER_BASE as SUPPLIER_BASE_PARTY,
 	V2IntegrationTestCase,
 )
 
 
-CUSTOMER = "SP MC Customer"
-SUPPLIER = "SP MC Supplier"
 CUSTOMER_BASE = "MC Receivable Base - SPV2"
 CUSTOMER_A = "MC Receivable A - SPV2"
 CUSTOMER_B = "MC Receivable B - SPV2"
@@ -53,21 +55,20 @@ class TestReceiptUX(V2IntegrationTestCase):
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assert_canonical_pair(row, CUSTOMER_BASE, BASE_BANK, 100)
+		self.assert_canonical_pair(row, CUSTOMER_BASE, BASE_BANK, 100, party=CUSTOMER_BASE_PARTY)
 		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("1"))
 		self.assertEqual(Decimal(str(doc.receipt_payer_exchange_rate)), Decimal("1"))
 
 	def test_base_currency_party_account_does_not_require_smartprocess_mapping(self):
 		filters = {
 			"party_type": "Customer",
-			"party": CUSTOMER,
+			"party": CUSTOMER_BASE_PARTY,
 			"company": COMPANY,
 			"currency": BASE,
 			"account": CUSTOMER_BASE,
 		}
-		frappe.db.delete("SmartProcess Party Currency Account", filters)
-		suggested = get_receipt_party_account_suggestion("Customer", CUSTOMER, COMPANY, BASE)
-		self.assertTrue(suggested)
+		suggested = get_receipt_party_account_suggestion("Customer", CUSTOMER_BASE_PARTY, COMPANY, BASE)
+		self.assertEqual(suggested, CUSTOMER_BASE)
 		self.assertEqual(frappe.get_cached_value("Account", suggested, "account_currency"), BASE)
 		self.assertEqual(frappe.get_cached_value("Account", suggested, "account_type"), "Receivable")
 		doc = self.receipt(
@@ -180,13 +181,13 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt(
 			[self.receipt_row(BASE_BANK, BASE, 100)],
 			payer_type="Supplier",
-			payer=SUPPLIER,
+			payer=SUPPLIER_BASE_PARTY,
 			payer_currency=BASE,
 			payer_account=SUPPLIER_BASE,
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual((row.debit_party_type, row.debit_party), ("Supplier", SUPPLIER))
+		self.assertEqual((row.debit_party_type, row.debit_party), ("Supplier", SUPPLIER_BASE_PARTY))
 
 	def test_party_recipient(self):
 		doc = self.receipt(
@@ -196,7 +197,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 					BASE,
 					100,
 					recipient_type="Supplier",
-					recipient=SUPPLIER,
+					recipient=SUPPLIER_BASE_PARTY,
 				)
 			],
 			payer_currency=BASE,
@@ -204,7 +205,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual((row.credit_party_type, row.credit_party), ("Supplier", SUPPLIER))
+		self.assertEqual((row.credit_party_type, row.credit_party), ("Supplier", SUPPLIER_BASE_PARTY))
 
 	def test_account_recipient_has_no_fake_party(self):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)])
@@ -266,14 +267,17 @@ class TestReceiptUX(V2IntegrationTestCase):
 
 	def test_mapped_payer_account_suggestion(self):
 		self.assertEqual(
-			get_receipt_party_account_suggestion("Customer", CUSTOMER, COMPANY, FOREIGN_A),
+			get_receipt_party_account_suggestion("Customer", CUSTOMER_A_PARTY, COMPANY, FOREIGN_A),
 			CUSTOMER_A,
 		)
 
 	def test_mapped_recipient_account_suggestion(self):
 		self.assertEqual(
-			get_receipt_party_account_suggestion("Customer", CUSTOMER, COMPANY, FOREIGN_B),
+			get_receipt_party_account_suggestion("Customer", CUSTOMER_B_PARTY, COMPANY, FOREIGN_B),
 			CUSTOMER_B,
+		)
+		self.assertIsNone(
+			get_receipt_party_account_suggestion("Customer", CUSTOMER_B_PARTY, COMPANY, FOREIGN_A)
 		)
 
 	def test_currency_change_client_contract_clears_incompatible_account_and_rates(self):
@@ -682,6 +686,82 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(len(self.active_gl(doc)), 2)
 		self.assertEqual(len(self.active_ple(doc)), 1)
 
+	def test_second_currency_for_locked_party_is_rejected(self):
+		first = self.receipt(
+			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
+			payer=CUSTOMER_B_PARTY,
+			payer_currency=FOREIGN_B,
+			payer_account=CUSTOMER_B,
+			payer_rate=20,
+		).insert()
+		first.submit()
+		blocked = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)],
+			payer=CUSTOMER_B_PARTY,
+			payer_currency=FOREIGN_A,
+			payer_account=CUSTOMER_A,
+		)
+		with self.assertRaises(frappe.ValidationError) as context:
+			blocked.validate()
+		message = str(context.exception)
+		self.assertIn(FOREIGN_B, message)
+		self.assertIn(FOREIGN_A, message)
+		self.assertIn("رکورد طرف حساب", message)
+
+	def test_separate_party_records_per_currency_are_independent(self):
+		first = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
+		first.submit()
+		second = self.receipt(
+			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
+			payer=CUSTOMER_B_PARTY,
+			payer_currency=FOREIGN_B,
+			payer_account=CUSTOMER_B,
+			payer_rate=20,
+		).insert()
+		second.submit()
+		parties = {
+			(row.party_type, row.party)
+			for row in (*self.active_ple(first), *self.active_ple(second))
+		}
+		self.assertEqual(parties, {("Customer", CUSTOMER_A_PARTY), ("Customer", CUSTOMER_B_PARTY)})
+
+	def test_document_rejects_one_party_with_two_currencies(self):
+		doc = self.receipt(
+			[
+				self.receipt_row(
+					CUSTOMER_B,
+					FOREIGN_B,
+					5,
+					20,
+					recipient_type="Customer",
+					recipient=CUSTOMER_B_PARTY,
+				)
+			],
+			payer=CUSTOMER_B_PARTY,
+			payer_currency=FOREIGN_A,
+			payer_account=CUSTOMER_A,
+		)
+		with self.assertRaises(frappe.ValidationError) as context:
+			doc.validate()
+		message = str(context.exception)
+		self.assertIn("دو ارز", message)
+		self.assertIn(FOREIGN_A, message)
+		self.assertIn(FOREIGN_B, message)
+
+	def test_party_currency_lock_client_contract(self):
+		source = self.client_source()
+		for contract in (
+			"get_party_currency_context",
+			"syncReceiverPartyCurrency",
+			"enforceReceiverPartyLedger",
+			"syncReceiptRowCurrency",
+			"setProgrammaticReceiverCurrency",
+			"setRowReceiptCurrency",
+			"__sp_receiver_party_ledger",
+			"رکورد طرف حساب جداگانه",
+		):
+			self.assertIn(contract, source)
+
 	def test_receipt_posts_header_as_debit_and_row_as_credit(self):
 		doc = self.receipt(
 			[self.receipt_row(BASE_BANK, BASE, 100)],
@@ -759,12 +839,14 @@ class TestReceiptUX(V2IntegrationTestCase):
 		rows,
 		*,
 		payer_type="Customer",
-		payer=CUSTOMER,
+		payer=None,
 		payer_currency=FOREIGN_A,
 		payer_account=CUSTOMER_A,
 		payer_rate=10,
 		receiver_kind=None,
 	):
+		if payer is None:
+			payer = CUSTOMER_BASE_PARTY if payer_currency == BASE else CUSTOMER_A_PARTY
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
@@ -808,12 +890,13 @@ class TestReceiptUX(V2IntegrationTestCase):
 			"debit_exchange_rate": 999,
 		}
 
-	def assert_canonical_pair(self, row, debit_account, credit_account, company_amount):
+	def assert_canonical_pair(self, row, debit_account, credit_account, company_amount, *, party=None):
+		party = party or CUSTOMER_A_PARTY
 		self.assertEqual(row.debit_account, debit_account)
 		self.assertEqual(row.credit_account, credit_account)
 		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal(str(company_amount)))
 		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal(str(company_amount)))
-		self.assertEqual((row.debit_party_type, row.debit_party), ("Customer", CUSTOMER))
+		self.assertEqual((row.debit_party_type, row.debit_party), ("Customer", party))
 
 	def client_source(self):
 		return Path(

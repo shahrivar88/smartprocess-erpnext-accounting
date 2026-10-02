@@ -9,16 +9,15 @@ from frappe import _
 from frappe.model.meta import get_field_precision
 from frappe.utils import getdate
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party import (
-	is_approved_party_account,
-)
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
+	assert_one_currency_per_party,
 	get_accounts,
 	get_company_currency,
 	validate_account,
 	validate_party,
+	validate_party_ledger_currency,
 )
 
 
@@ -48,8 +47,8 @@ def canonicalize_receipt(doc) -> None:
 		name: validate_account(name, doc.company, account_details.get(name))
 		for name in account_names
 	}
-	approved_party_accounts = set()
-	receiver = _validate_receiver(doc, accounts, approved_party_accounts)
+	party_currency_entries = []
+	receiver = _validate_receiver(doc, accounts, party_currency_entries)
 	receiver_rate = _receiver_exchange_rate(doc, receiver, company_currency)
 	precision = _company_currency_precision(company_currency)
 	if not rows:
@@ -64,9 +63,10 @@ def canonicalize_receipt(doc) -> None:
 			company_currency,
 			precision,
 			accounts,
-			approved_party_accounts,
+			party_currency_entries,
 			receiver_rate,
 		)
+	assert_one_currency_per_party(party_currency_entries)
 
 
 def canonicalize_receipt_row(
@@ -77,7 +77,7 @@ def canonicalize_receipt_row(
 	company_currency: str,
 	precision: int,
 	accounts: dict,
-	approved_party_accounts: set,
+	party_currency_entries: list,
 	receiver_rate: Decimal,
 ) -> None:
 	payer_type = row.get("receipt_recipient_type")
@@ -105,17 +105,12 @@ def canonicalize_receipt_row(
 	else:
 		if not payer:
 			_receipt_error(number, _("نام پرداخت‌کننده"), _("پرداخت‌کننده الزامی است."))
-		_validate_approved_party_account(
-			payer_type,
-			payer,
-			doc.company,
-			account,
-			_("پرداخت‌کننده"),
-			approved_party_accounts,
-			company_currency,
-		)
+		_validate_party_account(payer_type, payer, doc.company, account)
 		row.credit_party_type = payer_type
 		row.credit_party = payer
+		party_currency_entries.append(
+			(payer_type, payer, receipt_currency, _("ردیف {0}").format(number))
+		)
 
 	credit_amount = to_decimal(row.get("credit_amount"), _("مبلغ"))
 	if credit_amount <= 0:
@@ -153,7 +148,7 @@ def canonicalize_receipt_row(
 	row.debit_company_amount = decimal_text(company_amount)
 
 
-def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
+def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 	receiver_kind = doc.get("receipt_receiver_kind") or doc.receipt_payer_type
 	for value, label in (
 		(receiver_kind, _("نوع دریافت‌کننده")),
@@ -180,14 +175,9 @@ def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
 		frappe.throw(_("دریافت‌کننده الزامی است."))
 	doc.receipt_receiver_kind = receiver_kind
 	doc.receipt_payer_type = receiver_kind
-	_validate_approved_party_account(
-		doc.receipt_payer_type,
-		doc.receipt_payer,
-		doc.company,
-		account,
-		_("دریافت‌کننده"),
-		approved_party_accounts,
-		get_company_currency(doc.company),
+	_validate_party_account(doc.receipt_payer_type, doc.receipt_payer, doc.company, account)
+	party_currency_entries.append(
+		(doc.receipt_payer_type, doc.receipt_payer, doc.receipt_payer_currency, _("دریافت‌کننده"))
 	)
 	return account
 
@@ -241,33 +231,9 @@ def _receiver_exchange_rate(doc, receiver, company_currency: str) -> Decimal:
 	return rate
 
 
-def _validate_approved_party_account(
-	party_type,
-	party,
-	company,
-	account,
-	label,
-	approved_party_accounts: set,
-	company_currency: str,
-) -> None:
-	identity = (party_type, party, account.name)
-	if identity in approved_party_accounts:
-		return
+def _validate_party_account(party_type, party, company, account) -> None:
 	validate_party(party_type, party, account.account_type)
-	if account.account_currency == company_currency:
-		approved_party_accounts.add(identity)
-		return
-	if not is_approved_party_account(
-		party_type,
-		party,
-		company,
-		account.account_currency,
-		account.name,
-	):
-		frappe.throw(
-			_("معین انتخاب‌شده برای {0}، شرکت و ارز مورد نظر تأیید نشده است.").format(label)
-		)
-	approved_party_accounts.add(identity)
+	validate_party_ledger_currency(party_type, party, company, account.account_currency)
 
 
 def _round_company_amount(amount: Decimal, rate: Decimal, precision: int) -> Decimal:

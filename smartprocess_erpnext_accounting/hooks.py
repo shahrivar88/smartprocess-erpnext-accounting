@@ -43,14 +43,3 @@ doc_events = {
 	},
 }
 
-extend_doctype_class = {
-	"GL Entry": [
-		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyGLEntryMixin"
-	],
-	"Sales Invoice": [
-		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyInvoiceMixin"
-	],
-	"Purchase Invoice": [
-		"smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party.MultiCurrencyPartyInvoiceMixin"
-	],
-}

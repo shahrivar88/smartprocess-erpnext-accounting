@@ -25,7 +25,7 @@ def submit_receipt(doc) -> None:
 
 
 def _submit_receipt(doc) -> None:
-	lines = validate_document(doc, for_posting=True)
+	lines = validate_document(doc)
 	for posting_date, date_lines in _group_lines(lines).items():
 		posting = frappe.get_doc(
 			{
@@ -98,7 +98,7 @@ def _posting_lines(posting) -> list[PostingLine]:
 	if posting.flags.posting_lines:
 		return list(posting.flags.posting_lines)
 	source = frappe.get_doc(SOURCE_DOCTYPE, posting.source_document)
-	lines = validate_document(source, for_posting=True)
+	lines = validate_document(source)
 	wanted = {row.source_pair for row in posting.source_rows}
 	selected = [line for line in lines if line.voucher_detail_no in wanted]
 	selected_rows = {line.voucher_detail_no for line in selected}

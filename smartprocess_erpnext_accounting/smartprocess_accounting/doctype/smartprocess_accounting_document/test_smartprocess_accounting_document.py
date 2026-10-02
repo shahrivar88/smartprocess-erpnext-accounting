@@ -1,14 +1,13 @@
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility.multi_currency_party import (
-	assert_supported_erpnext_contract,
-	is_compatibility_enabled,
-)
+import smartprocess_erpnext_accounting
+from smartprocess_erpnext_accounting.smartprocess_accounting import posting
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import (
 	calculate_company_amount,
 	decimal_text,
@@ -19,7 +18,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
 
 
 COMPANY = "SP V2 Proof Company"
-CUSTOMER = "SP MC Customer"
+LEGACY_CUSTOMER = "SP MC Customer"
+NATIVE_CUSTOMER = "SP SC Customer A"
+NATIVE_CUSTOMER_B = "SP SC Customer B"
 BASE_BANK = "Proof Bank Base - SPV2"
 BASE_RECEIVABLE = "MC Receivable Base - SPV2"
 FOREIGN_RECEIVABLE = "MC Receivable A - SPV2"
@@ -76,6 +77,7 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		doc = self._document()
 		second = self._pair(200, 10, 20)
 		second["credit_account"] = FOREIGN_B_RECEIVABLE
+		second["credit_party"] = NATIVE_CUSTOMER_B
 		doc.append("operational_pairs", second)
 		doc.validate()
 		self.assertEqual(len(doc.operational_pairs), 2)
@@ -97,14 +99,14 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 	def test_mapping_identity_is_unique(self):
 		existing = frappe.db.get_value(
 			"SmartProcess Party Currency Account",
-			{"party_type": "Customer", "party": CUSTOMER, "company": COMPANY, "currency": "XFA"},
+			{"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY, "currency": "XFA"},
 		)
 		self.assertTrue(existing)
 		with self.assertRaises((frappe.DuplicateEntryError, frappe.ValidationError)):
 			frappe.get_doc(
 				{
 					"doctype": "SmartProcess Party Currency Account",
-					"party_type": "Customer", "party": CUSTOMER, "company": COMPANY,
+					"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY,
 					"currency": "XFA", "account": FOREIGN_RECEIVABLE,
 				}
 			).insert()
@@ -114,7 +116,7 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 			frappe.get_doc(
 				{
 					"doctype": "SmartProcess Party Currency Account",
-					"party_type": "Customer", "party": CUSTOMER, "company": COMPANY,
+					"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY,
 					"currency": "XFB", "account": FOREIGN_RECEIVABLE,
 				}
 			).insert()
@@ -123,11 +125,11 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		settings = frappe.get_single("SmartProcess Accounting Settings")
 		settings.enable_counterpart_proposal = 0
 		settings.save()
-		self.assertIsNone(get_party_account_suggestion("Customer", CUSTOMER, COMPANY, "XFA"))
+		self.assertIsNone(get_party_account_suggestion("Customer", NATIVE_CUSTOMER, COMPANY, "XFA"))
 		settings.enable_counterpart_proposal = 1
 		settings.save()
 		self.assertEqual(
-			get_party_account_suggestion("Customer", CUSTOMER, COMPANY, "XFA"),
+			get_party_account_suggestion("Customer", NATIVE_CUSTOMER, COMPANY, "XFA"),
 			FOREIGN_RECEIVABLE,
 		)
 
@@ -138,21 +140,37 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		self.assertTrue(accounts_user.read)
 		self.assertFalse(accounts_user.write)
 
-	def test_compatibility_gate_defaults_off_and_can_be_enabled(self):
-		settings = frappe.get_single("SmartProcess Accounting Settings")
-		settings.enable_multi_currency_party_compatibility = 0
-		settings.save()
-		self.assertFalse(is_compatibility_enabled())
-		settings.enable_multi_currency_party_compatibility = 1
-		settings.save()
-		self.assertTrue(is_compatibility_enabled())
+	def test_multi_currency_party_override_is_retired(self):
+		from erpnext.accounts.doctype.gl_entry.gl_entry import GLEntry
+		from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import PurchaseInvoice
+		from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
+
+		from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility import (
+			multi_currency_party,
+		)
+
+		self.assertNotIn(multi_currency_party.MultiCurrencyPartyGLEntryMixin, GLEntry.__mro__)
+		self.assertNotIn(multi_currency_party.MultiCurrencyPartyInvoiceMixin, SalesInvoice.__mro__)
+		self.assertNotIn(multi_currency_party.MultiCurrencyPartyInvoiceMixin, PurchaseInvoice.__mro__)
+
+		app_root = Path(smartprocess_erpnext_accounting.__file__).resolve().parent
+		hooks_source = (app_root / "hooks.py").read_text(encoding="utf-8")
+		self.assertNotIn("extend_doctype_class", hooks_source)
+		for path in app_root.rglob("*.py"):
+			if path.name.startswith("test_") or path.name == "v2_test_support.py":
+				continue
+			if path.parent.name == "compatibility":
+				continue
+			source = path.read_text(encoding="utf-8")
+			self.assertNotIn("multi_currency_party", source, msg=f"{path.name} still references the retired override")
+			self.assertNotIn("MultiCurrency", source, msg=f"{path.name} still references the retired override")
 
 	def test_unsupported_erpnext_version_fails_closed(self):
-		assert_supported_erpnext_contract.cache_clear()
+		posting.assert_native_posting_contract.cache_clear()
 		with patch("erpnext.__version__", "17.0.0"):
 			with self.assertRaisesRegex(frappe.ValidationError, "ERPNext 16 only"):
-				assert_supported_erpnext_contract()
-		assert_supported_erpnext_contract.cache_clear()
+				posting.assert_native_posting_contract()
+		posting.assert_native_posting_contract.cache_clear()
 
 	def _document(self):
 		return frappe.get_doc(
@@ -172,7 +190,7 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 			"debit_exchange_rate": 1,
 			"credit_account": FOREIGN_RECEIVABLE,
 			"credit_party_type": "Customer",
-			"credit_party": CUSTOMER,
+			"credit_party": NATIVE_CUSTOMER,
 			"credit_amount": foreign_amount,
 			"credit_exchange_rate": rate,
 		}

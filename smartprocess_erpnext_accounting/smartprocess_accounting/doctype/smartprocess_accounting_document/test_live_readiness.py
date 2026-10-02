@@ -10,6 +10,7 @@ from .v2_test_support import (
 	BASE_BANK,
 	BASE_CLEARING,
 	COMPANY,
+	CUSTOMER_BASE as CUSTOMER_BASE_PARTY,
 	FOREIGN_A,
 	FOREIGN_A_ACCOUNT,
 	FOREIGN_B,
@@ -203,16 +204,19 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 				"operation_type": "Receipt",
 				"company": COMPANY,
 				"posting_date": frappe.utils.nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
 				"receipt_payer_currency": BASE,
 				"receipt_payer_account": "MC Receivable Base - SPV2",
+				"receipt_payer_exchange_rate": 1,
 				"receipt_payer_type": "Customer",
-				"receipt_payer": "SP MC Customer",
+				"receipt_payer": CUSTOMER_BASE_PARTY,
 				"operational_pairs": [
 					{
 						"receipt_recipient_type": "Account",
 						"receipt_currency": BASE,
-						"debit_account": BASE_BANK,
-						"debit_amount": 100,
+						"credit_account": BASE_BANK,
+						"credit_amount": 100,
+						"credit_exchange_rate": 1,
 					}
 				],
 			}

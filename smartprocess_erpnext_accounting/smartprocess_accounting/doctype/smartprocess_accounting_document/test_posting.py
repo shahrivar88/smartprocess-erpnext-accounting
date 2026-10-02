@@ -5,28 +5,43 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import frappe
+from erpnext.accounts.party import get_party_gle_currency
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting import posting
 
+from .v2_test_support import (
+	BASE,
+	BASE_BANK,
+	BASE_CLEARING,
+	COMPANY,
+	CUSTOMER_A as CUSTOMER_A_PARTY,
+	CUSTOMER_B as CUSTOMER_B_PARTY,
+	CUSTOMER_BASE as CUSTOMER_BASE_PARTY,
+	EMPLOYEE_A,
+	FOREIGN_A,
+	FOREIGN_A_ACCOUNT,
+	FOREIGN_B,
+	FOREIGN_B_ACCOUNT,
+	PAYABLE_A,
+	PAYABLE_BASE,
+	RECEIVABLE_A,
+	RECEIVABLE_B,
+	RECEIVABLE_BASE,
+	SINGLE_CURRENCY_PARTIES,
+	SUPPLIER_A as SUPPLIER_A_PARTY,
+	SUPPLIER_BASE as SUPPLIER_BASE_PARTY,
+)
 
-COMPANY = "SP V2 Proof Company"
-BASE = "XBA"
-FOREIGN_A = "XFA"
-FOREIGN_B = "XFB"
-BASE_BANK = "Proof Bank Base - SPV2"
-BASE_CLEARING = "Proof Base Clearing - SPV2"
-FOREIGN_A_ACCOUNT = "Proof Foreign A - SPV2"
-FOREIGN_B_ACCOUNT = "Proof Foreign B - SPV2"
-CUSTOMER = "SP MC Customer"
-SUPPLIER = "SP MC Supplier"
-CUSTOMER_BASE = "MC Receivable Base - SPV2"
-CUSTOMER_A = "MC Receivable A - SPV2"
-CUSTOMER_B = "MC Receivable B - SPV2"
-SUPPLIER_BASE = "MC Payable Base - SPV2"
-SUPPLIER_A = "MC Payable A - SPV2"
+
+LEGACY_MULTI_CURRENCY_PARTY = "SP MC Customer"
 DISABLED_ACCOUNT = "MC Disabled Receivable - SPV2"
+PARTY_CURRENCY_CONFIG = {
+	BASE: (RECEIVABLE_BASE, 100, 1),
+	FOREIGN_A: (RECEIVABLE_A, 10, 10),
+	FOREIGN_B: (RECEIVABLE_B, 5, 20),
+}
 
 
 class TestV2Posting(FrappeTestCase):
@@ -35,9 +50,7 @@ class TestV2Posting(FrappeTestCase):
 		self._require_proof_fixture()
 		settings = frappe.get_single("SmartProcess Accounting Settings")
 		settings.enable_v2_posting = 1
-		settings.enable_multi_currency_party_compatibility = 1
 		settings.save()
-		self.employee = frappe.db.get_value("Employee", {"employee_name": "SP MC Employee"}, "name")
 
 	def test_base_to_base(self):
 		doc = self._submit([self._pair(BASE_BANK, 100, 1, BASE_CLEARING, 100, 1)])
@@ -81,9 +94,9 @@ class TestV2Posting(FrappeTestCase):
 
 	def test_customer_supplier_and_employee_create_native_ple(self):
 		cases = (
-			self._pair(BASE_BANK, 100, 1, CUSTOMER_A, 10, 10, credit_party=("Customer", CUSTOMER)),
-			self._pair(BASE_CLEARING, 100, 1, SUPPLIER_A, 10, 10, credit_party=("Supplier", SUPPLIER)),
-			self._pair(BASE_CLEARING, 100, 1, SUPPLIER_A, 10, 10, credit_party=("Employee", self.employee)),
+			self._pair(BASE_BANK, 100, 1, RECEIVABLE_A, 10, 10, credit_party=("Customer", CUSTOMER_A_PARTY)),
+			self._pair(BASE_CLEARING, 100, 1, PAYABLE_A, 10, 10, credit_party=("Supplier", SUPPLIER_A_PARTY)),
+			self._pair(BASE_CLEARING, 100, 1, PAYABLE_A, 10, 10, credit_party=("Employee", EMPLOYEE_A)),
 		)
 		for pair in cases:
 			doc = self._submit([pair])
@@ -93,14 +106,14 @@ class TestV2Posting(FrappeTestCase):
 		doc = self._submit(
 			[
 				self._pair(
-					CUSTOMER_A,
+					RECEIVABLE_A,
 					10,
 					10,
-					SUPPLIER_A,
+					PAYABLE_A,
 					10,
 					10,
-					debit_party=("Customer", CUSTOMER),
-					credit_party=("Supplier", SUPPLIER),
+					debit_party=("Customer", CUSTOMER_A_PARTY),
+					credit_party=("Supplier", SUPPLIER_A_PARTY),
 				)
 			]
 		)
@@ -108,8 +121,8 @@ class TestV2Posting(FrappeTestCase):
 
 	def test_party_to_account_and_account_to_party(self):
 		pairs = (
-			self._pair(CUSTOMER_BASE, 100, 1, BASE_BANK, 100, 1, debit_party=("Customer", CUSTOMER)),
-			self._pair(BASE_BANK, 100, 1, CUSTOMER_BASE, 100, 1, credit_party=("Customer", CUSTOMER)),
+			self._pair(RECEIVABLE_BASE, 100, 1, BASE_BANK, 100, 1, debit_party=("Customer", CUSTOMER_BASE_PARTY)),
+			self._pair(BASE_BANK, 100, 1, RECEIVABLE_BASE, 100, 1, credit_party=("Customer", CUSTOMER_BASE_PARTY)),
 		)
 		for pair in pairs:
 			doc = self._submit([pair])
@@ -128,15 +141,94 @@ class TestV2Posting(FrappeTestCase):
 			doc.submit()
 		self.assertFalse(self._gl(doc))
 
-	def test_foreign_party_requires_compatibility_gate(self):
+	def test_second_currency_for_locked_party_is_rejected(self):
+		first = self._submit(
+			[self._pair(BASE_BANK, 100, 1, RECEIVABLE_B, 5, 20, credit_party=("Customer", CUSTOMER_B_PARTY))]
+		)
+		self.assertTrue(self._ple(first))
+		blocked = self._document(
+			[self._pair(BASE_BANK, 100, 1, RECEIVABLE_A, 10, 10, credit_party=("Customer", CUSTOMER_B_PARTY))]
+		)
+		with self.assertRaises(frappe.ValidationError) as context:
+			blocked.insert()
+		message = str(context.exception)
+		self.assertIn(FOREIGN_B, message)
+		self.assertIn(FOREIGN_A, message)
+		self.assertIn("رکورد طرف حساب", message)
+
+	def test_legacy_multi_currency_party_is_locked_to_native_currency(self):
+		native = get_party_gle_currency("Customer", LEGACY_MULTI_CURRENCY_PARTY, COMPANY)
+		self.assertIn(native, PARTY_CURRENCY_CONFIG)
+		account, amount, rate = PARTY_CURRENCY_CONFIG[native]
+		doc = self._submit(
+			[
+				self._pair(
+					BASE_BANK,
+					100,
+					1,
+					account,
+					amount,
+					rate,
+					credit_party=("Customer", LEGACY_MULTI_CURRENCY_PARTY),
+				)
+			]
+		)
+		self.assertTrue(self._ple(doc))
+		other = next(currency for currency in PARTY_CURRENCY_CONFIG if currency != native)
+		account, amount, rate = PARTY_CURRENCY_CONFIG[other]
+		blocked = self._document(
+			[
+				self._pair(
+					BASE_BANK,
+					100,
+					1,
+					account,
+					amount,
+					rate,
+					credit_party=("Customer", LEGACY_MULTI_CURRENCY_PARTY),
+				)
+			]
+		)
+		with self.assertRaises(frappe.ValidationError) as context:
+			blocked.insert()
+		message = str(context.exception)
+		self.assertIn(native, message)
+		self.assertIn(other, message)
+		self.assertIn("رکورد طرف حساب", message)
+
+	def test_multi_currency_compatibility_setting_cannot_reenable_second_currency(self):
 		settings = frappe.get_single("SmartProcess Accounting Settings")
-		settings.enable_multi_currency_party_compatibility = 0
+		original = settings.enable_multi_currency_party_compatibility
+		settings.enable_multi_currency_party_compatibility = 1
 		settings.save()
-		doc = self._document(
-			[self._pair(BASE_BANK, 100, 1, CUSTOMER_A, 10, 10, credit_party=("Customer", CUSTOMER))]
-		).insert()
-		with self.assertRaisesRegex(frappe.ValidationError, "compatibility must be enabled"):
-			doc.submit()
+		try:
+			first = self._submit(
+				[
+					self._pair(
+						BASE_BANK,
+						100,
+						1,
+						PAYABLE_BASE,
+						100,
+						1,
+						credit_party=("Supplier", SUPPLIER_BASE_PARTY),
+					)
+				]
+			)
+			self.assertTrue(self._ple(first))
+			blocked = self._document(
+				[self._pair(BASE_BANK, 100, 1, PAYABLE_A, 10, 10, credit_party=("Supplier", SUPPLIER_BASE_PARTY))]
+			)
+			with self.assertRaises(frappe.ValidationError) as context:
+				blocked.insert()
+			message = str(context.exception)
+			self.assertIn(BASE, message)
+			self.assertIn(FOREIGN_A, message)
+			self.assertIn("رکورد طرف حساب", message)
+		finally:
+			settings.reload()
+			settings.enable_multi_currency_party_compatibility = original
+			settings.save()
 
 	def test_forged_account_currency_is_rejected(self):
 		doc = self._document([self._pair(BASE_BANK, 100, 1, FOREIGN_A_ACCOUNT, 10, 10)])
@@ -188,7 +280,7 @@ class TestV2Posting(FrappeTestCase):
 
 	def test_posting_failure_rolls_back_partial_gl_and_ple(self):
 		doc = self._document(
-			[self._pair(BASE_BANK, 100, 1, CUSTOMER_BASE, 100, 1, credit_party=("Customer", CUSTOMER))]
+			[self._pair(BASE_BANK, 100, 1, RECEIVABLE_BASE, 100, 1, credit_party=("Customer", CUSTOMER_BASE_PARTY))]
 		).insert()
 		native_make_gl_entries = posting.make_gl_entries
 
@@ -203,18 +295,33 @@ class TestV2Posting(FrappeTestCase):
 		self.assertFalse(self._ple(doc))
 
 	def test_open_account_receipt_does_not_change_invoice_outstanding(self):
-		invoices = frappe.get_all(
-			"Sales Invoice",
-			filters={"docstatus": 1, "customer": CUSTOMER},
-			fields=["name", "outstanding_amount"],
-			limit=2,
-		)
-		self.assertTrue(invoices)
-		before = {row.name: row.outstanding_amount for row in invoices}
+		invoice = frappe.get_doc(
+			{
+				"doctype": "Sales Invoice",
+				"company": COMPANY,
+				"customer": CUSTOMER_BASE_PARTY,
+				"currency": BASE,
+				"selling_price_list": "SP MC Selling XBA",
+				"posting_date": nowdate(),
+				"due_date": nowdate(),
+				"items": [
+					{
+						"item_code": "Consulting",
+						"qty": 1,
+						"rate": 100,
+						"income_account": "Sales - SPV2",
+						"cost_center": "Main - SPV2",
+					}
+				],
+			}
+		).insert()
+		invoice.submit()
+		before = Decimal(str(frappe.db.get_value("Sales Invoice", invoice.name, "outstanding_amount")))
+		self.assertEqual(before, Decimal("100"))
 		doc = self._submit(
-			[self._pair(BASE_BANK, 100, 1, CUSTOMER_BASE, 100, 1, credit_party=("Customer", CUSTOMER))]
+			[self._pair(BASE_BANK, 100, 1, RECEIVABLE_BASE, 100, 1, credit_party=("Customer", CUSTOMER_BASE_PARTY))]
 		)
-		after = {name: frappe.db.get_value("Sales Invoice", name, "outstanding_amount") for name in before}
+		after = Decimal(str(frappe.db.get_value("Sales Invoice", invoice.name, "outstanding_amount")))
 		self.assertEqual(after, before)
 		ple = self._ple(doc)
 		self.assertEqual(len(ple), 1)
@@ -222,7 +329,7 @@ class TestV2Posting(FrappeTestCase):
 
 	def test_cancel_uses_native_reversal(self):
 		doc = self._submit(
-			[self._pair(BASE_BANK, 100, 1, CUSTOMER_BASE, 100, 1, credit_party=("Customer", CUSTOMER))]
+			[self._pair(BASE_BANK, 100, 1, RECEIVABLE_BASE, 100, 1, credit_party=("Customer", CUSTOMER_BASE_PARTY))]
 		)
 		doc.cancel()
 		rows = frappe.get_all(
@@ -424,12 +531,14 @@ class TestV2Posting(FrappeTestCase):
 		for doctype, name in (
 			("Company", COMPANY),
 			("Account", BASE_BANK),
-			("Account", CUSTOMER_A),
-			("Customer", CUSTOMER),
-			("Supplier", SUPPLIER),
+			("Account", RECEIVABLE_A),
+			("Employee", EMPLOYEE_A),
 		):
 			if not frappe.db.exists(doctype, name):
 				raise AssertionError(f"Isolated proof fixture is missing {doctype} {name}")
+		for party_type, party, _account in SINGLE_CURRENCY_PARTIES:
+			if not frappe.db.exists(party_type, party):
+				raise AssertionError(f"Isolated proof fixture is missing {party_type} {party}")
 
 
 def run_posting_suite():

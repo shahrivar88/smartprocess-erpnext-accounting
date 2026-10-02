@@ -17,6 +17,66 @@ OTHER_COMPANY = "_Test Company"
 OTHER_DEBIT_ACCOUNT = "Cash - _TC"
 OTHER_CREDIT_ACCOUNT = "Earnest Money - _TC"
 
+# One committed Party record per accounting currency (native single-currency behavior).
+CUSTOMER_BASE = "SP SC Customer Base"
+CUSTOMER_A = "SP SC Customer A"
+CUSTOMER_B = "SP SC Customer B"
+SUPPLIER_BASE = "SP SC Supplier Base"
+SUPPLIER_A = "SP SC Supplier A"
+EMPLOYEE_A = "SP SC Employee A"
+RECEIVABLE_BASE = "MC Receivable Base - SPV2"
+RECEIVABLE_A = "MC Receivable A - SPV2"
+RECEIVABLE_B = "MC Receivable B - SPV2"
+PAYABLE_BASE = "MC Payable Base - SPV2"
+PAYABLE_A = "MC Payable A - SPV2"
+
+SINGLE_CURRENCY_PARTIES = (
+	("Customer", CUSTOMER_BASE, RECEIVABLE_BASE),
+	("Customer", CUSTOMER_A, RECEIVABLE_A),
+	("Customer", CUSTOMER_B, RECEIVABLE_B),
+	("Supplier", SUPPLIER_BASE, PAYABLE_BASE),
+	("Supplier", SUPPLIER_A, PAYABLE_A),
+)
+
+
+def ensure_single_currency_parties() -> None:
+	"""Idempotently create one committed Party record per accounting currency."""
+	frappe.flags.in_import = True
+	try:
+		for party_type, party, account in SINGLE_CURRENCY_PARTIES:
+			if frappe.db.exists(party_type, party):
+				continue
+			payload = {
+				"doctype": party_type,
+				"name": party,
+				"default_currency": frappe.get_cached_value("Account", account, "account_currency"),
+				"accounts": [{"company": COMPANY, "account": account}],
+			}
+			if party_type == "Customer":
+				payload["customer_name"] = party
+				payload["customer_type"] = "Company"
+			else:
+				payload["supplier_name"] = party
+				payload["supplier_type"] = "Company"
+			frappe.get_doc(payload).insert()
+		if not frappe.db.exists("Employee", EMPLOYEE_A):
+			frappe.get_doc(
+				{
+					"doctype": "Employee",
+					"name": EMPLOYEE_A,
+					"first_name": EMPLOYEE_A,
+					"employee_name": EMPLOYEE_A,
+					"company": COMPANY,
+					"gender": "Other",
+					"date_of_birth": "1990-01-01",
+					"date_of_joining": "2020-01-01",
+					"status": "Active",
+				}
+			).insert()
+	finally:
+		frappe.flags.in_import = False
+	frappe.db.commit()
+
 
 class V2IntegrationTestCase(FrappeTestCase):
 	def setUp(self):
@@ -24,7 +84,6 @@ class V2IntegrationTestCase(FrappeTestCase):
 		self._require_fixture()
 		settings = frappe.get_single("SmartProcess Accounting Settings")
 		settings.enable_v2_posting = 1
-		settings.enable_multi_currency_party_compatibility = 1
 		settings.save()
 
 	def tearDown(self):
@@ -158,12 +217,22 @@ class V2IntegrationTestCase(FrappeTestCase):
 		return self.pair(OTHER_DEBIT_ACCOUNT, 100, 1, OTHER_CREDIT_ACCOUNT, 100, 1)
 
 	def _require_fixture(self):
-		for doctype, name in (
+		required = (
 			("Company", COMPANY),
 			("Account", BASE_BANK),
 			("Account", FOREIGN_A_ACCOUNT),
+			("Account", RECEIVABLE_BASE),
+			("Account", RECEIVABLE_A),
+			("Account", RECEIVABLE_B),
+			("Account", PAYABLE_BASE),
+			("Account", PAYABLE_A),
+			("Employee", EMPLOYEE_A),
 			("Account", OTHER_DEBIT_ACCOUNT),
 			("Account", OTHER_CREDIT_ACCOUNT),
-		):
+		)
+		for doctype, name in required:
 			if not frappe.db.exists(doctype, name):
 				raise AssertionError(f"Isolated proof fixture is missing {doctype} {name}")
+		for party_type, party, _account in SINGLE_CURRENCY_PARTIES:
+			if not frappe.db.exists(party_type, party):
+				raise AssertionError(f"Isolated proof fixture is missing {party_type} {party}")

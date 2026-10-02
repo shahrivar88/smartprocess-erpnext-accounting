@@ -5,6 +5,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
+from erpnext.accounts.party import get_party_gle_currency
+
 
 ALLOWED_PARTY_TYPES = (
 	"Customer",
@@ -86,6 +88,60 @@ def validate_party(party_type: str | None, party: str | None, account_type: str 
 	if party_type == "SmartProcess Financial Intermediary":
 		if frappe.get_cached_value(party_type, party, "disabled"):
 			frappe.throw(_("Financial Intermediary {0} is disabled.").format(party))
+
+
+def get_party_ledger_currency(party_type: str | None, party: str | None, company: str | None) -> str | None:
+	"""Currency of the Party's first active GL entry in the Company (ERPNext-native rule)."""
+	if not (party_type and party and company):
+		return None
+	return get_party_gle_currency(party_type, party, company)
+
+
+def validate_party_ledger_currency(
+	party_type: str | None,
+	party: str | None,
+	company: str,
+	account_currency: str,
+) -> None:
+	"""Mirror ERPNext GL Entry.validate_party_gle_currency with an early, explicit message."""
+	if not (party_type and party):
+		return
+	existing = get_party_ledger_currency(party_type, party, company)
+	if existing and existing != account_currency:
+		frappe.throw(
+			_(
+				"طرف حساب {0} «{1}» در شرکت {2} سابقهٔ اسناد به ارز {3} دارد؛ ثبت به ارز {4} مجاز نیست. "
+				"برای ارز {4} یک رکورد طرف حساب جداگانه انتخاب یا ایجاد کنید."
+			).format(party_type, party, company, existing, account_currency)
+		)
+
+
+def assert_one_currency_per_party(entries) -> None:
+	"""Reject one document mixing several accounting currencies for the same Party.
+
+	``entries`` is an iterable of ``(party_type, party, currency, label)`` tuples.
+	"""
+	seen: dict[tuple, tuple] = {}
+	for party_type, party, currency, label in entries:
+		if not (party_type and party and currency):
+			continue
+		key = (party_type, party)
+		if key in seen and seen[key][0] != currency:
+			previous_currency, previous_label = seen[key]
+			frappe.throw(
+				_(
+					"طرف حساب {0} «{1}» در این سند با دو ارز {2} ({3}) و {4} ({5}) استفاده شده است؛ "
+					"برای هر ارز رکورد طرف حساب جداگانه انتخاب کنید."
+				).format(
+					party_type,
+					party,
+					previous_currency,
+					previous_label,
+					currency,
+					label,
+				)
+			)
+		seen.setdefault(key, (currency, label))
 
 
 def _validate_string(value, fieldname: str) -> None:

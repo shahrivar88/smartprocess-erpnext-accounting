@@ -1,6 +1,7 @@
 {
  "actions": [],
  "creation": "2026-09-30 00:00:00.000000",
+ "description": "LEGACY (retired): no longer required for posting or account selection. ERPNext-native single-currency-per-Party behavior is authoritative; existing rows are kept read-only for historical reference and must not be deleted.",
  "doctype": "DocType",
  "document_type": "Setup",
  "engine": "InnoDB",

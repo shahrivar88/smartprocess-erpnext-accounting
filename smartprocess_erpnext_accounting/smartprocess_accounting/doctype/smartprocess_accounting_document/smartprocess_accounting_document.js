@@ -204,10 +204,13 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		return receiptForm.payerChanged(frm, true);
 	},
 	receipt_payer_currency(frm) {
-		if (!frm.__sp_setting_receiver_currency && frm.doc.receipt_payer_currency) {
+		if (frm.__sp_setting_receiver_currency) {
+			return receiptForm.payerCurrencyChanged(frm);
+		}
+		if (frm.doc.receipt_payer_currency) {
 			frm.__sp_receiver_currency_explicit = true;
 		}
-		return receiptForm.payerCurrencyChanged(frm);
+		return receiptForm.enforceReceiverPartyLedger(frm);
 	},
 	receipt_payer_exchange_rate(frm) {
 		return receiptForm.payerRateChanged(frm);
@@ -367,6 +370,9 @@ const receiptForm = {
 		await this.initializeReceiverType(frm);
 		await this.loadCurrencyOptions(frm);
 		await this.defaultReceiverCurrency(frm, frm.doc.company_currency || "");
+		if (frm.doc.docstatus === 0 && frm.doc.receipt_payer) {
+			await this.syncReceiverPartyCurrency(frm);
+		}
 	},
 	async initializeReceiverType(frm) {
 		const receiverKind = frm.doc.receipt_receiver_kind || "Customer";
@@ -733,12 +739,76 @@ const receiptForm = {
 		if (clearAccount && frm.doc.receipt_payer_account) {
 			await frm.set_value("receipt_payer_account", "");
 		}
+		await this.syncReceiverPartyCurrency(frm);
 		await this.suggestPayerAccount(frm);
+	},
+	async syncReceiverPartyCurrency(frm) {
+		if (
+			frm.doc.operation_type !== RECEIPT
+			|| !frm.doc.company
+			|| !frm.doc.receipt_payer_type
+			|| !frm.doc.receipt_payer
+			|| !PARTY_TYPES.includes(frm.doc.receipt_payer_type)
+		) {
+			frm.__sp_receiver_party_ledger = "";
+			return;
+		}
+		const context = await getPartyCurrencyContext(
+			frm.doc.receipt_payer_type,
+			frm.doc.receipt_payer,
+			frm.doc.company,
+		);
+		frm.__sp_receiver_party_ledger = context.ledger_currency || "";
+		const currentCurrency = frm.doc.receipt_payer_currency || "";
+		if (context.ledger_currency) {
+			if (currentCurrency && currentCurrency !== context.ledger_currency) {
+				frappe.msgprint(
+					partyLedgerMessage(
+						frm.doc.receipt_payer,
+						context.ledger_currency,
+						currentCurrency,
+					),
+				);
+				await this.setProgrammaticReceiverCurrency(frm, context.ledger_currency);
+			}
+			return;
+		}
+		if (
+			!frm.__sp_receiver_currency_explicit
+			&& context.account_currency
+			&& currentCurrency !== context.account_currency
+		) {
+			await this.setProgrammaticReceiverCurrency(frm, context.account_currency);
+		}
+	},
+	async setProgrammaticReceiverCurrency(frm, currency) {
+		if (!currency || frm.doc.receipt_payer_currency === currency) {
+			return;
+		}
+		frm.__sp_setting_receiver_currency = true;
+		try {
+			await frm.set_value("receipt_payer_currency", currency);
+		} finally {
+			frm.__sp_setting_receiver_currency = false;
+		}
+	},
+	async enforceReceiverPartyLedger(frm) {
+		const ledgerCurrency = frm.__sp_receiver_party_ledger || "";
+		const currentCurrency = frm.doc.receipt_payer_currency || "";
+		if (ledgerCurrency && currentCurrency && currentCurrency !== ledgerCurrency) {
+			frappe.msgprint(
+				partyLedgerMessage(frm.doc.receipt_payer, ledgerCurrency, currentCurrency),
+			);
+			await this.setProgrammaticReceiverCurrency(frm, ledgerCurrency);
+			return;
+		}
+		return this.payerCurrencyChanged(frm);
 	},
 	async receiverKindChanged(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
+		frm.__sp_receiver_party_ledger = "";
 		const partyType = PARTY_TYPES.includes(frm.doc.receipt_receiver_kind)
 			? frm.doc.receipt_receiver_kind
 			: "";
@@ -899,6 +969,22 @@ async function getReceiptSuggestion(partyType, party, company, currency) {
 	return message || "";
 }
 
+async function getPartyCurrencyContext(partyType, party, company) {
+	const { message } = await frappe.call({
+		type: "GET",
+		method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_party_currency_context",
+		args: { party_type: partyType, party, company },
+	});
+	return message || {};
+}
+
+function partyLedgerMessage(party, ledgerCurrency, targetCurrency) {
+	return __(
+		"طرف حساب «{0}» در این شرکت قبلاً به ارز {1} ثبت شده است؛ برای ارز {2} یک رکورد طرف حساب جداگانه انتخاب کنید.",
+		[party, ledgerCurrency, targetCurrency],
+	);
+}
+
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {
 		const row = locals[cdt][cdn];
@@ -1008,14 +1094,79 @@ const spAccountingPair = {
 		if (clearAccount && row.credit_account) {
 			await frappe.model.set_value(cdt, cdn, "credit_account", "");
 		}
+		await this.syncReceiptRowCurrency(frm, cdt, cdn);
 		await this.suggestReceiptAccount(frm, cdt, cdn);
 		receiptForm.configureGrid(frm, true);
+	},
+	async syncReceiptRowCurrency(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (
+			!frm.doc.company
+			|| !row.receipt_recipient_type
+			|| row.receipt_recipient_type === ACCOUNT_RECIPIENT
+			|| !row.receipt_recipient
+			|| !PARTY_TYPES.includes(row.receipt_recipient_type)
+		) {
+			row.__sp_party_ledger = "";
+			return;
+		}
+		const context = await getPartyCurrencyContext(
+			row.receipt_recipient_type,
+			row.receipt_recipient,
+			frm.doc.company,
+		);
+		row.__sp_party_ledger = context.ledger_currency || "";
+		const currentCurrency = row.receipt_currency || "";
+		if (context.ledger_currency) {
+			if (currentCurrency && currentCurrency !== context.ledger_currency) {
+				frappe.msgprint(
+					partyLedgerMessage(
+						row.receipt_recipient,
+						context.ledger_currency,
+						currentCurrency,
+					),
+				);
+				await this.setRowReceiptCurrency(frm, cdt, cdn, context.ledger_currency);
+			}
+			return;
+		}
+		if (!currentCurrency && context.account_currency) {
+			await this.setRowReceiptCurrency(frm, cdt, cdn, context.account_currency);
+		}
+	},
+	async setRowReceiptCurrency(frm, cdt, cdn, currency) {
+		const row = locals[cdt][cdn];
+		if (!currency || row.receipt_currency === currency) {
+			return;
+		}
+		row.__sp_receipt_currency_guard = true;
+		try {
+			await frappe.model.set_value(cdt, cdn, "receipt_currency", currency);
+		} finally {
+			row.__sp_receipt_currency_guard = false;
+		}
 	},
 	async receiptCurrencyChanged(frm, cdt, cdn) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
 		const row = locals[cdt][cdn];
+		if (
+			!row.__sp_receipt_currency_guard
+			&& row.__sp_party_ledger
+			&& row.receipt_currency
+			&& row.receipt_currency !== row.__sp_party_ledger
+		) {
+			frappe.msgprint(
+				partyLedgerMessage(
+					row.receipt_recipient,
+					row.__sp_party_ledger,
+					row.receipt_currency,
+				),
+			);
+			await this.setRowReceiptCurrency(frm, cdt, cdn, row.__sp_party_ledger);
+			return;
+		}
 		const changed = row.__sp_previous_receipt_currency !== undefined
 			&& row.__sp_previous_receipt_currency !== row.receipt_currency;
 		row.__sp_previous_receipt_currency = row.receipt_currency || "";
