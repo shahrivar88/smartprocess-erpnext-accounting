@@ -130,6 +130,19 @@ class TestReceiptUX(V2IntegrationTestCase):
 			"receiptForm.renderSummary(frm)",
 		):
 			self.assertIn(contract, source)
+		css = Path(
+			frappe.get_app_path(
+				"smartprocess_erpnext_accounting",
+				"public",
+				"css",
+				"receipt_form.css",
+			)
+		).read_text(encoding="utf-8")
+		self.assertIn("sp-receipt-layout-section", source)
+		self.assertIn("overflow-x: auto", css)
+		self.assertIn("max-width: 100%", css)
+		self.assertNotIn("100vw", css)
+		self.assertNotIn("translateX", css)
 
 	def test_customer_foreign_payer_to_base_account(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])

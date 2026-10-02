@@ -418,7 +418,9 @@ const receiptForm = {
 		if (!grid) {
 			return;
 		}
-		frm.fields_dict.operational_pairs.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
+		const gridWrapper = frm.fields_dict.operational_pairs.$wrapper;
+		gridWrapper.closest(".form-section").toggleClass("sp-receipt-layout-section", isReceipt);
+		gridWrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
 		frm.fields_dict.receipt_summary?.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
 		if (isReceipt && frm.doc.posting_date) {
 			for (const row of frm.doc.operational_pairs || []) {
