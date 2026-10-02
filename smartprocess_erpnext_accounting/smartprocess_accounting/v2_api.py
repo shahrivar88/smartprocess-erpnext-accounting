@@ -138,23 +138,37 @@ def get_receipt_receiver_total(doc: dict) -> dict:
 
 	Runs the same canonicalization the document lifecycle runs before posting, so the
 	returned amounts are the canonical debit sums, not a second client-side formula.
+	The HTTP transport may deliver ``doc`` as a JSON string, so both shapes are
+	accepted. While the draft is incomplete or invalid the canonicalization rejects
+	it (posting would post nothing), so the totals are reported as zero instead of
+	raising an error on every mid-edit refresh.
 	"""
+	if isinstance(doc, str):
+		doc = frappe.parse_json(doc)
 	receipt = frappe.get_doc(doc)
 	if receipt.operation_type != "Receipt":
 		frappe.throw(_("Receiver totals apply to Receipt documents only."))
-	canonicalize_receipt(receipt)
 	amount = Decimal("0")
 	company_amount = Decimal("0")
-	for row in receipt.operational_pairs or []:
-		amount += to_decimal(row.debit_amount, _("Amount"))
-		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
+	try:
+		canonicalize_receipt(receipt)
+		for row in receipt.operational_pairs or []:
+			amount += to_decimal(row.debit_amount, _("Amount"))
+			company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
+	except Exception:
+		amount = Decimal("0")
+		company_amount = Decimal("0")
+	try:
+		company_currency = receipt.company_currency or _get_company_currency(receipt.company)
+	except Exception:
+		company_currency = None
 	return {
 		"account": receipt.receipt_payer_account,
 		"party": receipt.receipt_payer or "",
 		"currency": receipt.receipt_payer_currency,
 		"amount": decimal_text(amount),
 		"company_amount": decimal_text(company_amount),
-		"company_currency": receipt.company_currency,
+		"company_currency": company_currency,
 	}
 
 
