@@ -1,12 +1,15 @@
 const RECEIPT = "Receipt";
 const ACCOUNT_RECIPIENT = "Account";
+// ERPNext-native bank entity for Receipt rows: the Link type value is the Bank Account doctype,
+// so the row entity field selects company Bank Account records while the ledger Account stays separate.
+const BANK_ACCOUNT_RECIPIENT = "Bank Account";
 const PARTY_TYPES = ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"];
 const RECEIVER_ACCOUNT_TYPES = {
 	"بانک": "Bank",
 	"صندوق": "Cash",
 	"سایر حساب‌ها": null,
 };
-const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, ACCOUNT_RECIPIENT];
+const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
 	"receipt_recipient_type",
@@ -192,6 +195,16 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 			query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.bank_account_query",
 			filters: { company: frm.doc.company, currency: frm.doc.receipt_payer_currency },
 		}));
+		frm.set_query("receipt_recipient", "operational_pairs", (doc, cdt, cdn) => {
+			const row = locals[cdt][cdn];
+			if (row?.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
+				return {
+					query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.bank_account_query",
+					filters: { company: frm.doc.company, currency: row.receipt_currency },
+				};
+			}
+			return {};
+		});
 		for (const side of ["debit", "credit"]) {
 			frm.set_query(`${side}_account`, "operational_pairs", (doc, cdt, cdn) => {
 				const row = locals[cdt][cdn];
@@ -281,6 +294,10 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 
 function receiptAccountFilters(company, currency, partyType, receiverKind = null) {
 	const filters = { company, disabled: 0, is_group: 0, account_currency: currency };
+	if (partyType === BANK_ACCOUNT_RECIPIENT) {
+		filters.account_type = "Bank";
+		return filters;
+	}
 	if (receiverKind === "بانک" || receiverKind === "صندوق") {
 		filters.account_type = RECEIVER_ACCOUNT_TYPES[receiverKind];
 		return filters;
@@ -479,6 +496,7 @@ const receiptForm = {
 				receipt_payer_currency: "ارز دریافت‌کننده",
 				receipt_payer_exchange_rate: "نرخ ارز دریافت‌کننده",
 				receipt_payer_account: "معین دریافت‌کننده",
+				receipt_bank_account: "دریافت‌کننده",
 			}
 			: {
 				operation_type: "Operation Type",
@@ -499,8 +517,9 @@ const receiptForm = {
 		const bankReceiver = isReceipt && frm.doc.receipt_receiver_kind === "بانک";
 		frm.toggle_display("receipt_bank_account", bankReceiver);
 		frm.toggle_reqd("receipt_bank_account", bankReceiver);
-		frm.toggle_display("receipt_payer_account", isReceipt && !bankReceiver);
-		frm.toggle_reqd("receipt_payer_account", isReceipt && !bankReceiver);
+		// The ledger Account stays a separate, always-visible Receipt receiver field.
+		frm.toggle_display("receipt_payer_account", isReceipt);
+		frm.toggle_reqd("receipt_payer_account", isReceipt);
 		const partyReceiver = isReceipt && PARTY_TYPES.includes(frm.doc.receipt_receiver_kind);
 		frm.toggle_display("receipt_payer_type", false);
 		frm.toggle_reqd("receipt_payer_type", false);
@@ -526,6 +545,9 @@ const receiptForm = {
 		}
 		this.updatePayerRateMeaning(frm);
 		frm.toggle_display("company_currency", !isReceipt);
+		// General Reference is not part of the normal Receipt workflow; other operation
+		// types keep it (field and historical values untouched).
+		frm.toggle_display("general_reference", !isReceipt);
 	},
 	configureGrid(frm, isReceipt) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
@@ -794,6 +816,11 @@ const receiptForm = {
 		]) {
 			gridRow.set_field_property(fieldname, "label", label);
 		}
+		gridRow.set_field_property(
+			"receipt_recipient",
+			"label",
+			row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT ? "حساب بانکی" : "نام پرداخت‌کننده",
+		);
 		gridRow.toggle_display("receipt_recipient", row.receipt_recipient_type !== ACCOUNT_RECIPIENT);
 		gridRow.toggle_display("credit_exchange_rate", hasForeign);
 		gridRow.toggle_display("credit_company_amount", hasForeign);
@@ -833,7 +860,9 @@ const receiptForm = {
 			frm.doc.receipt_payer_currency,
 			...(frm.doc.operational_pairs || []).map((row) => row.receipt_currency),
 		].filter(Boolean);
-		const options = ["", ...new Set([...availableCurrencies, ...storedCurrencies])];
+		// No leading "" — a blank option must never be selectable; the default value comes
+		// from Company.default_currency (header) or the Party/account state logic (rows).
+		const options = [...new Set([...availableCurrencies, ...storedCurrencies])].filter(Boolean);
 		const optionText = options.join("\n");
 		frm.set_df_property("receipt_payer_currency", "options", optionText);
 
@@ -1296,10 +1325,26 @@ const spAccountingPair = {
 		}
 		row.__sp_party_ledger = "";
 		await frappe.model.set_value(cdt, cdn, "credit_account", "");
-		await this.syncRowCurrencyFromParty(frm, cdt, cdn);
-		await this.suggestReceiptAccount(frm, cdt, cdn);
+		if (row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
+			await this.applyRowBankAccount(frm, cdt, cdn);
+		} else {
+			await this.syncRowCurrencyFromParty(frm, cdt, cdn);
+			await this.suggestReceiptAccount(frm, cdt, cdn);
+		}
 		receiptForm.configureGrid(frm, true);
 		receiptForm.renderSummary(frm);
+	},
+	async applyRowBankAccount(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.receipt_recipient || !frm.doc.company) {
+			return;
+		}
+		const details = await getBankAccountDetails(row.receipt_recipient, frm.doc.company);
+		if (details.account_currency && row.receipt_currency !== details.account_currency) {
+			await this.setRowReceiptCurrency(frm, cdt, cdn, details.account_currency);
+		}
+		await frappe.model.set_value(cdt, cdn, "credit_account", details.account);
+		await this.calculate(frm, cdt, cdn, "credit");
 	},
 	async syncRowCurrencyFromParty(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
@@ -1392,6 +1437,7 @@ const spAccountingPair = {
 		if (
 			row.credit_account
 			|| row.receipt_recipient_type === ACCOUNT_RECIPIENT
+			|| row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT
 			|| !row.receipt_recipient_type
 			|| !row.receipt_recipient
 			|| !row.receipt_currency

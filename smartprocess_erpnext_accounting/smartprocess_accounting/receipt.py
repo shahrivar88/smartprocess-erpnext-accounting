@@ -22,6 +22,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 
 ACCOUNT_RECIPIENT = "Account"
+BANK_ACCOUNT_RECIPIENT = "Bank Account"
 ACCOUNT_RECEIVER_TYPES = {
 	"بانک": "Bank",
 	"صندوق": "Cash",
@@ -83,7 +84,7 @@ def canonicalize_receipt_row(
 	payer_type = row.get("receipt_recipient_type")
 	payer = row.get("receipt_recipient")
 	receipt_currency = row.get("receipt_currency")
-	if payer_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT):
+	if payer_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT):
 		_receipt_error(number, _("نوع پرداخت‌کننده"), _("یک نوع پرداخت‌کننده معتبر انتخاب کنید."))
 	if not receipt_currency:
 		_receipt_error(number, _("ارز"), _("ارز ردیف الزامی است."))
@@ -98,7 +99,14 @@ def canonicalize_receipt_row(
 			_("ارز حساب انتخاب‌شده با ارز ردیف یکسان نیست."),
 		)
 
-	if payer_type == ACCOUNT_RECIPIENT:
+	if payer_type == BANK_ACCOUNT_RECIPIENT:
+		if not payer:
+			_receipt_error(number, _("حساب بانکی"), _("حساب بانکی الزامی است."))
+		_validate_row_bank_account(number, payer, doc.company, account)
+		row.credit_party_type = None
+		row.credit_party = None
+		validate_party(None, None, account.account_type)
+	elif payer_type == ACCOUNT_RECIPIENT:
 		row.credit_party_type = None
 		row.credit_party = None
 		validate_party(None, None, account.account_type)
@@ -159,6 +167,10 @@ def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 			frappe.throw(_("{0} الزامی است.").format(label))
 	if receiver_kind not in (*ALLOWED_PARTY_TYPES, *ACCOUNT_RECEIVER_TYPES):
 		frappe.throw(_("نوع دریافت‌کننده انتخاب‌شده مجاز نیست."))
+	if receiver_kind == "بانک":
+		_validate_receiver_bank_account(doc)
+	elif doc.get("receipt_bank_account"):
+		doc.receipt_bank_account = None
 
 	account = accounts.get(doc.receipt_payer_account)
 	if not account:
@@ -180,6 +192,35 @@ def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 		(doc.receipt_payer_type, doc.receipt_payer, doc.receipt_payer_currency, _("دریافت‌کننده"))
 	)
 	return account
+
+
+def _validate_receiver_bank_account(doc) -> None:
+	bank_account = doc.get("receipt_bank_account")
+	if not bank_account:
+		return
+	if not _is_company_bank_account(bank_account, doc.company):
+		frappe.throw(_("حساب بانکی دریافت‌کننده باید یک حساب بانکی شرکت انتخاب‌شده باشد."))
+
+
+def _validate_row_bank_account(number: int, bank_account: str, company: str, account) -> None:
+	if account.account_type != "Bank":
+		_receipt_error(
+			number,
+			_("معین پرداخت‌کننده"),
+			_("برای حساب بانکی، معین پرداخت‌کننده باید یک حساب بانکی باشد."),
+		)
+	if not _is_company_bank_account(bank_account, company):
+		_receipt_error(number, _("حساب بانکی"), _("حساب بانکی انتخاب‌شده متعلق به شرکت نیست."))
+
+
+def _is_company_bank_account(bank_account: str, company: str) -> bool:
+	details = frappe.get_cached_value(
+		"Bank Account",
+		bank_account,
+		["company", "is_company_account"],
+		as_dict=True,
+	)
+	return bool(details) and details.company == company and bool(details.is_company_account)
 
 
 def _validate_account_receiver(receiver_kind, account) -> None:
