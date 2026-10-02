@@ -114,6 +114,9 @@ function configureCompactNumberInput(control) {
 
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	refresh(frm) {
+		// Posting units must cancel only through the Receipt's authorized path; keep
+		// frappe's linked-docs auto-cancel from cancelling them directly.
+		frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting"];
 		if (canStartCorrection(frm)) {
 			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
 		}

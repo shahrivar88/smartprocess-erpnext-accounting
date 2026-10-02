@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import frappe
 from frappe.core.doctype.doctype.doctype import validate_fields_for_doctype
+from frappe.desk.doctype.bulk_update.bulk_update import submit_cancel_or_update_docs
+from frappe.desk.form.linked_with import get_submitted_linked_docs
 from frappe.utils import add_days, getdate, nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
@@ -609,6 +611,57 @@ class TestReceiptUX(V2IntegrationTestCase):
 			settings.reload()
 			settings.enable_immutable_ledger = original
 			settings.save()
+
+	def test_form_cancel_ignores_posting_units_in_linked_docs_preflight(self):
+		doc = self.multi_date_receipt().insert()
+		doc.submit()
+		linked = get_submitted_linked_docs(
+			"SmartProcess Accounting Document",
+			doc.name,
+			ignore_doctypes_on_cancel_all=["SmartProcess Accounting Posting"],
+		)
+		self.assertEqual(linked["docs"], [])
+		doc.cancel()
+		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 2)
+		units = self.posting_units(doc, include_cancelled=True)
+		self.assertEqual({unit.docstatus for unit in units}, {2})
+		self.assertFalse(self.active_gl(doc))
+
+	def test_form_cancel_without_ignore_list_surfaces_posting_units(self):
+		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
+		doc.submit()
+		linked = get_submitted_linked_docs(
+			"SmartProcess Accounting Document", doc.name, ignore_doctypes_on_cancel_all=[]
+		)
+		self.assertEqual([item["doctype"] for item in linked["docs"]], ["SmartProcess Accounting Posting"])
+
+	def test_list_bulk_cancel_path_cancels_receipt_and_posting_units(self):
+		doc = self.multi_date_receipt().insert()
+		doc.submit()
+		failed = submit_cancel_or_update_docs("SmartProcess Accounting Document", [doc.name], "cancel")
+		self.assertEqual(failed, [])
+		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 2)
+		units = self.posting_units(doc, include_cancelled=True)
+		self.assertEqual({unit.docstatus for unit in units}, {2})
+		self.assertFalse(self.active_gl(doc))
+
+	def test_direct_posting_unit_cancel_is_rejected(self):
+		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
+		doc.submit()
+		unit_name = self.posting_units(doc)[0].name
+		with self.assertRaisesRegex(
+			frappe.ValidationError, "Posting units can only be cancelled from their source Receipt"
+		):
+			frappe.get_doc("SmartProcess Accounting Posting", unit_name).cancel()
+		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 1)
+		self.assertEqual(frappe.db.get_value("SmartProcess Accounting Posting", unit_name, "docstatus"), 1)
+
+	def test_receipt_form_contract_ignores_posting_units_in_linked_cancel(self):
+		source = self.client_source()
+		self.assertIn(
+			'frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting"]',
+			source,
+		)
 
 	def test_multi_date_correction_keeps_old_units_and_returns_unposted_draft(self):
 		doc = self.multi_date_receipt().insert()
