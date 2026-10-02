@@ -8,6 +8,11 @@ const cases = [
 	["0.000001000", ".", "0.000001"],
 	["1,000,000.500000000000", ".", "1,000,000.5"],
 	["1.000.000,500000000000", ",", "1.000.000,5"],
+	[
+		'<span class="currency">B 100.000000000</span>',
+		".",
+		'<span class="currency">B 100</span>',
+	],
 ];
 
 for (const [input, separator, expected] of cases) {

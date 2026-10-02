@@ -250,6 +250,24 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertNotIn("frappe.form.formatters.Currency =", source)
 		self.assertNotIn("frappe.form.formatters.Float =", source)
 
+	def test_receipt_grid_formatter_survives_field_and_control_rebuilds(self):
+		source = self.client_source()
+		self.assertIn("installReceiptGridLifecycle", source)
+		self.assertIn("installReceiptRowStaticNumberFormatters(this)", source)
+		self.assertIn("frappe.meta.set_formatter", source)
+		self.assertIn("const setupFields = grid.setup_fields", source)
+		self.assertIn("const refresh = grid.refresh", source)
+		self.assertIn("const makeControl = gridRow.make_control", source)
+		self.assertIn("configureCompactNumberInput(column.field)", source)
+
+	def test_receipt_grid_owns_mandatory_dynamic_columns(self):
+		source = self.client_source()
+		self.assertIn("const setupUserDefinedColumns = grid.setup_user_defined_columns", source)
+		self.assertIn("this.__sp_receipt_columns", source)
+		self.assertIn('["debit_exchange_rate", 1]', source)
+		self.assertIn('["debit_company_amount", 1]', source)
+		self.assertIn('gridRow.toggle_editable("debit_exchange_rate", Boolean(foreign))', source)
+
 	def test_cross_currency_requires_explicit_payer_rate(self):
 		doc = self.receipt(
 			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
