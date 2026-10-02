@@ -413,19 +413,24 @@ function installReceiptGridLifecycle(grid) {
 }
 
 function receiptGridColumns(hasPartyRecipient, hasForeign) {
+	// Colsizes map to frappe's fixed-px ladder (1:60 2:100 3:140 4:200 5:250 …)
+	// as a sensible fallback; the designed proportions are enforced by the
+	// proportional flex rules in public/css/receipt_form.css. All states keep
+	// the total above 10 on purpose so frappe's redistribution loop does not
+	// inflate these values.
 	const columns = [
-		["receipt_recipient_type", 1],
+		["receipt_recipient_type", 2],
 	];
 	if (hasPartyRecipient) {
-		columns.push(["receipt_recipient", 2]);
+		columns.push(["receipt_recipient", 5]);
 	}
 	columns.push(
 		["receipt_currency", 1],
-		["credit_account", 2],
-		["credit_amount", 1],
+		["credit_account", hasPartyRecipient ? 4 : 5],
+		["credit_amount", 2],
 	);
 	if (hasForeign) {
-		columns.push(["credit_exchange_rate", 1], ["credit_company_amount", 1]);
+		columns.push(["credit_exchange_rate", 2], ["credit_company_amount", 3]);
 	}
 	return columns;
 }
@@ -680,13 +685,13 @@ const receiptForm = {
 			["depositor_name", "label", "نام واریزکننده"],
 			["bank_name", "label", "نام بانک / بانک مبدأ"],
 			["receipt_posting_date", "columns", 1],
-			["receipt_recipient_type", "columns", 1],
-			["receipt_recipient", "columns", 2],
+			["receipt_recipient_type", "columns", 2],
+			["receipt_recipient", "columns", 5],
 			["receipt_currency", "columns", 1],
-			["credit_exchange_rate", "columns", 1],
-			["credit_company_amount", "columns", 1],
-			["credit_account", "columns", 2],
-			["credit_amount", "columns", 1],
+			["credit_exchange_rate", "columns", 2],
+			["credit_company_amount", "columns", 3],
+			["credit_account", "columns", 4],
+			["credit_amount", "columns", 2],
 			...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", compactNumberFormatter]),
 			[
 				"credit_amount",
