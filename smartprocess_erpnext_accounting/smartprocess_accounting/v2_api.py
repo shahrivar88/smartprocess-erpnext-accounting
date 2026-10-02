@@ -133,42 +133,109 @@ def _mapped_party_account(party_type: str, party: str, company: str) -> str | No
 
 
 @frappe.whitelist()
-def get_receipt_receiver_total(doc: dict) -> dict:
+def get_receipt_receiver_total(doc: dict) -> dict | None:
 	"""Exact total that Receipt posting will debit to the header receiver (display-only).
 
 	Runs the same canonicalization the document lifecycle runs before posting, so the
 	returned amounts are the canonical debit sums, not a second client-side formula.
 	The HTTP transport may deliver ``doc`` as a JSON string, so both shapes are
 	accepted. While the draft is incomplete or invalid the canonicalization rejects
-	it (posting would post nothing), so the totals are reported as zero instead of
-	raising an error on every mid-edit refresh.
+	it (posting would post nothing), so the endpoint returns ``None`` for the client
+	to render as not-ready instead of raising an error on every mid-edit refresh.
+	Unexpected programming errors still propagate to the Error Log.
 	"""
 	if isinstance(doc, str):
 		doc = frappe.parse_json(doc)
 	receipt = frappe.get_doc(doc)
 	if receipt.operation_type != "Receipt":
 		frappe.throw(_("Receiver totals apply to Receipt documents only."))
-	amount = Decimal("0")
-	company_amount = Decimal("0")
 	try:
 		canonicalize_receipt(receipt)
-		for row in receipt.operational_pairs or []:
-			amount += to_decimal(row.debit_amount, _("Amount"))
-			company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
-	except Exception:
-		amount = Decimal("0")
-		company_amount = Decimal("0")
-	try:
-		company_currency = receipt.company_currency or _get_company_currency(receipt.company)
-	except Exception:
-		company_currency = None
+	except frappe.ValidationError:
+		return None
+	amount = Decimal("0")
+	company_amount = Decimal("0")
+	for row in receipt.operational_pairs or []:
+		amount += to_decimal(row.debit_amount, _("Amount"))
+		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
 	return {
 		"account": receipt.receipt_payer_account,
 		"party": receipt.receipt_payer or "",
 		"currency": receipt.receipt_payer_currency,
 		"amount": decimal_text(amount),
 		"company_amount": decimal_text(company_amount),
-		"company_currency": company_currency,
+		"company_currency": receipt.company_currency,
+	}
+
+
+@frappe.whitelist(methods=["GET"])
+def bank_account_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Company Bank Accounts whose linked ledger Account is enabled and matches the currency."""
+	company = filters.get("company") if isinstance(filters, dict) else None
+	currency = filters.get("currency") if isinstance(filters, dict) else None
+	if not company:
+		return []
+	if not frappe.has_permission("Company", "read", doc=company):
+		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)
+	start = int(start or 0)
+	page_len = int(page_len or 20)
+	return _bank_account_candidates(company, currency, txt or "")[start : start + page_len]
+
+
+def _bank_account_candidates(company: str, currency: str | None, txt: str) -> list[list[str]]:
+	accounts = _eligible_bank_ledger_accounts(company, currency)
+	if not accounts:
+		return []
+	conditions = {"is_company_account": 1, "company": company, "account": ["in", accounts]}
+	search = txt.strip().lower()
+	or_filters = None
+	if search:
+		or_filters = [
+			["name", "like", f"%{search}%"],
+			["bank", "like", f"%{search}%"],
+			["account", "like", f"%{search}%"],
+		]
+	rows = frappe.get_all(
+		"Bank Account",
+		filters=conditions,
+		or_filters=or_filters,
+		fields=["name", "bank", "account"],
+	)
+	return [[row.name, f"{row.bank} · {row.account}"] for row in rows]
+
+
+def _eligible_bank_ledger_accounts(company: str, currency: str | None) -> list[str]:
+	filters = {
+		"company": company,
+		"disabled": 0,
+		"is_group": 0,
+		"account_type": "Bank",
+	}
+	if currency:
+		filters["account_currency"] = currency
+	return frappe.get_all("Account", filters=filters, pluck="name", limit=0)
+
+
+@frappe.whitelist()
+def get_bank_account_details(bank_account: str, company: str) -> dict:
+	"""Ledger Account mapped from a company Bank Account (ERPNext-native bank picker)."""
+	if not bank_account or not company:
+		frappe.throw(_("Bank Account and Company are required."))
+	if not frappe.has_permission("Company", "read", doc=company):
+		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)
+	bank_account_doc = frappe.get_doc("Bank Account", bank_account)
+	if not frappe.has_permission("Bank Account", "read", doc=bank_account_doc):
+		frappe.throw(_("You do not have permission to read this Bank Account."), frappe.PermissionError)
+	if bank_account_doc.company != company:
+		frappe.throw(_("Bank Account {0} does not belong to the selected Company.").format(bank_account))
+	if not bank_account_doc.is_company_account or not bank_account_doc.account:
+		frappe.throw(_("Bank Account {0} is not a Company Bank Account.").format(bank_account))
+	account = validate_account(bank_account_doc.account, company)
+	return {
+		"bank_account": bank_account_doc.name,
+		"bank": bank_account_doc.bank or "",
+		"account": account.name,
+		"account_currency": account.account_currency,
 	}
 
 
