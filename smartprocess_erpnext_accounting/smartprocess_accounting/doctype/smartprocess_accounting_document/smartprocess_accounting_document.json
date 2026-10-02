@@ -8,7 +8,7 @@
  "document_type": "Document",
  "editable_grid": 1,
  "engine": "InnoDB",
- "field_order": ["naming_series", "operation_type", "company", "posting_date", "receipt_receiver_kind", "receipt_bank_account", "receipt_payer_currency", "receipt_payer_account", "receipt_payer_exchange_rate", "header_column", "receipt_payer_type", "receipt_payer", "company_currency", "general_description", "pairs_section", "operational_pairs", "receipt_summary", "supplementary_section", "general_reference", "correction_reason", "amended_from"],
+ "field_order": ["naming_series", "operation_type", "company", "posting_date", "receipt_receiver_kind", "receipt_bank_account", "receipt_payer_currency", "receipt_payer_exchange_rate", "receipt_payer_account", "header_column", "receipt_payer_type", "receipt_payer", "company_currency", "general_description", "pairs_section", "operational_pairs", "receipt_summary", "supplementary_section", "general_reference", "correction_reason", "amended_from"],
  "fields": [
   {"fieldname":"naming_series","fieldtype":"Data","hidden":1,"label":"Naming Series","no_copy":1,"set_only_once":1},
   {"fieldname":"operation_type","fieldtype":"Select","in_list_view":1,"label":"Operation Type","options":"Receipt\nPayment\nTransfer\nCurrency Conversion","reqd":1},

@@ -91,13 +91,28 @@ function receiverTotalLine(message) {
 	].join(" | ");
 }
 
-function canCalculateReceiverTotal(frm) {
+// A blank auto-created grid row is not user input: live logic ignores it until the
+// user enters a meaningful value. Save/Submit validation stays strict server-side.
+function isRowMeaningfullyStarted(row) {
+	return Boolean(
+		row?.receipt_recipient_type
+		|| row?.receipt_recipient
+		|| row?.receipt_currency
+		|| row?.credit_account
+		|| row?.credit_amount
+		|| row?.credit_exchange_rate,
+	);
+}
+
+// The receiver-total display runs full server canonicalization, so it must stay quiet
+// until the user has actually started entering the first child row.
+function canCalculateLiveReceiptSummary(frm) {
 	return Boolean(
 		frm.doc.company
 		&& frm.doc.receipt_receiver_kind
 		&& frm.doc.receipt_payer_account
 		&& frm.doc.receipt_payer_currency
-	);
+	) && (frm.doc.operational_pairs || []).some(isRowMeaningfullyStarted);
 }
 
 function receiptReceiverTotalPayload(frm) {
@@ -739,7 +754,7 @@ const receiptForm = {
 		if (!target || frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
-		if (!canCalculateReceiverTotal(frm)) {
+		if (!canCalculateLiveReceiptSummary(frm)) {
 			this.showReceiverTotalNotReady(target);
 			return;
 		}
@@ -1004,6 +1019,10 @@ const receiptForm = {
 			if (Number(frm.doc.receipt_payer_exchange_rate) !== 1) {
 				await frm.set_value("receipt_payer_exchange_rate", 1);
 			}
+		} else if (Number(frm.doc.receipt_payer_exchange_rate) > 0 && frm.doc.receipt_payer_account) {
+			// The user progressed beyond Rate with an Account already picked: now is the
+			// right stage to check the Account against the Receiver Currency.
+			await this.ensurePayerAccountCurrency(frm, true);
 		}
 		this.updatePayerRateMeaning(frm);
 		await this.recalculatePayerRows(frm);
@@ -1016,6 +1035,53 @@ const receiptForm = {
 			? `1 ${currency} = ${rate} ${frm.doc.company_currency}`
 			: "";
 		frm.set_df_property("receipt_payer_exchange_rate", "description", meaning);
+	},
+	// Staged header readiness, in interaction order: نوع دریافت‌کننده → دریافت‌کننده →
+	// ارز → نرخ (foreign only) → معین. Returns null when the header is complete enough.
+	headerReadinessIssue(frm) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return null;
+		}
+		if (!frm.doc.receipt_receiver_kind) {
+			return ["receipt_receiver_kind", __("ابتدا نوع دریافت‌کننده را انتخاب کنید.")];
+		}
+		if (PARTY_TYPES.includes(frm.doc.receipt_receiver_kind) && !frm.doc.receipt_payer) {
+			return ["receipt_payer", __("ابتدا دریافت‌کننده را انتخاب کنید.")];
+		}
+		if (frm.doc.receipt_receiver_kind === "بانک" && !frm.doc.receipt_bank_account) {
+			return ["receipt_bank_account", __("ابتدا حساب بانکی دریافت‌کننده را انتخاب کنید.")];
+		}
+		if (!frm.doc.receipt_payer_currency) {
+			return ["receipt_payer_currency", __("ابتدا ارز دریافت‌کننده را تعیین کنید.")];
+		}
+		if (
+			frm.doc.receipt_payer_currency !== frm.doc.company_currency
+			&& !(Number(frm.doc.receipt_payer_exchange_rate) > 0)
+		) {
+			return ["receipt_payer_exchange_rate", __("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")];
+		}
+		if (!frm.doc.receipt_payer_account) {
+			return ["receipt_payer_account", __("ابتدا معین دریافت‌کننده را انتخاب کنید.")];
+		}
+		return null;
+	},
+	isHeaderReadyForRows(frm) {
+		return frm.doc.operation_type === RECEIPT && !this.headerReadinessIssue(frm);
+	},
+	// First meaningful child-row entry requires a complete-enough header: one clear
+	// error and focus on the missing field instead of cascading popups.
+	ensureHeaderReadyForRows(frm) {
+		const issue = this.headerReadinessIssue(frm);
+		if (!issue) {
+			return true;
+		}
+		frappe.msgprint({
+			title: __("تکمیل سربرگ دریافت"),
+			message: issue[1],
+			indicator: "orange",
+		});
+		frm.scroll_to_field(issue[0]);
+		return false;
 	},
 	async recalculatePayerRows(frm) {
 		for (const row of frm.doc.operational_pairs || []) {
@@ -1038,7 +1104,25 @@ const receiptForm = {
 		}
 	},
 	async headerAccountChanged(frm) {
-		await this.ensurePayerAccountCurrency(frm, true);
+		const userInitiated = !frm.__sp_setting_payer_account;
+		if (userInitiated) {
+			const foreign = frm.doc.receipt_payer_currency
+				&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
+			if (
+				foreign
+				&& frm.doc.receipt_payer_account
+				&& !(Number(frm.doc.receipt_payer_exchange_rate) > 0)
+			) {
+				frappe.msgprint({
+					title: __("نرخ ارز دریافت‌کننده"),
+					message: __("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد."),
+					indicator: "orange",
+				});
+				frm.scroll_to_field("receipt_payer_exchange_rate");
+				return;
+			}
+		}
+		await this.ensurePayerAccountCurrency(frm, userInitiated);
 		await this.refreshReceiptView(frm);
 	},
 	async ensurePayerAccountCurrency(frm, notify) {
@@ -1064,7 +1148,12 @@ const receiptForm = {
 		}
 		const details = await getBankAccountDetails(frm.doc.receipt_bank_account, frm.doc.company);
 		await this.setProgrammaticReceiverCurrency(frm, details.account_currency);
-		await frm.set_value("receipt_payer_account", details.account);
+		frm.__sp_setting_payer_account = true;
+		try {
+			await frm.set_value("receipt_payer_account", details.account);
+		} finally {
+			frm.__sp_setting_payer_account = false;
+		}
 		await this.refreshReceiptView(frm);
 	},
 	async suggestPayerAccount(frm) {
@@ -1084,7 +1173,12 @@ const receiptForm = {
 			frm.doc.receipt_payer_currency,
 		);
 		if (account && !frm.doc.receipt_payer_account) {
-			await frm.set_value("receipt_payer_account", account);
+			frm.__sp_setting_payer_account = true;
+			try {
+				await frm.set_value("receipt_payer_account", account);
+			} finally {
+				frm.__sp_setting_payer_account = false;
+			}
 		}
 	},
 };
@@ -1308,8 +1402,17 @@ const spAccountingPair = {
 		if (row.__sp_receipt_copying) {
 			return;
 		}
+		// The user is starting to enter this row: the header must be staged-complete.
+		receiptForm.ensureHeaderReadyForRows(frm);
 		row.__sp_party_ledger = "";
-		await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
+		// Clearing receipt_recipient is a side effect of this one user action, not a
+		// second row entry: keep rowPartyChanged from re-running the header check.
+		row.__sp_row_party_guard = true;
+		try {
+			await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
+		} finally {
+			row.__sp_row_party_guard = false;
+		}
 		await frappe.model.set_value(cdt, cdn, "credit_account", "");
 		await this.setRowReceiptCurrency(frm, cdt, cdn, frm.doc.company_currency || "");
 		receiptForm.configureGrid(frm, true);
@@ -1320,9 +1423,10 @@ const spAccountingPair = {
 			return;
 		}
 		const row = locals[cdt][cdn];
-		if (row.__sp_receipt_copying) {
+		if (row.__sp_receipt_copying || row.__sp_row_party_guard) {
 			return;
 		}
+		receiptForm.ensureHeaderReadyForRows(frm);
 		row.__sp_party_ledger = "";
 		await frappe.model.set_value(cdt, cdn, "credit_account", "");
 		if (row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
@@ -1390,6 +1494,8 @@ const spAccountingPair = {
 		}
 		const row = locals[cdt][cdn];
 		if (!row.__sp_receipt_currency_guard) {
+			// Only a user-initiated row Currency choice starts (or continues) row entry.
+			receiptForm.ensureHeaderReadyForRows(frm);
 			const ledgerCurrency = row.__sp_party_ledger || "";
 			if (
 				ledgerCurrency
@@ -1418,6 +1524,15 @@ const spAccountingPair = {
 			}
 			if (row.receipt_currency === frm.doc.company_currency) {
 				await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", 1);
+			} else if (
+				!row.credit_exchange_rate
+				&& frm.doc.receipt_payer_currency
+				&& frm.doc.receipt_payer_currency === row.receipt_currency
+				&& Number(frm.doc.receipt_payer_exchange_rate) > 0
+			) {
+				// Default-only: a row Rate the user already entered manually is never
+				// overwritten, and other foreign currencies keep their own rate.
+				await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", frm.doc.receipt_payer_exchange_rate);
 			}
 			if (row.credit_account) {
 				const details = await getAccountDetailsSafely(row.credit_account, frm.doc.company);
