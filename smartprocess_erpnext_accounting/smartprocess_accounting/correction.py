@@ -61,17 +61,18 @@ class CorrectionService:
 		)
 		if existing_replacement:
 			frappe.throw(_("This document already has a correction replacement."))
-		if cint(source.docstatus) != 1:
-			frappe.throw(_("Only a submitted accounting document can start Correction."))
+		if cint(source.docstatus) not in (1, 2):
+			frappe.throw(_("Only a submitted or cancelled accounting document can start Correction."))
 
 	def _correct(self, source) -> dict[str, str]:
-		source.correction_reason = self.correction_reason
-		try:
-			source.flags.in_correction = True
-			source.save(ignore_version=False)
-		finally:
-			source.flags.in_correction = False
-		source.cancel()
+		if cint(source.docstatus) == 1:
+			source.correction_reason = self.correction_reason
+			try:
+				source.flags.in_correction = True
+				source.save(ignore_version=False)
+			finally:
+				source.flags.in_correction = False
+			source.cancel()
 		replacement = self._make_replacement(source)
 		replacement.insert()
 		return {"doctype": replacement.doctype, "name": replacement.name}

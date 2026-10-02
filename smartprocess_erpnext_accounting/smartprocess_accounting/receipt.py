@@ -35,7 +35,7 @@ def canonicalize_receipt(doc) -> None:
 	rows = doc.operational_pairs or []
 	_validate_receipt_currencies(doc, rows)
 	account_names = {doc.receipt_payer_account}
-	account_names.update(row.get("debit_account") for row in rows)
+	account_names.update(row.get("credit_account") for row in rows)
 	account_names.discard(None)
 	account_names.discard("")
 	account_details = get_accounts(account_names)
@@ -44,8 +44,8 @@ def canonicalize_receipt(doc) -> None:
 		for name in account_names
 	}
 	approved_party_accounts = set()
-	payer = _validate_payer(doc, accounts, approved_party_accounts)
-	payer_rate = _payer_exchange_rate(doc, payer, company_currency)
+	receiver = _validate_receiver(doc, accounts, approved_party_accounts)
+	receiver_rate = _receiver_exchange_rate(doc, receiver, company_currency)
 	precision = _company_currency_precision(company_currency)
 	if not rows:
 		frappe.throw(_("حداقل یک ردیف دریافت لازم است."))
@@ -55,12 +55,12 @@ def canonicalize_receipt(doc) -> None:
 			doc,
 			row,
 			number,
-			payer,
+			receiver,
 			company_currency,
 			precision,
 			accounts,
 			approved_party_accounts,
-			payer_rate,
+			receiver_rate,
 		)
 
 
@@ -68,105 +68,111 @@ def canonicalize_receipt_row(
 	doc,
 	row,
 	number: int,
-	payer,
+	receiver,
 	company_currency: str,
 	precision: int,
 	accounts: dict,
 	approved_party_accounts: set,
-	payer_rate: Decimal,
+	receiver_rate: Decimal,
 ) -> None:
-	recipient_type = row.get("receipt_recipient_type")
-	recipient = row.get("receipt_recipient")
+	payer_type = row.get("receipt_recipient_type")
+	payer = row.get("receipt_recipient")
 	receipt_currency = row.get("receipt_currency")
-	if recipient_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT):
-		_receipt_error(number, _("نوع دریافت‌کننده"), _("یک نوع دریافت‌کننده معتبر انتخاب کنید."))
+	if payer_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT):
+		_receipt_error(number, _("نوع پرداخت‌کننده"), _("یک نوع پرداخت‌کننده معتبر انتخاب کنید."))
 	if not receipt_currency:
 		_receipt_error(number, _("ارز"), _("ارز ردیف الزامی است."))
 
-	account = accounts.get(row.get("debit_account"))
+	account = accounts.get(row.get("credit_account"))
 	if not account:
-		_receipt_error(number, _("معین دریافتی"), _("یک معین معتبر انتخاب کنید."))
+		_receipt_error(number, _("معین پرداخت‌کننده"), _("یک معین معتبر انتخاب کنید."))
 	if account.account_currency != receipt_currency:
 		_receipt_error(
 			number,
-			_("معین دریافتی"),
+			_("معین پرداخت‌کننده"),
 			_("ارز حساب انتخاب‌شده با ارز ردیف یکسان نیست."),
 		)
 
-	if recipient_type == ACCOUNT_RECIPIENT:
-		row.debit_party_type = None
-		row.debit_party = None
+	if payer_type == ACCOUNT_RECIPIENT:
+		row.credit_party_type = None
+		row.credit_party = None
 		validate_party(None, None, account.account_type)
 	else:
-		if not recipient:
-			_receipt_error(number, _("نام دریافت‌کننده"), _("دریافت‌کننده الزامی است."))
+		if not payer:
+			_receipt_error(number, _("نام پرداخت‌کننده"), _("پرداخت‌کننده الزامی است."))
 		_validate_approved_party_account(
-			recipient_type,
-			recipient,
+			payer_type,
+			payer,
 			doc.company,
 			account,
-			_("دریافت‌کننده"),
+			_("پرداخت‌کننده"),
 			approved_party_accounts,
+			company_currency,
 		)
-		row.debit_party_type = recipient_type
-		row.debit_party = recipient
+		row.credit_party_type = payer_type
+		row.credit_party = payer
 
-	debit_amount = to_decimal(row.get("debit_amount"), _("مبلغ"))
-	if debit_amount <= 0:
+	credit_amount = to_decimal(row.get("credit_amount"), _("مبلغ"))
+	if credit_amount <= 0:
 		_receipt_error(number, _("مبلغ"), _("مبلغ باید بزرگ‌تر از صفر باشد."))
-	debit_rate = Decimal("1") if receipt_currency == company_currency else to_decimal(
-		row.get("debit_exchange_rate"), _("نرخ")
+	credit_rate = Decimal("1") if receipt_currency == company_currency else to_decimal(
+		row.get("credit_exchange_rate"), _("نرخ")
 	)
-	if debit_rate <= 0:
+	if credit_rate <= 0:
 		_receipt_error(number, _("نرخ"), _("نرخ باید بزرگ‌تر از صفر باشد."))
-	company_amount = _round_company_amount(debit_amount, debit_rate, precision)
+	company_amount = _round_company_amount(credit_amount, credit_rate, precision)
 	if company_amount <= 0:
 		_receipt_error(number, _("مبلغ ارز پایه"), _("مبلغ ارز پایه باید بزرگ‌تر از صفر بماند."))
 
 	row.company_currency = company_currency
-	row.debit_account_currency = account.account_currency
-	row.debit_exchange_rate = decimal_text(debit_rate)
-	row.debit_company_amount = decimal_text(company_amount)
-	row.credit_account = payer.name
-	row.credit_party_type = doc.receipt_payer_type
-	row.credit_party = doc.receipt_payer
-	row.credit_account_currency = payer.account_currency
-	row.credit_suggested_account = None
-	row.credit_description = row.get("debit_description")
+	row.credit_account_currency = account.account_currency
+	row.credit_exchange_rate = decimal_text(credit_rate)
+	row.credit_company_amount = decimal_text(company_amount)
+	row.debit_account = receiver.name
+	row.debit_party_type = doc.receipt_payer_type
+	row.debit_party = doc.receipt_payer
+	row.debit_account_currency = receiver.account_currency
+	row.debit_suggested_account = None
+	row.debit_description = row.get("credit_description")
 	row.receipt_posting_date = getdate(row.get("receipt_posting_date") or doc.posting_date)
 	row.receipt_payer_exchange_rate = None
 
-	payer_amount = company_amount if payer.account_currency == company_currency else company_amount / payer_rate
+	receiver_amount = (
+		company_amount
+		if receiver.account_currency == company_currency
+		else company_amount / receiver_rate
+	)
 
-	row.credit_amount = decimal_text(payer_amount)
-	row.credit_exchange_rate = decimal_text(payer_rate)
-	row.credit_company_amount = decimal_text(company_amount)
+	row.debit_amount = decimal_text(receiver_amount)
+	row.debit_exchange_rate = decimal_text(receiver_rate)
+	row.debit_company_amount = decimal_text(company_amount)
 
 
-def _validate_payer(doc, accounts: dict, approved_party_accounts: set):
+def _validate_receiver(doc, accounts: dict, approved_party_accounts: set):
 	for value, label in (
-		(doc.receipt_payer_currency, _("ارز پرداخت‌کننده")),
-		(doc.receipt_payer_account, _("معین پرداخت‌کننده")),
-		(doc.receipt_payer_type, _("نوع پرداخت‌کننده")),
-		(doc.receipt_payer, _("پرداخت‌کننده")),
+		(doc.receipt_payer_currency, _("ارز دریافت‌کننده")),
+		(doc.receipt_payer_account, _("معین دریافت‌کننده")),
+		(doc.receipt_payer_type, _("نوع دریافت‌کننده")),
+		(doc.receipt_payer, _("دریافت‌کننده")),
 	):
 		if not value:
 			frappe.throw(_("{0} الزامی است.").format(label))
 	if doc.receipt_payer_type not in ALLOWED_PARTY_TYPES:
-		frappe.throw(_("نوع پرداخت‌کننده انتخاب‌شده مجاز نیست."))
+		frappe.throw(_("نوع دریافت‌کننده انتخاب‌شده مجاز نیست."))
 
 	account = accounts.get(doc.receipt_payer_account)
 	if not account:
-		frappe.throw(_("یک معین پرداخت‌کننده معتبر انتخاب کنید."))
+		frappe.throw(_("یک معین دریافت‌کننده معتبر انتخاب کنید."))
 	if account.account_currency != doc.receipt_payer_currency:
-		frappe.throw(_("ارز معین پرداخت‌کننده با ارز پرداخت‌کننده یکسان نیست."))
+		frappe.throw(_("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."))
 	_validate_approved_party_account(
 		doc.receipt_payer_type,
 		doc.receipt_payer,
 		doc.company,
 		account,
-		_("پرداخت‌کننده"),
+		_("دریافت‌کننده"),
 		approved_party_accounts,
+		get_company_currency(doc.company),
 	)
 	return account
 
@@ -184,21 +190,21 @@ def _validate_receipt_currencies(doc, rows) -> None:
 		)
 	)
 	if doc.receipt_payer_currency and doc.receipt_payer_currency not in enabled:
-		frappe.throw(_("ارز پرداخت‌کننده باید یک ارز فعال و معتبر باشد."))
+		frappe.throw(_("ارز دریافت‌کننده باید یک ارز فعال و معتبر باشد."))
 	for number, row in enumerate(rows, start=1):
 		currency = row.get("receipt_currency")
 		if currency and currency not in enabled:
 			_receipt_error(number, _("ارز"), _("ارز ردیف باید فعال و معتبر باشد."))
 
 
-def _payer_exchange_rate(doc, payer, company_currency: str) -> Decimal:
-	if payer.account_currency == company_currency:
+def _receiver_exchange_rate(doc, receiver, company_currency: str) -> Decimal:
+	if receiver.account_currency == company_currency:
 		rate = Decimal("1")
 	else:
-		rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز پرداخت‌کننده"))
+		rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
 		if rate <= 0:
 			frappe.throw(
-				_("برای پرداخت‌کننده ارزی، نرخ ارز پرداخت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
+				_("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
 			)
 	doc.receipt_payer_exchange_rate = decimal_text(rate)
 	return rate
@@ -211,11 +217,15 @@ def _validate_approved_party_account(
 	account,
 	label,
 	approved_party_accounts: set,
+	company_currency: str,
 ) -> None:
 	identity = (party_type, party, account.name)
 	if identity in approved_party_accounts:
 		return
 	validate_party(party_type, party, account.account_type)
+	if account.account_currency == company_currency:
+		approved_party_accounts.add(identity)
+		return
 	if not is_approved_party_account(
 		party_type,
 		party,

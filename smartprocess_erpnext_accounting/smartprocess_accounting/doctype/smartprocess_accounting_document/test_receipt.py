@@ -42,7 +42,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_customer_foreign_payer_to_same_currency_bank_account(self):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)])
 		doc.validate()
-		self.assert_canonical_pair(doc.operational_pairs[0], FOREIGN_A_ACCOUNT, CUSTOMER_A, 100)
+		self.assert_canonical_pair(doc.operational_pairs[0], CUSTOMER_A, FOREIGN_A_ACCOUNT, 100)
 		self.assertEqual(Decimal(str(doc.operational_pairs[0].credit_amount)), Decimal("10"))
 
 	def test_customer_base_payer_to_base_bank_account(self):
@@ -53,16 +53,37 @@ class TestReceiptUX(V2IntegrationTestCase):
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assert_canonical_pair(row, BASE_BANK, CUSTOMER_BASE, 100)
-		self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("1"))
+		self.assert_canonical_pair(row, CUSTOMER_BASE, BASE_BANK, 100)
+		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("1"))
 		self.assertEqual(Decimal(str(doc.receipt_payer_exchange_rate)), Decimal("1"))
+
+	def test_base_currency_party_account_does_not_require_smartprocess_mapping(self):
+		filters = {
+			"party_type": "Customer",
+			"party": CUSTOMER,
+			"company": COMPANY,
+			"currency": BASE,
+			"account": CUSTOMER_BASE,
+		}
+		frappe.db.delete("SmartProcess Party Currency Account", filters)
+		suggested = get_receipt_party_account_suggestion("Customer", CUSTOMER, COMPANY, BASE)
+		self.assertTrue(suggested)
+		self.assertEqual(frappe.get_cached_value("Account", suggested, "account_currency"), BASE)
+		self.assertEqual(frappe.get_cached_value("Account", suggested, "account_type"), "Receivable")
+		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 100)],
+			payer_currency=BASE,
+			payer_account=CUSTOMER_BASE,
+		)
+		doc.validate()
+		self.assertFalse(frappe.db.exists("SmartProcess Party Currency Account", filters))
 
 	def test_customer_foreign_payer_to_base_account(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.credit_amount)), Decimal("10"))
-		self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("10"))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
+		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("10"))
 
 	def test_customer_foreign_payer_to_other_foreign_account(self):
 		doc = self.receipt(
@@ -71,7 +92,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc.validate()
 		row = doc.operational_pairs[0]
 		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("100"))
-		self.assertEqual(Decimal(str(row.credit_amount)), Decimal("10"))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
 
 	def test_supplier_payer(self):
 		doc = self.receipt(
@@ -83,7 +104,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual((row.credit_party_type, row.credit_party), ("Supplier", SUPPLIER))
+		self.assertEqual((row.debit_party_type, row.debit_party), ("Supplier", SUPPLIER))
 
 	def test_party_recipient(self):
 		doc = self.receipt(
@@ -101,14 +122,14 @@ class TestReceiptUX(V2IntegrationTestCase):
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual((row.debit_party_type, row.debit_party), ("Supplier", SUPPLIER))
+		self.assertEqual((row.credit_party_type, row.credit_party), ("Supplier", SUPPLIER))
 
 	def test_account_recipient_has_no_fake_party(self):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)])
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertFalse(row.debit_party_type)
-		self.assertFalse(row.debit_party)
+		self.assertFalse(row.credit_party_type)
+		self.assertFalse(row.credit_party)
 
 	def test_multiple_receipt_rows(self):
 		doc = self.receipt(
@@ -158,7 +179,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 			[self.receipt_row(BASE_BANK, BASE, 100)],
 			payer_account=CUSTOMER_BASE,
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "ارز معین پرداخت‌کننده"):
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز معین دریافت‌کننده"):
 			doc.validate()
 
 	def test_mapped_payer_account_suggestion(self):
@@ -176,25 +197,25 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_currency_change_client_contract_clears_incompatible_account_and_rates(self):
 		source = self.client_source()
 		self.assertIn("details.account_currency !== row.receipt_currency", source)
-		self.assertIn('set_value(cdt, cdn, "debit_account", "")', source)
+		self.assertIn('set_value(cdt, cdn, "credit_account", "")', source)
 		self.assertIn('frm.set_value("receipt_payer_exchange_rate", "")', source)
 
 	def test_all_base_currency_client_contract_hides_fx_fields(self):
 		source = self.client_source()
-		self.assertIn('gridRow.toggle_display("debit_exchange_rate", hasForeign)', source)
-		self.assertIn('gridRow.toggle_display("debit_company_amount", hasForeign)', source)
+		self.assertIn('gridRow.toggle_display("credit_exchange_rate", hasForeign)', source)
+		self.assertIn('gridRow.toggle_display("credit_company_amount", hasForeign)', source)
 
 	def test_foreign_currency_client_contract_shows_amount_rate_and_base_preview(self):
 		source = self.client_source()
-		self.assertIn('grid.toggle_display("debit_exchange_rate", hasForeign)', source)
-		self.assertIn('grid.toggle_display("debit_company_amount", hasForeign)', source)
+		self.assertIn('grid.toggle_display("credit_exchange_rate", hasForeign)', source)
+		self.assertIn('grid.toggle_display("credit_company_amount", hasForeign)', source)
 		self.assertIn('hasForeign ? __("مبلغ ارز") : __("مبلغ")', source)
 
 	def test_mixed_currency_grid_uses_uniform_fx_columns(self):
 		source = self.client_source()
 		self.assertIn("const hasForeign = (frm.doc.operational_pairs || []).some", source)
-		self.assertIn('["debit_exchange_rate", "columns", 1]', source)
-		self.assertIn('["debit_company_amount", "columns", 1]', source)
+		self.assertIn('["credit_exchange_rate", "columns", 1]', source)
+		self.assertIn('["credit_company_amount", "columns", 1]', source)
 
 	def test_currency_changes_add_and_remove_refresh_grid_without_reload(self):
 		source = self.client_source()
@@ -264,16 +285,16 @@ class TestReceiptUX(V2IntegrationTestCase):
 		source = self.client_source()
 		self.assertIn("const setupUserDefinedColumns = grid.setup_user_defined_columns", source)
 		self.assertIn("this.__sp_receipt_columns", source)
-		self.assertIn('["debit_exchange_rate", 1]', source)
-		self.assertIn('["debit_company_amount", 1]', source)
-		self.assertIn('gridRow.toggle_editable("debit_exchange_rate", Boolean(foreign))', source)
+		self.assertIn('["credit_exchange_rate", 1]', source)
+		self.assertIn('["credit_company_amount", 1]', source)
+		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign))', source)
 
 	def test_cross_currency_requires_explicit_payer_rate(self):
 		doc = self.receipt(
 			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
 			payer_rate=None,
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "نرخ ارز پرداخت‌کننده"):
+		with self.assertRaisesRegex(frappe.ValidationError, "نرخ ارز دریافت‌کننده"):
 			doc.validate()
 
 	def test_each_generated_pair_balances_in_company_currency(self):
@@ -295,7 +316,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		row["receipt_payer_exchange_rate"] = 999
 		doc = self.receipt([row], payer_rate=5)
 		doc.validate()
-		self.assertEqual(Decimal(str(doc.operational_pairs[0].credit_amount)), Decimal("20"))
+		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_amount)), Decimal("20"))
 		self.assertFalse(doc.operational_pairs[0].receipt_payer_exchange_rate)
 
 	def test_three_rows_on_one_date_create_one_posting_unit(self):
@@ -579,6 +600,19 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(len(self.active_gl(doc)), 2)
 		self.assertEqual(len(self.active_ple(doc)), 1)
 
+	def test_receipt_posts_header_as_debit_and_row_as_credit(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 100)],
+			payer_currency=BASE,
+			payer_account=CUSTOMER_BASE,
+		).insert()
+		doc.submit()
+		entries = {row.account: row for row in self.active_gl(doc)}
+		self.assertEqual(Decimal(str(entries[CUSTOMER_BASE].debit)), Decimal("100"))
+		self.assertEqual(Decimal(str(entries[CUSTOMER_BASE].credit)), Decimal("0"))
+		self.assertEqual(Decimal(str(entries[BASE_BANK].debit)), Decimal("0"))
+		self.assertEqual(Decimal(str(entries[BASE_BANK].credit)), Decimal("100"))
+
 	def test_cancel_uses_existing_native_reversal(self):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
 		doc.submit()
@@ -609,8 +643,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 			"receipt_recipient_type",
 			"receipt_recipient",
 			"receipt_currency",
-			"debit_account",
-			"debit_exchange_rate",
+			"credit_account",
+			"credit_exchange_rate",
 		):
 			self.assertIn(f'\"{fieldname}\"', source)
 		self.assertIn('["debit_amount", "debit_company_amount", "credit_amount", "credit_company_amount"]', source)
@@ -681,13 +715,13 @@ class TestReceiptUX(V2IntegrationTestCase):
 			"receipt_recipient_type": recipient_type,
 			"receipt_recipient": recipient,
 			"receipt_currency": currency,
-			"debit_account": account,
-			"debit_amount": amount,
-			"debit_exchange_rate": rate,
-			"debit_description": description,
-			"credit_account": BASE_CLEARING,
-			"credit_amount": 999,
-			"credit_exchange_rate": 999,
+			"credit_account": account,
+			"credit_amount": amount,
+			"credit_exchange_rate": rate,
+			"credit_description": description,
+			"debit_account": BASE_CLEARING,
+			"debit_amount": 999,
+			"debit_exchange_rate": 999,
 		}
 
 	def assert_canonical_pair(self, row, debit_account, credit_account, company_amount):
@@ -695,7 +729,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(row.credit_account, credit_account)
 		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal(str(company_amount)))
 		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal(str(company_amount)))
-		self.assertEqual((row.credit_party_type, row.credit_party), ("Customer", CUSTOMER))
+		self.assertEqual((row.debit_party_type, row.debit_party), ("Customer", CUSTOMER))
 
 	def client_source(self):
 		return Path(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import frappe
@@ -17,6 +18,18 @@ CONTROLLER_PATH = (
 
 
 class TestV2Correction(V2IntegrationTestCase):
+	def test_client_allows_correction_action_after_manual_cancel(self):
+		source = Path(
+			frappe.get_app_path(
+				"smartprocess_erpnext_accounting",
+				"smartprocess_accounting",
+				"doctype",
+				"smartprocess_accounting_document",
+				"smartprocess_accounting_document.js",
+			)
+		).read_text(encoding="utf-8")
+		self.assertIn("[1, 2].includes(frm.doc.docstatus)", source)
+
 	def test_correction_requires_reason_and_protects_direct_updates(self):
 		doc = self.submit_document([self.base_pair()])
 		with self.assertRaisesRegex(frappe.ValidationError, "Correction Reason is required"):
@@ -78,12 +91,17 @@ class TestV2Correction(V2IntegrationTestCase):
 		replacements = frappe.get_all(doc.doctype, filters={"amended_from": doc.name}, pluck="name")
 		self.assertEqual(replacements, [first["name"]])
 
-	def test_manually_cancelled_document_cannot_start_correction(self):
+	def test_manually_cancelled_document_can_create_one_amended_draft(self):
 		doc = self.submit_document([self.base_pair()])
 		doc.cancel()
-		with self.assertRaisesRegex(frappe.ValidationError, "Only a submitted"):
-			doc.start_correction("Too late")
-		self.assertFalse(frappe.db.exists(doc.doctype, {"amended_from": doc.name}))
+		cancelled_gl = self.all_gl(doc)
+		result = doc.start_correction("Amend after manual cancellation")
+		replacement = frappe.get_doc(result["doctype"], result["name"])
+		self.assertEqual(replacement.docstatus, 0)
+		self.assertEqual(replacement.amended_from, doc.name)
+		self.assertEqual(self.all_gl(doc), cancelled_gl)
+		with self.assertRaisesRegex(frappe.ValidationError, "already has a correction"):
+			doc.start_correction("Duplicate")
 
 	def test_immutable_ledger_correction_uses_native_reversal(self):
 		accounts_settings = frappe.get_single("Accounts Settings")

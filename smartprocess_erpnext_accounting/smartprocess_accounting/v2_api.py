@@ -102,11 +102,13 @@ def _get_exact_party_account(party_type: str, party: str, company: str, currency
 			frappe.throw(_("{0} must be a non-empty string.").format(fieldname))
 	if party_type not in ALLOWED_PARTY_TYPES:
 		frappe.throw(_("Party Type {0} is not enabled for V2.").format(party_type))
-	_get_company_currency(company)
+	company_currency = _get_company_currency(company)
 	if not frappe.db.exists("Party Type", party_type) or not frappe.db.exists(party_type, party):
 		frappe.throw(_("Party {0} {1} does not exist.").format(party_type, party))
 	if not frappe.has_permission(party_type, "read", doc=party):
 		frappe.throw(_("You do not have permission to read the selected Party."), frappe.PermissionError)
+	if currency == company_currency:
+		return _get_native_base_party_account(party_type, party, company, currency)
 	rows = frappe.get_list(
 		"SmartProcess Party Currency Account",
 		filters={
@@ -123,4 +125,39 @@ def _get_exact_party_account(party_type: str, party: str, company: str, currency
 	account = validate_account(rows[0].account, company)
 	if account.account_currency != currency:
 		frappe.throw(_("Mapped Account currency does not match the requested Currency."))
+	return account.name
+
+
+def _get_native_base_party_account(
+	party_type: str,
+	party: str,
+	company: str,
+	currency: str,
+) -> str | None:
+	rows = frappe.get_all(
+		"Party Account",
+		filters={"parenttype": party_type, "parent": party, "company": company},
+		pluck="account",
+		limit=2,
+	)
+	if len(rows) == 1:
+		return _validate_base_party_account(rows[0], party_type, company, currency)
+	if rows:
+		return None
+	account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
+	fieldname = {
+		"Receivable": "default_receivable_account",
+		"Payable": "default_payable_account",
+	}.get(account_type)
+	if not fieldname:
+		return None
+	account = frappe.get_cached_value("Company", company, fieldname)
+	return _validate_base_party_account(account, party_type, company, currency) if account else None
+
+
+def _validate_base_party_account(account_name, party_type, company, currency) -> str | None:
+	account = validate_account(account_name, company)
+	party_account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
+	if account.account_currency != currency or account.account_type != party_account_type:
+		return None
 	return account.name

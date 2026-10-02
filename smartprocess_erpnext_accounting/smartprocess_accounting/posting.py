@@ -253,6 +253,8 @@ def _validate_side(doc, row, number, side, account_details, precision, for_posti
 def _validate_party_account(party_type, party, company, company_currency, account, for_posting):
 	if not (party_type and party):
 		return
+	if account.account_currency == company_currency:
+		return
 	if not is_approved_party_account(
 		party_type,
 		party,
