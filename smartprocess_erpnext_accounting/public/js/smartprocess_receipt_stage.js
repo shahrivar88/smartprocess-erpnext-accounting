@@ -14,13 +14,13 @@
 			? this
 			: globalThis,
 	() => {
-		// Staged child-row validation for the Receipt form. A row carries an explicit
-		// progress stage (row.__sp_row_stage) that ONLY real user interactions
-		// advance: 1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ.
-		// Each stage validates everything up to and including itself and reports the
-		// FIRST relevant problem, so fields the user has not reached yet are never
-		// validated and one action can never chain multiple popups. Save/Submit
-		// validation stays strict server-side.
+		// Child-row validation for the Receipt form, in the logical order
+		// 1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ. It reports
+		// the FIRST relevant problem only, so one action can never chain multiple
+		// popups. The form runs it at exactly two points — «افزودن ردیف» (the
+		// current row must be complete before a new row is created) and Save/Submit
+		// (strict, every row); changing a row field never validates. Save/Submit
+		// validation stays strict server-side too.
 		const STAGE = {
 			CURRENCY: 1,
 			TYPE: 2,

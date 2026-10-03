@@ -18,9 +18,11 @@ const RECEIVER_KIND_LABELS = {
 	Employee: "کارمند",
 };
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
-// Staged row progress (row.__sp_row_stage): only real user interactions advance
-// it — 1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ. The numbers
-// come from the smartprocess_receipt_stage module (with a local fallback).
+// Staged row validation (1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ)
+// runs at exactly two entry points: «افزودن ردیف» (the current row must be complete
+// before a new row is created) and Save/Submit (strict, first error of the first
+// incomplete row). Changing a row field never validates. The numbers come from the
+// smartprocess_receipt_stage module (with a local fallback).
 const RECEIPT_ROW_STAGE = window.smartprocessAccounting?.receiptRowStage?.STAGE || {
 	CURRENCY: 1,
 	TYPE: 2,
@@ -271,6 +273,9 @@ function attachLiveNumberSeparatorToRowForm(gridRow) {
 }
 
 frappe.ui.form.on("SmartProcess Accounting Document", {
+	validate(frm) {
+		return validateReceiptRowsForSave(frm);
+	},
 	refresh(frm) {
 		// Posting units must cancel only through the Receipt's authorized path; keep
 		// frappe's linked-docs auto-cancel from cancelling them directly.
@@ -750,6 +755,7 @@ const receiptForm = {
 		if (!grid) {
 			return;
 		}
+		installReceiptAddRowGuard(frm, grid);
 		const gridWrapper = frm.fields_dict.operational_pairs.$wrapper;
 		gridWrapper.closest(".form-section").toggleClass("sp-receipt-layout-section", isReceipt);
 		gridWrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
@@ -917,8 +923,8 @@ const receiptForm = {
 			<table class="table table-bordered">
 				<thead><tr><th>ارز</th><th>مجموع دریافت همان ارز</th><th>میانگین وزنی نرخ</th><th>مجموع به ارز پایه</th></tr></thead>
 				<tbody>${rows || '<tr><td colspan="4" class="text-muted">ردیف معتبری برای خلاصه وجود ندارد.</td></tr>'}</tbody>
+				<tfoot><tr class="sp-receipt-summary-total"><td colspan="3">جمع کل به ارز پایه</td><td>${formatReceiptSummaryValue(summary.companyTotal)}</td></tr></tfoot>
 			</table>
-			<div class="sp-receipt-summary-total"><strong>جمع کل به ارز پایه:</strong> ${formatReceiptSummaryValue(summary.companyTotal)}</div>
 			${receiverTotalMarkup()}
 		</div>`);
 		this.scheduleReceiverTotalRefresh(frm);
@@ -1282,21 +1288,6 @@ const receiptForm = {
 	isHeaderReadyForRows(frm) {
 		return frm.doc.operation_type === RECEIPT && !this.headerReadinessIssue(frm);
 	},
-	// First meaningful child-row entry requires a complete-enough header: one clear
-	// error and focus on the missing field instead of cascading popups.
-	ensureHeaderReadyForRows(frm) {
-		const issue = this.headerReadinessIssue(frm);
-		if (!issue) {
-			return true;
-		}
-		frappe.msgprint({
-			title: __("تکمیل سربرگ دریافت"),
-			message: issue[1],
-			indicator: "orange",
-		});
-		frm.scroll_to_field(issue[0]);
-		return false;
-	},
 	async recalculatePayerRows(frm) {
 		for (const row of frm.doc.operational_pairs || []) {
 			await spAccountingPair.calculateReceiptReceiver(frm, row.doctype, row.name);
@@ -1547,8 +1538,9 @@ function partyCurrencyMismatchMessage(party, partyCurrency, targetCurrency) {
 	);
 }
 
-// One user action may raise at most one popup: this is the shared first-error
-// reporter for the staged row validation, focused on the offending field.
+// Only the two row-validation entry points (Add Row / Save) may raise a popup,
+// and at most one each: the shared first-error reporter, focused on the
+// offending field.
 function showRowStageIssue(frm, row, issue) {
 	const rows = frm.doc.operational_pairs || [];
 	const index = rows.findIndex((candidate) => candidate.name === row.name);
@@ -1567,25 +1559,98 @@ function showRowStageIssue(frm, row, issue) {
 	}
 }
 
-// Advances the row's explicit progress stage and returns true, or reports the
-// first relevant problem among the reached stages and returns false.
-function advanceRowStage(frm, row, stage) {
+// A row with real user content; the auto-created blank row (only the
+// company-defaulted currency) stays a placeholder: it never blocks Add Row and
+// never raises a validation error.
+function receiptRowHasUserContent(row) {
+	return Boolean(
+		row?.receipt_recipient_type
+		|| row?.receipt_recipient
+		|| row?.credit_account
+		|| row?.credit_amount
+		|| row?.credit_exchange_rate,
+	);
+}
+
+// Full first-error check for one row via the smartprocess_receipt_stage module:
+// ارز → نوع → طرف/حساب بانکی → معین → مبلغ → نرخ.
+function receiptRowIssue(frm, row) {
 	const module = window.smartprocessAccounting?.receiptRowStage;
-	if (!module) {
-		return true;
+	if (!module?.rowStageIssue) {
+		return null;
 	}
-	row.__sp_row_stage = Math.max(row.__sp_row_stage || 0, stage);
-	const issue = module.rowStageIssue(
-		row.__sp_row_stage,
+	return module.rowStageIssue(
+		RECEIPT_ROW_STAGE.RATE,
 		row,
 		RECEIPT_RECIPIENT_TYPES,
 		frm.doc.company_currency,
 	);
-	if (issue) {
-		showRowStageIssue(frm, row, issue);
+}
+
+// Entry point A — «افزودن ردیف»: the current (last) row must pass the full check
+// before a new row is created; only its first problem is reported.
+function receiptBlockIncompleteLastRow(frm) {
+	const rows = frm.doc.operational_pairs || [];
+	const row = rows[rows.length - 1];
+	if (!row || !receiptRowHasUserContent(row)) {
 		return false;
 	}
+	const issue = receiptRowIssue(frm, row);
+	if (!issue) {
+		return false;
+	}
+	showRowStageIssue(frm, row, issue);
 	return true;
+}
+
+// The «افزودن ردیف» button and row duplication both go through the grid's
+// add_new_row: wrapping it lets entry point A block creation while the current
+// row is incomplete. Installed once per grid.
+function installReceiptAddRowGuard(frm, grid) {
+	if (grid.__sp_add_row_guarded) {
+		return;
+	}
+	const addNewRow = grid.add_new_row.bind(grid);
+	grid.add_new_row = function (...args) {
+		if (frm.doc.operation_type === RECEIPT && receiptBlockIncompleteLastRow(frm)) {
+			return;
+		}
+		return addNewRow(...args);
+	};
+	grid.__sp_add_row_guarded = true;
+}
+
+// Entry point B — Save/Submit: strict first-error validation over all rows in
+// order (ارز → … → نرخ). Placeholder rows are dropped first, exactly like an
+// untouched grid; the server's strict canonicalization stays the backstop.
+function validateReceiptRowsForSave(frm) {
+	if (frm.doc.operation_type !== RECEIPT) {
+		return;
+	}
+	const rows = frm.doc.operational_pairs || [];
+	const kept = rows.filter((row) => receiptRowHasUserContent(row));
+	if (kept.length !== rows.length) {
+		frm.doc.operational_pairs = kept;
+		frm.refresh_field("operational_pairs");
+	}
+	if (!kept.length) {
+		frappe.validated = false;
+		frappe.msgprint({
+			title: __("ردیف‌های دریافت"),
+			message: __("حداقل یک ردیف دریافت لازم است."),
+			indicator: "red",
+		});
+		return;
+	}
+	for (let index = 0; index < kept.length; index += 1) {
+		const row = kept[index];
+		const issue = receiptRowIssue(frm, row);
+		if (issue) {
+			frappe.validated = false;
+			showRowStageIssue(frm, row, issue);
+			return;
+		}
+	}
 }
 
 // Programmatic row writes (cascades, convenience fills, clears, Add Row copy)
@@ -1609,7 +1674,7 @@ function rowChangeUserInitiated(row) {
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {
 		// Receipt credit rows route here even when the account is being cleared, so
-		// the staged validation still runs for that user action.
+		// the receipt-side sync still runs for that user action.
 		if (frm.doc.operation_type === RECEIPT && side === "credit") {
 			return this.refreshReceiptAccount(frm, cdt, cdn);
 		}
@@ -1630,11 +1695,6 @@ const spAccountingPair = {
 	async refreshReceiptAccount(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		if (!rowChangeUserInitiated(row)) {
-			return;
-		}
-		// The user is entering (or editing) the معین stage: every earlier stage must
-		// already be complete, and this stage must hold an account.
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.ACCOUNT)) {
 			return;
 		}
 		if (!row.credit_account) {
@@ -1722,14 +1782,6 @@ const spAccountingPair = {
 		if (!rowChangeUserInitiated(row)) {
 			return;
 		}
-		// The user is starting to enter this row: the header must be staged-complete.
-		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
-			return;
-		}
-		// Type is the second stage: it validates the Currency choice too.
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.TYPE)) {
-			return;
-		}
 		// Clearing receipt_recipient and the معین are side effects of this one user
 		// action, not further row entries: the change handlers stay quiet.
 		await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
@@ -1748,13 +1800,6 @@ const spAccountingPair = {
 		}
 		const row = locals[cdt][cdn];
 		if (!rowChangeUserInitiated(row)) {
-			return;
-		}
-		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
-			return;
-		}
-		// Entity is the third stage: Currency and Type must already be complete.
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.ENTITY)) {
 			return;
 		}
 		await setRowValueQuietly(cdt, cdn, "credit_account", "");
@@ -1866,14 +1911,6 @@ const spAccountingPair = {
 		if (!rowChangeUserInitiated(row)) {
 			return this.applyRowCurrency(frm, cdt, cdn);
 		}
-		// Currency is the first row stage: only a user-initiated choice starts (or
-		// continues) row entry.
-		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
-			return;
-		}
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.CURRENCY)) {
-			return this.applyRowCurrency(frm, cdt, cdn);
-		}
 		// Currency is the first row choice: an Entity that does not match the new
 		// currency is cleared at once instead of reverting the currency.
 		await this.clearIncompatibleRowEntity(frm, cdt, cdn);
@@ -1976,38 +2013,6 @@ const spAccountingPair = {
 			await setRowValueQuietly(cdt, cdn, "credit_account", account);
 		}
 	},
-	async creditAmountChanged(frm, cdt, cdn) {
-		if (frm.doc.operation_type !== RECEIPT) {
-			return this.calculate(frm, cdt, cdn, "credit");
-		}
-		const row = locals[cdt][cdn];
-		if (!rowChangeUserInitiated(row)) {
-			return this.calculate(frm, cdt, cdn, "credit");
-		}
-		// Amount is the fifth stage: ارز → نوع → طرف/بانک → معین must already be
-		// complete, and the entered Amount must be positive.
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.AMOUNT)) {
-			return;
-		}
-		return this.calculate(frm, cdt, cdn, "credit");
-	},
-	async creditRateChanged(frm, cdt, cdn) {
-		if (frm.doc.operation_type !== RECEIPT) {
-			return this.calculate(frm, cdt, cdn, "credit");
-		}
-		const row = locals[cdt][cdn];
-		// calculate() itself writes the Rate (1 for a base-currency row): that is a
-		// programmatic write, not the user entering the Rate stage.
-		if (!rowChangeUserInitiated(row) || row.__sp_calculating) {
-			return this.calculate(frm, cdt, cdn, "credit");
-		}
-		// The Rate stage matters for foreign-currency rows only; a base-currency
-		// row has a fixed Rate of 1.
-		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.RATE)) {
-			return;
-		}
-		return this.calculate(frm, cdt, cdn, "credit");
-	},
 	async copyPreviousReceiptRow(frm, cdt, cdn) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
@@ -2078,9 +2083,4 @@ for (const side of ["debit", "credit"]) {
 	events[`${side}_party_type`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
 	events[`${side}_party`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
 }
-// The Amount and Rate stages exist for Receipt rows only: replace the generic
-// handlers with the staged wrappers so a user entry validates the reached
-// stages first (and reports at most the first relevant problem).
-events["credit_amount"] = (frm, cdt, cdn) => spAccountingPair.creditAmountChanged(frm, cdt, cdn);
-events["credit_exchange_rate"] = (frm, cdt, cdn) => spAccountingPair.creditRateChanged(frm, cdt, cdn);
 frappe.ui.form.on("SmartProcess Accounting Pair", events);

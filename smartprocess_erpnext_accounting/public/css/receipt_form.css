@@ -95,20 +95,31 @@
 
 .sp-receipt-summary th,
 .sp-receipt-summary td {
-	text-align: center;
 	vertical-align: middle;
 }
 
-.sp-receipt-summary-total {
-	font-size: var(--text-md);
-	text-align: end;
+.sp-receipt-summary th {
+	text-align: center;
+}
+
+/* All numeric values align from one fixed side (the RTL start edge), so the
+ * amounts, rates and base totals of every row and of the «جمع کل به ارز پایه»
+ * tfoot row sit on the same right edge of their columns. */
+.sp-receipt-summary tbody td,
+.sp-receipt-summary tfoot td {
+	text-align: right;
+}
+
+.sp-receipt-summary-total td {
+	font-weight: var(--weight-bold, 600);
 }
 
 /*
  * The receiver total is a single aligned row directly under the 4-column
  * summary table: it reuses the .sp-receipt-summary .table rules (fixed layout,
- * 680px minimum, centered cells) so its columns sit exactly under the table's
- * ارز / مجموع دریافت همان ارز / میانگین وزنی نرخ / جمع کل به ارز پایه columns.
+ * 680px minimum, same fixed-side numeric alignment) so its columns sit exactly
+ * under the table's ارز / مجموع دریافت همان ارز / میانگین وزنی نرخ / جمع کل به
+ * ارز پایه columns.
  */
 .sp-receipt-receiver-summary {
 	margin-top: 1.75rem;
