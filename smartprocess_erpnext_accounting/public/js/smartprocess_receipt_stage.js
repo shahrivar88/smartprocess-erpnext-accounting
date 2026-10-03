@@ -14,69 +14,42 @@
 			? this
 			: globalThis,
 	() => {
-		// Child-row validation for the Receipt form, in the logical order
-		// 1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ. It reports
-		// the FIRST relevant problem only, so one action can never chain multiple
-		// popups. The form runs it at exactly two points — «افزودن ردیف» (the
-		// current row must be complete before a new row is created) and Save/Submit
-		// (strict, every row); changing a row field never validates. Save/Submit
+		// Child-row validation for the Receipt form. The form runs it at exactly
+		// two points — «افزودن ردیف» (the current row must be complete before a
+		// new row is created) and Save/Submit (every row); changing a row field
+		// never validates. rowIssues returns EVERY problem of the row in report
+		// order (ارز → نوع → طرف/حساب بانکی → معین → مبلغ → نرخ), so one action
+		// shows a single complete message instead of chained popups. Save/Submit
 		// validation stays strict server-side too.
-		const STAGE = {
-			CURRENCY: 1,
-			TYPE: 2,
-			ENTITY: 3,
-			ACCOUNT: 4,
-			AMOUNT: 5,
-			RATE: 6,
-		};
-
 		const ACCOUNT_RECIPIENT = "Account";
 		const BANK_ACCOUNT_RECIPIENT = "Bank Account";
 
-		// Returns [fieldname, message] for the first issue among the reached stages,
-		// or null when everything reached is complete. Mirrors the server's
-		// canonicalize_receipt order: نوع → ارز → معین → طرف/بانک → مبلغ → نرخ.
-		function rowStageIssue(stage, row, recipientTypes, companyCurrency) {
-			const reached = stage || 0;
-			if (reached < STAGE.CURRENCY) {
-				return null;
-			}
+		// Every problem as [fieldname, message] pairs, in report order; an empty
+		// array means the row is complete. Mirrors the server's
+		// canonicalize_receipt rules: نوع → ارز → معین → طرف/بانک → مبلغ → نرخ.
+		function rowIssues(row, recipientTypes, companyCurrency) {
+			const issues = [];
 			if (!row.receipt_currency) {
-				return ["receipt_currency", "ارز ردیف الزامی است."];
-			}
-			if (reached < STAGE.TYPE) {
-				return null;
+				issues.push(["receipt_currency", "ارز ردیف الزامی است."]);
 			}
 			if (!recipientTypes.includes(row.receipt_recipient_type)) {
-				return ["receipt_recipient_type", "نوع پرداخت‌کننده را انتخاب کنید."];
-			}
-			if (reached < STAGE.ENTITY) {
-				return null;
+				issues.push(["receipt_recipient_type", "نوع پرداخت‌کننده را انتخاب کنید."]);
 			}
 			// The Entity field is hidden for Account-type rows; the server only
 			// requires the Party/Bank Account entity.
 			if (row.receipt_recipient_type !== ACCOUNT_RECIPIENT && !row.receipt_recipient) {
-				return [
+				issues.push([
 					"receipt_recipient",
 					row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT
 						? "حساب بانکی الزامی است."
 						: "پرداخت‌کننده الزامی است.",
-				];
-			}
-			if (reached < STAGE.ACCOUNT) {
-				return null;
+				]);
 			}
 			if (!row.credit_account) {
-				return ["credit_account", "معین پرداخت‌کننده الزامی است."];
-			}
-			if (reached < STAGE.AMOUNT) {
-				return null;
+				issues.push(["credit_account", "معین پرداخت‌کننده الزامی است."]);
 			}
 			if (!(Number(row.credit_amount) > 0)) {
-				return ["credit_amount", "مبلغ باید بزرگ‌تر از صفر باشد."];
-			}
-			if (reached < STAGE.RATE) {
-				return null;
+				issues.push(["credit_amount", "مبلغ باید بزرگ‌تر از صفر باشد."]);
 			}
 			if (
 				row.receipt_currency
@@ -84,9 +57,9 @@
 				&& row.receipt_currency !== companyCurrency
 				&& !(Number(row.credit_exchange_rate) > 0)
 			) {
-				return ["credit_exchange_rate", "نرخ باید بزرگ‌تر از صفر باشد."];
+				issues.push(["credit_exchange_rate", "نرخ باید بزرگ‌تر از صفر باشد."]);
 			}
-			return null;
+			return issues;
 		}
 
 		// Builds the four cells of the «مجموع واریزی به دریافت‌کننده» receiver row
@@ -117,8 +90,7 @@
 		}
 
 		return {
-			STAGE,
-			rowStageIssue,
+			rowIssues,
 			receiverSummaryCells,
 		};
 	},

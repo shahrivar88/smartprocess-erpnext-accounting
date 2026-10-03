@@ -1,7 +1,6 @@
 const assert = require("node:assert/strict");
 const {
-	STAGE,
-	rowStageIssue,
+	rowIssues,
 	receiverSummaryCells,
 } = require("../../public/js/smartprocess_receipt_stage.js");
 
@@ -24,136 +23,102 @@ const freshRow = () => ({
 	credit_exchange_rate: 0,
 });
 
-function issueAt(stage, row) {
-	return rowStageIssue(stage, row, RECIPIENT_TYPES, COMPANY_CURRENCY);
+function messages(row, companyCurrency = COMPANY_CURRENCY) {
+	return rowIssues(row, RECIPIENT_TYPES, companyCurrency).map(([, message]) => message);
 }
 
-// A. A row the user has not started (stage 0) never validates — defaults like
-// amount=0 / rate=0 do not count as user entry, and neither does the Add Row
-// copy of a previous row.
+// A. An untouched row lists every missing item in report order; the foreign
+// Rate rule stays silent while the currency is unknown.
 {
-	const untouched = issueAt(0, freshRow());
-	assert.equal(untouched, null);
-
-	const copied = freshRow();
-	copied.receipt_currency = "USD";
-	copied.receipt_recipient_type = "Customer";
-	copied.receipt_recipient = "CUST-A";
-	copied.credit_account = "1020-USD";
-	copied.credit_exchange_rate = 1500000;
-	assert.equal(issueAt(0, copied), null, "Add Row copy at stage 0 must not validate");
+	assert.deepEqual(messages(freshRow()), [
+		"ارز ردیف الزامی است.",
+		"نوع پرداخت‌کننده را انتخاب کنید.",
+		"پرداخت‌کننده الزامی است.",
+		"معین پرداخت‌کننده الزامی است.",
+		"مبلغ باید بزرگ‌تر از صفر باشد.",
+	]);
 }
 
-// B. Choosing Currency (stage 1) validates the currency alone — no amount,
-// account or rate errors yet.
-{
-	const row = freshRow();
-	row.receipt_currency = "USD";
-	assert.equal(issueAt(STAGE.CURRENCY, row), null);
-
-	assert.deepEqual(
-		issueAt(STAGE.CURRENCY, freshRow()),
-		["receipt_currency", "ارز ردیف الزامی است."],
-		"clearing/reaching stage 1 without a currency reports only the currency",
-	);
-}
-
-// C. Choosing Type (stage 2) validates currency and type only — future fields
-// (معین, amount, rate) are not touched.
+// B. The user's example — a foreign Customer row with only currency + type set
+// lists all four remaining problems in one message.
 {
 	const row = freshRow();
 	row.receipt_currency = "USD";
 	row.receipt_recipient_type = "Customer";
-	assert.equal(issueAt(STAGE.TYPE, row), null);
-
-	row.receipt_recipient_type = "";
-	assert.deepEqual(
-		issueAt(STAGE.TYPE, row),
-		["receipt_recipient_type", "نوع پرداخت‌کننده را انتخاب کنید."],
-		"missing type reports the type, nothing else",
-	);
-}
-
-// D. Choosing the Entity (stage 3) requires Party/Bank Account but never the
-// Account-type entity, and still no amount check.
-{
-	const base = freshRow();
-	base.receipt_currency = "USD";
-	base.receipt_recipient_type = "Customer";
-
-	const party = { ...base, receipt_recipient: "CUST-A" };
-	assert.equal(issueAt(STAGE.ENTITY, party), null);
-	assert.deepEqual(issueAt(STAGE.ENTITY, base), [
-		"receipt_recipient",
+	assert.deepEqual(messages(row), [
 		"پرداخت‌کننده الزامی است.",
-	]);
-
-	const bank = { ...freshRow(), receipt_currency: "USD", receipt_recipient_type: "Bank Account" };
-	assert.deepEqual(issueAt(STAGE.ENTITY, bank), [
-		"receipt_recipient",
-		"حساب بانکی الزامی است.",
-	]);
-
-	const accountType = { ...freshRow(), receipt_currency: "USD", receipt_recipient_type: "Account" };
-	assert.equal(
-		issueAt(STAGE.ENTITY, accountType),
-		null,
-		"Account-type rows have no entity field: server parity",
-	);
-}
-
-// The معین stage (4) requires the account, after which Amount (5) must be
-// positive; the foreign Rate (6) must be positive, and a base-currency row
-// never needs a rate.
-{
-	const base = freshRow();
-	base.receipt_currency = "USD";
-	base.receipt_recipient_type = "Customer";
-	base.receipt_recipient = "CUST-A";
-
-	assert.deepEqual(issueAt(STAGE.ACCOUNT, base), [
-		"credit_account",
 		"معین پرداخت‌کننده الزامی است.",
-	]);
-
-	const withAccount = { ...base, credit_account: "1020-USD" };
-	assert.equal(issueAt(STAGE.ACCOUNT, withAccount), null);
-	assert.deepEqual(issueAt(STAGE.AMOUNT, withAccount), [
-		"credit_amount",
 		"مبلغ باید بزرگ‌تر از صفر باشد.",
-	], "amount=0 errors only once the user reached the Amount stage");
-
-	const withAmount = { ...withAccount, credit_amount: 100 };
-	assert.equal(issueAt(STAGE.AMOUNT, withAmount), null);
-	assert.deepEqual(issueAt(STAGE.RATE, withAmount), [
-		"credit_exchange_rate",
 		"نرخ باید بزرگ‌تر از صفر باشد.",
-	], "foreign row with rate=0 errors at the Rate stage");
-
-	const withRate = { ...withAmount, credit_exchange_rate: 1500000 };
-	assert.equal(issueAt(STAGE.RATE, withRate), null);
-
-	const baseCurrency = { ...withAmount, receipt_currency: COMPANY_CURRENCY, credit_exchange_rate: 0 };
-	assert.equal(
-		issueAt(STAGE.RATE, baseCurrency),
-		null,
-		"base-currency rows never require a rate",
-	);
+	]);
 }
 
-// F. The first relevant problem wins (server order mirrored), so a later stage
-// never masks an earlier one.
+// C. A Bank row without a Bank Account reports the bank-account entity AND the
+// ledger account — never only the first of them.
 {
-	const broken = freshRow();
-	broken.receipt_recipient_type = "Customer";
-	broken.receipt_recipient = "CUST-A";
-	broken.credit_account = "1020-USD";
-	broken.credit_amount = 0;
-	broken.credit_exchange_rate = 0;
-	assert.deepEqual(issueAt(STAGE.RATE, broken), [
-		"receipt_currency",
-		"ارز ردیف الزامی است.",
-	], "missing currency is reported before the zero amount");
+	const bank = { ...freshRow(), receipt_currency: "USD", receipt_recipient_type: "Bank Account" };
+	assert.deepEqual(messages(bank), [
+		"حساب بانکی الزامی است.",
+		"معین پرداخت‌کننده الزامی است.",
+		"مبلغ باید بزرگ‌تر از صفر باشد.",
+		"نرخ باید بزرگ‌تر از صفر باشد.",
+	]);
+	assert.equal(rowIssues(bank, RECIPIENT_TYPES, COMPANY_CURRENCY)[0][0], "receipt_recipient");
+}
+
+// D. Account-type rows have no entity field: the entity rule never fires, and a
+// base-currency row never requires a rate.
+{
+	const accountType = { ...freshRow(), receipt_currency: COMPANY_CURRENCY, receipt_recipient_type: "Account" };
+	assert.deepEqual(messages(accountType), [
+		"معین پرداخت‌کننده الزامی است.",
+		"مبلغ باید بزرگ‌تر از صفر باشد.",
+	]);
+}
+
+// E. Complete rows report nothing: base currency, foreign with rate, and Bank
+// with entity + ledger account.
+{
+	const base = {
+		...freshRow(),
+		receipt_currency: COMPANY_CURRENCY,
+		receipt_recipient_type: "Customer",
+		receipt_recipient: "CUST-A",
+		credit_account: "1020",
+		credit_amount: 100,
+	};
+	assert.deepEqual(rowIssues(base, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
+
+	const foreign = { ...base, receipt_currency: "USD", credit_account: "1020-USD", credit_exchange_rate: 1500000 };
+	assert.deepEqual(rowIssues(foreign, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
+
+	const bank = {
+		...freshRow(),
+		receipt_currency: "USD",
+		receipt_recipient_type: "Bank Account",
+		receipt_recipient: "BANK-ACC-1",
+		credit_account: "1020-USD",
+		credit_amount: 100,
+		credit_exchange_rate: 1500000,
+	};
+	assert.deepEqual(rowIssues(bank, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
+}
+
+// F. Unknown recipient types are invalid; without a company currency context the
+// foreign-rate rule never fires.
+{
+	const badType = { ...freshRow(), receipt_currency: "USD", receipt_recipient_type: "Nope" };
+	assert.ok(messages(badType).includes("نوع پرداخت‌کننده را انتخاب کنید."));
+
+	const noCompanyCurrency = {
+		...freshRow(),
+		receipt_currency: "USD",
+		receipt_recipient_type: "Customer",
+		receipt_recipient: "CUST-A",
+		credit_account: "1020-USD",
+		credit_amount: 100,
+	};
+	assert.deepEqual(rowIssues(noCompanyCurrency, RECIPIENT_TYPES, undefined), []);
 }
 
 // Receiver summary cells: aligned 4-column rendering from the canonical message.

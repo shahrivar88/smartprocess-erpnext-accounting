@@ -18,19 +18,6 @@ const RECEIVER_KIND_LABELS = {
 	Employee: "کارمند",
 };
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
-// Staged row validation (1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ)
-// runs at exactly two entry points: «افزودن ردیف» (the current row must be complete
-// before a new row is created) and Save/Submit (strict, first error of the first
-// incomplete row). Changing a row field never validates. The numbers come from the
-// smartprocess_receipt_stage module (with a local fallback).
-const RECEIPT_ROW_STAGE = window.smartprocessAccounting?.receiptRowStage?.STAGE || {
-	CURRENCY: 1,
-	TYPE: 2,
-	ENTITY: 3,
-	ACCOUNT: 4,
-	AMOUNT: 5,
-	RATE: 6,
-};
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
 	"receipt_recipient_type",
@@ -1539,24 +1526,40 @@ function partyCurrencyMismatchMessage(party, partyCurrency, targetCurrency) {
 }
 
 // Only the two row-validation entry points (Add Row / Save) may raise a popup,
-// and at most one each: the shared first-error reporter, focused on the
-// offending field.
-function showRowStageIssue(frm, row, issue) {
+// and at most one each: the shared all-problems report lists every missing or
+// invalid item of every reported row.
+function rowProblemsLines(frm, row, problems) {
 	const rows = frm.doc.operational_pairs || [];
 	const index = rows.findIndex((candidate) => candidate.name === row.name);
-	frappe.msgprint({
-		title: index < 0 ? __("ردیف دریافت") : __("ردیف دریافت {0}", [index + 1]),
-		message: issue[1],
-		indicator: "orange",
-	});
+	const position = index >= 0 ? index + 1 : row.idx || 1;
+	const lines = [__("ردیف دریافت {0} ناقص است:", [position])];
+	for (const problem of problems) {
+		lines.push(`• ${problem[1]}`);
+	}
+	return lines;
+}
+
+function focusRowProblemField(frm, row, fieldname) {
 	const gridRow = frm.fields_dict.operational_pairs?.grid?.grid_rows_by_docname?.[row.name];
 	if (gridRow && !gridRow.grid_form) {
 		gridRow.show_form();
 	}
-	const field = gridRow?.grid_form?.fields_dict?.[issue[0]] || gridRow?.on_grid_fields_dict?.[issue[0]];
+	const field = gridRow?.grid_form?.fields_dict?.[fieldname] || gridRow?.on_grid_fields_dict?.[fieldname];
 	if (field?.$input?.get(0)) {
 		field.$input.get(0).focus();
 	}
+}
+
+function showRowsProblems(frm, incomplete) {
+	const lines = [];
+	for (const entry of incomplete) {
+		lines.push(...rowProblemsLines(frm, entry.row, entry.problems));
+	}
+	frappe.msgprint({
+		message: lines.join("<br>"),
+		indicator: "orange",
+	});
+	focusRowProblemField(frm, incomplete[0].row, incomplete[0].problems[0][0]);
 }
 
 // A row with real user content; the auto-created blank row (only the
@@ -1572,34 +1575,29 @@ function receiptRowHasUserContent(row) {
 	);
 }
 
-// Full first-error check for one row via the smartprocess_receipt_stage module:
+// Full problem list of one row via the smartprocess_receipt_stage module:
 // ارز → نوع → طرف/حساب بانکی → معین → مبلغ → نرخ.
-function receiptRowIssue(frm, row) {
+function receiptRowProblems(frm, row) {
 	const module = window.smartprocessAccounting?.receiptRowStage;
-	if (!module?.rowStageIssue) {
+	if (!module?.rowIssues) {
 		return null;
 	}
-	return module.rowStageIssue(
-		RECEIPT_ROW_STAGE.RATE,
-		row,
-		RECEIPT_RECIPIENT_TYPES,
-		frm.doc.company_currency,
-	);
+	return module.rowIssues(row, RECEIPT_RECIPIENT_TYPES, frm.doc.company_currency);
 }
 
-// Entry point A — «افزودن ردیف»: the current (last) row must pass the full check
-// before a new row is created; only its first problem is reported.
+// Entry point A — «افزودن ردیف»: the current (last) row must be complete before
+// a new row is created; one message lists all of its problems.
 function receiptBlockIncompleteLastRow(frm) {
 	const rows = frm.doc.operational_pairs || [];
 	const row = rows[rows.length - 1];
 	if (!row || !receiptRowHasUserContent(row)) {
 		return false;
 	}
-	const issue = receiptRowIssue(frm, row);
-	if (!issue) {
+	const problems = receiptRowProblems(frm, row);
+	if (!problems || !problems.length) {
 		return false;
 	}
-	showRowStageIssue(frm, row, issue);
+	showRowsProblems(frm, [{ row, problems }]);
 	return true;
 }
 
@@ -1620,8 +1618,9 @@ function installReceiptAddRowGuard(frm, grid) {
 	grid.__sp_add_row_guarded = true;
 }
 
-// Entry point B — Save/Submit: strict first-error validation over all rows in
-// order (ارز → … → نرخ). Placeholder rows are dropped first, exactly like an
+// Entry point B — Save/Submit: full validation over all rows; any problem in
+// any row blocks the save, and one message lists every problem of every
+// incomplete row. Placeholder rows are dropped first, exactly like an
 // untouched grid; the server's strict canonicalization stays the backstop.
 function validateReceiptRowsForSave(frm) {
 	if (frm.doc.operation_type !== RECEIPT) {
@@ -1642,20 +1641,23 @@ function validateReceiptRowsForSave(frm) {
 		});
 		return;
 	}
-	for (let index = 0; index < kept.length; index += 1) {
-		const row = kept[index];
-		const issue = receiptRowIssue(frm, row);
-		if (issue) {
-			frappe.validated = false;
-			showRowStageIssue(frm, row, issue);
-			return;
+	const incomplete = [];
+	for (const row of kept) {
+		const problems = receiptRowProblems(frm, row);
+		if (problems && problems.length) {
+			incomplete.push({ row, problems });
 		}
 	}
+	if (!incomplete.length) {
+		return;
+	}
+	frappe.validated = false;
+	showRowsProblems(frm, incomplete);
 }
 
 // Programmatic row writes (cascades, convenience fills, clears, Add Row copy)
-// never count as user entry: the change handlers skip the staged validation
-// while the flag is set.
+// never count as user entry: while the flag is set the change handlers skip
+// their cascade re-entry instead of reacting to their own writes.
 async function setRowValueQuietly(cdt, cdn, fieldname, value) {
 	const row = locals[cdt][cdn];
 	const previous = row.__sp_row_quiet;
@@ -1703,7 +1705,7 @@ const spAccountingPair = {
 		const details = await getAccountDetails(row.credit_account, frm.doc.company);
 		if (details.account_currency !== row.receipt_currency) {
 			// Change handlers never raise validation popups: an incompatible pick is
-			// rejected quietly here; Add Row/Save report the first missing field.
+			// rejected quietly here; Add Row/Save report every missing item.
 			await setRowValueQuietly(cdt, cdn, "credit_account", "");
 			return;
 		}
