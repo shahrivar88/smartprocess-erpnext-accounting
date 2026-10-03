@@ -5,8 +5,6 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from erpnext.accounts.party import get_party_gle_currency
-
 
 ALLOWED_PARTY_TYPES = (
 	"Customer",
@@ -90,11 +88,121 @@ def validate_party(party_type: str | None, party: str | None, account_type: str 
 			frappe.throw(_("Financial Intermediary {0} is disabled.").format(party))
 
 
-def get_party_ledger_currency(party_type: str | None, party: str | None, company: str | None) -> str | None:
-	"""Currency of the Party's first active GL entry in the Company (ERPNext-native rule)."""
+def resolve_party_currency(party_type: str | None, party: str | None, company: str | None) -> str | None:
+	"""Party's accounting currency in a Company — the single canonical rule.
+
+	1. active GL ledger currency (ERPNext ``get_party_gle_currency``);
+	2. explicit Party Account mapping currency (native chain: Party mapping,
+	   then Customer Group / Supplier Group mapping);
+	3. explicit entity currency (the Party document's ``default_currency``,
+	   when the DocType has the field);
+	4. Company.default_currency.
+
+	Used identically by the party queries, the form party-selection context and
+	the posting validation, so a Party is never shown as one currency while the
+	validation enforces another.
+	"""
 	if not (party_type and party and company):
 		return None
-	return get_party_gle_currency(party_type, party, company)
+	return batch_party_currencies(party_type, company, [party]).get(party)
+
+
+def batch_party_currencies(doctype: str, company: str, names: list[str]) -> dict[str, str | None]:
+	"""``name → currency`` per ``resolve_party_currency`` for many Parties at once.
+
+	Read-only and batch-only: no per-Party document loading and no writes; the
+	callers apply their own ``has_permission`` checks.
+	"""
+	if not names:
+		return {}
+	result: dict[str, str | None] = {}
+
+	# 1) Active GL ledger currency — mirrors get_party_gle_currency: the first
+	# active GL Entry decides, so the first row per Party wins.
+	for row in frappe.get_all(
+		"GL Entry",
+		filters={
+			"party_type": doctype,
+			"party": ["in", names],
+			"company": company,
+			"docstatus": 1,
+			"is_cancelled": 0,
+		},
+		fields=["party", "account_currency"],
+		limit=0,
+	):
+		result.setdefault(row.party, row.account_currency)
+
+	# 2) Explicit Party Account mapping currency (native chain: Party, then Group).
+	pending = [name for name in names if not result.get(name)]
+	if pending:
+		for name, currency in _batch_mapping_currencies(doctype, company, pending).items():
+			if currency:
+				result[name] = currency
+
+	# 3) Explicit entity currency (Party.default_currency).
+	pending = [name for name in names if not result.get(name)]
+	if pending and frappe.get_meta(doctype).has_field("default_currency"):
+		for row in frappe.get_all(
+			doctype, filters={"name": ["in", pending]}, fields=["name", "default_currency"]
+		):
+			if row.get("default_currency"):
+				result[row.name] = row.default_currency
+
+	# 4) Company.default_currency.
+	pending = [name for name in names if not result.get(name)]
+	if pending:
+		company_currency = frappe.get_cached_value("Company", company, "default_currency")
+		if company_currency:
+			for name in pending:
+				result[name] = company_currency
+	return result
+
+
+def _batch_mapping_currencies(doctype: str, company: str, names: list[str]) -> dict[str, str]:
+	"""Account currency of the explicit Party Account mapping (Party row, then Group row)."""
+	if not names:
+		return {}
+	mapping: dict[str, str] = {}
+	for row in frappe.get_all(
+		"Party Account",
+		filters={"parenttype": doctype, "parent": ["in", names], "company": company},
+		fields=["parent", "account"],
+	):
+		mapping.setdefault(row.parent, row.account)
+
+	pending = [name for name in names if not mapping.get(name)]
+	if doctype in ("Customer", "Supplier") and pending:
+		group_doctype = "Customer Group" if doctype == "Customer" else "Supplier Group"
+		group_field = "customer_group" if doctype == "Customer" else "supplier_group"
+		groups = {
+			row.name: row.get(group_field)
+			for row in frappe.get_all(
+				doctype, filters={"name": ["in", pending]}, fields=["name", group_field]
+			)
+		}
+		group_accounts: dict[str, str] = {}
+		group_names = sorted({group for group in groups.values() if group})
+		if group_names:
+			for row in frappe.get_all(
+				"Party Account",
+				filters={"parenttype": group_doctype, "parent": ["in", group_names], "company": company},
+				fields=["parent", "account"],
+			):
+				group_accounts.setdefault(row.parent, row.account)
+		for name in pending:
+			account = group_accounts.get(groups.get(name))
+			if account:
+				mapping[name] = account
+
+	account_names = sorted({account for account in mapping.values() if account})
+	currencies = {
+		row.name: row.account_currency
+		for row in frappe.get_all(
+			"Account", filters={"name": ["in", account_names]}, fields=["name", "account_currency"]
+		)
+	}
+	return {name: currencies[account] for name, account in mapping.items() if currencies.get(account)}
 
 
 def validate_party_ledger_currency(
@@ -103,14 +211,19 @@ def validate_party_ledger_currency(
 	company: str,
 	account_currency: str,
 ) -> None:
-	"""Mirror ERPNext GL Entry.validate_party_gle_currency with an early, explicit message."""
+	"""Reject posting against an Account whose currency differs from the Party's currency.
+
+	Uses the same canonical resolution as the party queries
+	(``resolve_party_currency``), so what the queries show and what the
+	validation enforces can never diverge.
+	"""
 	if not (party_type and party):
 		return
-	existing = get_party_ledger_currency(party_type, party, company)
+	existing = resolve_party_currency(party_type, party, company)
 	if existing and existing != account_currency:
 		frappe.throw(
 			_(
-				"طرف حساب {0} «{1}» در شرکت {2} سابقهٔ اسناد به ارز {3} دارد؛ ثبت به ارز {4} مجاز نیست. "
+				"طرف حساب {0} «{1}» در شرکت {2} با ارز {3} ثبت شده است؛ ثبت به ارز {4} مجاز نیست. "
 				"برای ارز {4} یک رکورد طرف حساب جداگانه انتخاب یا ایجاد کنید."
 			).format(party_type, party, company, existing, account_currency)
 		)
