@@ -12,6 +12,17 @@ frappe.pages["party-account-explorer"].on_page_load = function (wrapper) {
 	}
 };
 
+function currency_precision(currency) {
+	// Same rule frappe applies to Currency fields (frappe.meta.get_field_precision):
+	// the site's configured currency precision, otherwise the currency's own number
+	// format — no currency code is hard-coded in the display logic.
+	const configured = cint(frappe.defaults.get_default("currency_precision"));
+	if (configured) {
+		return configured;
+	}
+	return get_number_format_info(get_number_format(currency)).precision;
+}
+
 class PartyAccountExplorer {
 	constructor(page) {
 		this.page = page;
@@ -1001,12 +1012,6 @@ class PartyAccountExplorer {
 		if (value === null || value === undefined || value === "") {
 			return "";
 		}
-		let precision = 2;
-		if (currency === "IRR") {
-			precision = 0;
-		} else if (currency === "USD") {
-			precision = 2;
-		}
-		return format_number(value, null, precision);
+		return format_number(value, null, currency_precision(currency));
 	}
 }
