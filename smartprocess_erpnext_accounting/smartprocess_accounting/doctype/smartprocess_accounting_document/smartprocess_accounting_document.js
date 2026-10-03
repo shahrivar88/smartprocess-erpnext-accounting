@@ -259,6 +259,70 @@ function attachLiveNumberSeparatorToRowForm(gridRow) {
 	}
 }
 
+// The row Payer Type dropdown is the standard Link control: its suggestions come
+// from frappe.desk.search.search_link, which re-sorts DocType results by the
+// translated DocType name regardless of the custom query order. The configured
+// order and Persian labels from SmartProcess Accounting Settings are therefore
+// applied on the client, right where the Link control hands the list to
+// Awesomplete — the one place every rendering path (fresh RPC, cache hit,
+// keyboard filtering) passes through. The core Link control is untouched.
+function orderRecipientTypeSuggestions(items, frm) {
+	const options = (frm && frm.__sp_recipient_type_options) || [];
+	if (!Array.isArray(items) || !options.length) {
+		return items;
+	}
+	const rankByValue = {};
+	options.forEach((entry, index) => {
+		rankByValue[entry.value] = index;
+	});
+	const ranked = [];
+	const rest = [];
+	for (const item of items) {
+		const rank = item && typeof item === "object" ? rankByValue[item.value] : undefined;
+		if (rank === undefined) {
+			// Create-new / advanced-search / filter-description options keep their
+			// position after the real type entries.
+			rest.push(item);
+			continue;
+		}
+		// The Link control shows the translated DocType name as the bold label
+		// (e.g. Account → «حساب معین»); replace it with the configured label
+		// (Account → «سایر حسابها») and drop the now-duplicate description line.
+		item.label = options[rank].label;
+		item.description = "";
+		ranked.push({ rank, item });
+	}
+	ranked.sort((a, b) => a.rank - b.rank);
+	return ranked.map((entry) => entry.item).concat(rest);
+}
+
+// Shadows the Awesomplete `list` accessor on this one control instance: the
+// base class stores suggestions in `_list` and reads them back from there, so
+// the setter simply reorders (and relabels) the incoming list in place of the
+// prototype accessor. Idempotent per control instance.
+function attachRecipientTypeOrderToControl(control) {
+	if (!control || !control.awesomplete || control.__sp_recipient_type_order) {
+		return;
+	}
+	control.__sp_recipient_type_order = true;
+	Object.defineProperty(control.awesomplete, "list", {
+		configurable: true,
+		enumerable: true,
+		get() {
+			return this._list;
+		},
+		set(value) {
+			this._list = orderRecipientTypeSuggestions(value, control.frm);
+		},
+	});
+}
+
+// The row form is built lazily, so attach the moment it opens — the same
+// pattern as the live thousands separator.
+function attachRecipientTypeOrderToRowForm(gridRow) {
+	attachRecipientTypeOrderToControl(gridRow.grid_form?.fields_dict?.receipt_recipient_type);
+}
+
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	validate(frm) {
 		return validateReceiptRowsForSave(frm);
@@ -274,8 +338,11 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		void receiptForm.initialize(frm);
 	},
 	setup(frm) {
+		// The row Payer Type dropdown order, Persian labels and the new-row default
+		// come from SmartProcess Accounting Settings (server-side query), never from
+		// hard-coded JS — the user can change both without code.
 		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
-			filters: { name: ["in", RECEIPT_RECIPIENT_TYPES] },
+			query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.receipt_recipient_type_query",
 		}));
 		frm.set_query("receipt_payer_account", () => ({
 			filters: receiptAccountFilters(
@@ -484,6 +551,9 @@ function configureReceiptGridRowLifecycle(gridRow) {
 			if (LIVE_SEPARATOR_FIELDS.includes(column.df.fieldname)) {
 				configureLiveNumberSeparatorInput(column.field, gridRow.grid?.frm?.__sp_live_separator);
 			}
+			if (column.df.fieldname === "receipt_recipient_type") {
+				attachRecipientTypeOrderToControl(column.field);
+			}
 		};
 		gridRow.__sp_make_control = true;
 	}
@@ -493,12 +563,15 @@ function configureReceiptGridRowLifecycle(gridRow) {
 		gridRow.show_form = function () {
 			showForm.call(this);
 			attachLiveNumberSeparatorToRowForm(this);
+			attachRecipientTypeOrderToRowForm(this);
 		};
 	}
 	for (const fieldname of RECEIPT_NUMBER_FIELDS) {
 		configureCompactNumberInput(gridRow.on_grid_fields_dict?.[fieldname]);
 		configureCompactNumberInput(gridRow.grid_form?.fields_dict?.[fieldname]);
 	}
+	attachRecipientTypeOrderToControl(gridRow.on_grid_fields_dict?.receipt_recipient_type);
+	attachRecipientTypeOrderToControl(gridRow.grid_form?.fields_dict?.receipt_recipient_type);
 	// Attach regardless of the current enabled snapshot: the per-control listeners
 	// re-read the live config on every event, so rows wired before the settings
 	// arrive still activate the separator as soon as the xcall resolves.
@@ -620,6 +693,65 @@ const receiptForm = {
 		if (frm.doc.docstatus === 0 && frm.doc.receipt_payer) {
 			await this.syncReceiverCurrencyFromParty(frm);
 		}
+		await this.initializeRecipientTypeDefault(frm);
+		await this.loadRecipientTypeOptions(frm);
+	},
+	// Preselect the configured Payer Type on rows that still have none (the
+	// framework's mandatory first row is created before this fetch resolves).
+	// Only empty types are filled: a user-chosen type is never overwritten.
+	async initializeRecipientTypeDefault(frm) {
+		if (frm.doc.docstatus !== 0) {
+			return;
+		}
+		const defaultType = await this.loadRecipientTypeDefault(frm);
+		if (!defaultType) {
+			return;
+		}
+		for (const row of frm.doc.operational_pairs || []) {
+			if (!row.receipt_recipient_type) {
+				await setRowValueQuietly(row.doctype, row.name, "receipt_recipient_type", defaultType);
+			}
+		}
+		frm.refresh_field("operational_pairs");
+	},
+	// Both fetches are cached per document name: the SPA reuses the frm object
+	// across new-doc navigations of the same doctype, so a cache keyed only on
+	// the frm would carry the previous document's values.
+	async loadRecipientTypeDefault(frm) {
+		if (frm.__sp_recipient_type_default_for === frm.doc.name && frm.__sp_recipient_type_default) {
+			return frm.__sp_recipient_type_default;
+		}
+		try {
+			const { message } = await frappe.call({
+				type: "GET",
+				method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_recipient_type_default",
+			});
+			frm.__sp_recipient_type_default = typeof message === "string" ? message : "";
+		} catch (error) {
+			frm.__sp_recipient_type_default = "";
+		}
+		frm.__sp_recipient_type_default_for = frm.doc.name;
+		return frm.__sp_recipient_type_default;
+	},
+	// The configured Payer Type order and Persian labels, applied by
+	// attachRecipientTypeOrderToControl every time the Link dropdown hands its
+	// suggestions to Awesomplete. Fetched once per document, so a Settings
+	// change applies on the next form load.
+	async loadRecipientTypeOptions(frm) {
+		if (frm.__sp_recipient_type_options_for === frm.doc.name && frm.__sp_recipient_type_options) {
+			return frm.__sp_recipient_type_options;
+		}
+		try {
+			const { message } = await frappe.call({
+				type: "GET",
+				method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_recipient_type_options",
+			});
+			frm.__sp_recipient_type_options = Array.isArray(message) ? message : [];
+		} catch (error) {
+			frm.__sp_recipient_type_options = [];
+		}
+		frm.__sp_recipient_type_options_for = frm.doc.name;
+		return frm.__sp_recipient_type_options;
 	},
 	async initializeReceiverType(frm) {
 		const defaultKind = frm.fields_dict.receipt_receiver_kind?.df?.default || "";
@@ -2005,13 +2137,14 @@ const spAccountingPair = {
 			return;
 		}
 		const rows = frm.doc.operational_pairs || [];
+		const row = locals[cdt][cdn];
 		const index = rows.findIndex((candidate) => candidate.name === cdn);
 		if (index < 1) {
 			await frappe.model.set_value(cdt, cdn, "receipt_posting_date", frm.doc.posting_date || "");
+			await this.applyDefaultReceiptRowType(frm, row);
 			receiptForm.configureGrid(frm, true);
 			return;
 		}
-		const row = locals[cdt][cdn];
 		const previous = rows[index - 1];
 		row.__sp_receipt_copying = true;
 		try {
@@ -2031,10 +2164,23 @@ const spAccountingPair = {
 			for (const fieldname of ["debit_amount", "debit_company_amount", "credit_amount", "credit_company_amount"]) {
 				await frappe.model.set_value(cdt, cdn, fieldname, "");
 			}
+			await this.applyDefaultReceiptRowType(frm, row);
 		} finally {
 			row.__sp_receipt_copying = false;
 		}
 		receiptForm.configureGrid(frm, true);
+	},
+	// The configured Payer Type default fills only an empty type: the Add Row
+	// copy keeps the previous row's type, and a user-chosen type is never
+	// overwritten. The default is configured in SmartProcess Accounting Settings.
+	async applyDefaultReceiptRowType(frm, row) {
+		if (row.receipt_recipient_type) {
+			return;
+		}
+		const defaultType = await receiptForm.loadRecipientTypeDefault(frm);
+		if (defaultType) {
+			await setRowValueQuietly(row.doctype, row.name, "receipt_recipient_type", defaultType);
+		}
 	},
 };
 

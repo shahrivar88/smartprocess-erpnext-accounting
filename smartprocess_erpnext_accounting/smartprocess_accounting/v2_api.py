@@ -10,7 +10,11 @@ from frappe import _
 from erpnext.accounts.party import get_party_account
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import canonicalize_receipt
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import (
+	ACCOUNT_RECIPIENT,
+	BANK_ACCOUNT_RECIPIENT,
+	canonicalize_receipt,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
 	batch_party_currencies,
@@ -25,6 +29,87 @@ PARTY_DISPLAY_FIELDS = {
 	"Employee": "employee_name",
 	"SmartProcess Financial Intermediary": "intermediary_name",
 }
+
+# Default display order and labels for the Receipt row Payer Type dropdown.
+# Overridable without code from SmartProcess Accounting Settings; entries whose
+# value is not accepted by the Receipt validation are always dropped.
+RECEIPT_ROW_TYPE_DEFAULTS = [
+	{"value": "Customer", "label": "مشتری"},
+	{"value": "Bank Account", "label": "حساب بانکی"},
+	{"value": "SmartProcess Financial Intermediary", "label": "واسطه مالی"},
+	{"value": "Supplier", "label": "تامین‌کننده"},
+	{"value": "Employee", "label": "کارمند"},
+	{"value": "Account", "label": "سایر حساب‌ها"},
+]
+
+
+def _receipt_row_type_options() -> list[dict]:
+	"""Configured order/labels of the Receipt row Payer Type dropdown.
+
+	Reads the JSON list from SmartProcess Accounting Settings and keeps only the
+	values the Receipt validation accepts (the same set as the server-side row
+	validation), so the dropdown can never offer an invalid type. Malformed or
+	missing configuration falls back to the built-in default order.
+	"""
+	valid = (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT)
+	raw = frappe.get_single_value(
+		"SmartProcess Accounting Settings", "receipt_recipient_type_options"
+	)
+	if raw:
+		try:
+			entries = frappe.parse_json(raw)
+			if isinstance(entries, list):
+				options = []
+				seen = set()
+				for entry in entries:
+					if not isinstance(entry, dict):
+						continue
+					value = entry.get("value")
+					if value not in valid or value in seen:
+						continue
+					seen.add(value)
+					options.append({"value": value, "label": str(entry.get("label") or value)})
+				return options
+		except Exception:
+			pass
+	return [dict(entry) for entry in RECEIPT_ROW_TYPE_DEFAULTS]
+
+
+@frappe.whitelist(methods=["GET"])
+def receipt_recipient_type_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Ordered, labeled suggestion list for the Receipt row Payer Type Link."""
+	search = (txt or "").strip().lower()
+	options = _receipt_row_type_options()
+	if search:
+		options = [
+			entry
+			for entry in options
+			if search in entry["value"].lower() or search in entry["label"].lower()
+		]
+	start = int(start or 0)
+	page_len = int(page_len or 20)
+	return [[entry["value"], entry["label"]] for entry in options[start : start + page_len]]
+
+
+@frappe.whitelist(methods=["GET"])
+def get_receipt_recipient_type_default() -> str:
+	"""Payer Type preselected on new Receipt rows (falls back to Customer)."""
+	valid = (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT)
+	configured = frappe.get_single_value(
+		"SmartProcess Accounting Settings", "receipt_recipient_type_default"
+	)
+	return configured if configured in valid else RECEIPT_ROW_TYPE_DEFAULTS[0]["value"]
+
+
+@frappe.whitelist(methods=["GET"])
+def get_receipt_recipient_type_options() -> list[dict]:
+	"""Configured order/labels of the Receipt row Payer Type dropdown.
+
+	The dropdown itself is rendered by the standard Link control, whose core
+	re-sorts DocType suggestions by the translated DocType name — the client
+	applies this list to restore the configured order and Persian labels.
+	"""
+	return _receipt_row_type_options()
 
 
 @frappe.whitelist()
