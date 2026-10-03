@@ -44,6 +44,11 @@ const TECHNICAL_RECEIPT_FIELDS = [
 	"credit_account_currency",
 ];
 const RECEIPT_NUMBER_FIELDS = ["credit_amount", "credit_exchange_rate", "credit_company_amount"];
+// User-typed numeric fields that get the live thousands separator (read-only
+// computed fields like credit_company_amount are excluded).
+const LIVE_SEPARATOR_FIELDS = ["credit_amount", "credit_exchange_rate"];
+const LIVE_NUMBER_SEPARATOR_METHOD =
+	"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_settings.smartprocess_accounting_settings.get_number_input_settings";
 
 function numberFormatForField(df, doc) {
 	const currency = df.fieldtype === "Currency"
@@ -188,6 +193,52 @@ function configureCompactNumberInput(control) {
 	}
 	if (control.$input && document.activeElement !== control.$input.get(0)) {
 		control.set_formatted_input(control.value);
+	}
+}
+
+function configureLiveNumberSeparatorInput(control, config) {
+	if (!control || !config?.enabled) {
+		return;
+	}
+	window.smartprocessAccounting?.numeric?.liveNumberSeparator?.attach(control, () => config);
+}
+
+// Fetches the SmartProcess Accounting settings once per form refresh into a
+// stable per-form object; the attached controls read it live, so toggling the
+// feature or changing the separator takes effect after a form reload. When the
+// feature is off — or the settings cannot be read — nothing is attached and the
+// standard Frappe behavior applies.
+function ensureLiveNumberSeparator(frm) {
+	const config = frm.__sp_live_separator || {
+		enabled: 0,
+		separator: ",",
+		decimal_str: ".",
+		group_str: ",",
+	};
+	frm.__sp_live_separator = config;
+	frappe
+		.xcall(LIVE_NUMBER_SEPARATOR_METHOD)
+		.then((settings) => {
+			if (settings && typeof settings === "object") {
+				Object.assign(config, settings);
+			}
+			attachLiveNumberSeparatorInputs(frm);
+		})
+		.catch(() => {});
+}
+
+function attachLiveNumberSeparatorInputs(frm) {
+	const config = frm.__sp_live_separator;
+	if (!config?.enabled) {
+		return;
+	}
+	configureLiveNumberSeparatorInput(frm.fields_dict.receipt_payer_exchange_rate, config);
+	const grid = frm.fields_dict.operational_pairs?.grid;
+	for (const gridRow of grid?.grid_rows || []) {
+		for (const fieldname of LIVE_SEPARATOR_FIELDS) {
+			configureLiveNumberSeparatorInput(gridRow.on_grid_fields_dict?.[fieldname], config);
+			configureLiveNumberSeparatorInput(gridRow.grid_form?.fields_dict?.[fieldname], config);
+		}
 	}
 }
 
@@ -407,12 +458,22 @@ function configureReceiptGridRowLifecycle(gridRow) {
 			if (RECEIPT_NUMBER_FIELDS.includes(column.df.fieldname)) {
 				configureCompactNumberInput(column.field);
 			}
+			if (LIVE_SEPARATOR_FIELDS.includes(column.df.fieldname)) {
+				configureLiveNumberSeparatorInput(column.field, gridRow.grid?.frm?.__sp_live_separator);
+			}
 		};
 		gridRow.__sp_make_control = true;
 	}
 	for (const fieldname of RECEIPT_NUMBER_FIELDS) {
 		configureCompactNumberInput(gridRow.on_grid_fields_dict?.[fieldname]);
 		configureCompactNumberInput(gridRow.grid_form?.fields_dict?.[fieldname]);
+	}
+	const liveSeparatorConfig = gridRow.grid?.frm?.__sp_live_separator;
+	if (liveSeparatorConfig?.enabled) {
+		for (const fieldname of LIVE_SEPARATOR_FIELDS) {
+			configureLiveNumberSeparatorInput(gridRow.on_grid_fields_dict?.[fieldname], liveSeparatorConfig);
+			configureLiveNumberSeparatorInput(gridRow.grid_form?.fields_dict?.[fieldname], liveSeparatorConfig);
+		}
 	}
 }
 
@@ -515,6 +576,7 @@ const receiptForm = {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
+		ensureLiveNumberSeparator(frm);
 		await this.initializeReceiverType(frm);
 		await this.loadCurrencyOptions(frm);
 		await this.defaultReceiverCurrency(frm, frm.doc.company_currency || "");

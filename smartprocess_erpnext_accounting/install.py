@@ -8,6 +8,21 @@ def after_migrate():
 	_ensure_workspace_sidebar()
 	_ensure_doctype_app()
 	_ensure_financial_intermediary_party_type()
+	_ensure_number_separator_defaults()
+
+
+def _ensure_number_separator_defaults():
+	doctype = "SmartProcess Accounting Settings"
+	if not frappe.db.exists("DocType", doctype):
+		return
+	present = frappe.db.get_singles_dict(doctype)
+	meta = frappe.get_meta(doctype)
+	for fieldname in ("enable_live_number_separator", "number_separator"):
+		df = meta.get_field(fieldname)
+		if not df or df.default is None or fieldname in present:
+			continue
+		# get_single_value() type-casts a missing row to 0/"" instead of None.
+		frappe.db.set_single_value(doctype, fieldname, df.default)
 
 
 def _ensure_standard_module():
