@@ -107,7 +107,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_receipt_header_types_and_supplementary_section_contract(self):
 		meta = frappe.get_meta("SmartProcess Accounting Document")
 		receiver = meta.get_field("receipt_receiver_kind")
-		self.assertEqual(receiver.default, "Customer")
+		self.assertEqual(receiver.default, "بانک")
 		for option in (
 			"Customer",
 			"Supplier",

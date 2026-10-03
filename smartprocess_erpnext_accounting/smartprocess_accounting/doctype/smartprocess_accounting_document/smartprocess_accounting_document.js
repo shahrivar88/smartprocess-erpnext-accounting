@@ -523,7 +523,8 @@ const receiptForm = {
 		}
 	},
 	async initializeReceiverType(frm) {
-		const receiverKind = frm.doc.receipt_receiver_kind || "Customer";
+		const defaultKind = frm.fields_dict.receipt_receiver_kind?.df?.default || "";
+		const receiverKind = frm.doc.receipt_receiver_kind || defaultKind;
 		if (frm.doc.receipt_receiver_kind !== receiverKind) {
 			await frm.set_value("receipt_receiver_kind", receiverKind);
 		}
