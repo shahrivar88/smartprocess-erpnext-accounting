@@ -20,7 +20,10 @@ class SmartProcessAccountingSettings(Document):
 			frappe.throw(_("جداکننده اعداد باید دقیقاً یک کاراکتر باشد."))
 		if separator.isdigit():
 			frappe.throw(_("جداکننده اعداد نمی‌تواند رقم باشد."))
-		if separator in "+-*/().":
+		# «.» is not hard-coded here: it is rejected only when it equals the site's
+		# real decimal separator (checked below from System Settings), so it stays
+		# valid as a thousands separator on sites whose decimal separator is «,».
+		if separator in "+-*/()":
 			frappe.throw(_("کاراکتر «{0}» به‌عنوان جداکننده اعداد مجاز نیست.").format(separator))
 		if separator in ("e", "E"):
 			frappe.throw(

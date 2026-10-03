@@ -162,7 +162,10 @@
 
 		// getConfig() must return the live settings object ({enabled, separator,
 		// decimal_str, group_str}); it is re-read on every event so a settings change
-		// after a form reload takes effect without re-attaching.
+		// after a form reload takes effect without re-attaching. attach() may run
+		// before the settings arrive (enabled is still 0): the parse wrapper and the
+		// input listener both re-check enabled live, so nothing changes the standard
+		// behavior until the feature is actually on.
 		function attach(control, getConfig) {
 			if (!control || typeof control.parse !== "function") {
 				return;
@@ -171,7 +174,11 @@
 				control.__sp_live_separator_parse = true;
 				const originalParse = control.parse;
 				control.parse = function (value) {
-					return originalParse.call(this, cleanNumericText(value, getConfig()));
+					const config = normalizedConfig(getConfig());
+					return originalParse.call(
+						this,
+						config.enabled ? cleanNumericText(value, config) : value,
+					);
 				};
 			}
 			const $input = control.$input;

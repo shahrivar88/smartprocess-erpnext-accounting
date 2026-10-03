@@ -17,7 +17,7 @@
   {"default":"6","fieldname":"exchange_rate_display_precision","fieldtype":"Int","label":"Exchange Rate Display Precision","non_negative":1},
   {"default":"0.01","fieldname":"base_currency_rounding_tolerance","fieldtype":"Float","label":"Base Currency Rounding Tolerance","precision":"9"},
   {"default":"1","description":"Show the thousands separator live while typing in Receipt amount/rate fields. Presentation only — stored values stay raw numbers.","fieldname":"enable_live_number_separator","fieldtype":"Check","label":"Enable Live Number Separator"},
-  {"default":",","description":"Exactly one character; not a digit, +, -, *, /, (, ), . or e/E, and not the site decimal separator. Examples: , or ٬ or a space.","fieldname":"number_separator","fieldtype":"Data","label":"Number Separator"},
+  {"default":",","description":"Exactly one character; not a digit, +, -, *, /, (, ) or e/E, and not the site decimal separator (a \".\" separator is valid when the site decimal separator is \",\").","fieldname":"number_separator","fieldtype":"Data","label":"Number Separator"},
   {"fieldname":"series_section","fieldtype":"Section Break","label":"Naming Series"},
   {"default":"SP-REC-.YYYY.-.#####","fieldname":"receipt_naming_series","fieldtype":"Data","label":"Receipt Naming Series","reqd":1},
   {"default":"SP-PAY-.YYYY.-.#####","fieldname":"payment_naming_series","fieldtype":"Data","label":"Payment Naming Series","reqd":1},

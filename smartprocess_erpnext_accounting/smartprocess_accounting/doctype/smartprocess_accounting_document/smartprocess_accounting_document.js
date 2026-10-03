@@ -210,9 +210,12 @@ function configureCompactNumberInput(control) {
 }
 
 function configureLiveNumberSeparatorInput(control, config) {
-	if (!control || !config?.enabled) {
+	if (!control || !config) {
 		return;
 	}
+	// attach() itself checks the live enabled flag on every event, so attaching
+	// before the settings arrive (enabled still 0) is safe and lets the feature
+	// switch on the moment the xcall resolves.
 	window.smartprocessAccounting?.numeric?.liveNumberSeparator?.attach(control, () => config);
 }
 
@@ -235,6 +238,8 @@ function ensureLiveNumberSeparator(frm) {
 			if (settings && typeof settings === "object") {
 				Object.assign(config, settings);
 			}
+			// Re-sweep after the settings land so any control created in between
+			// (new grid rows) is wired too; every attach is idempotent.
 			attachLiveNumberSeparatorInputs(frm);
 		})
 		.catch(() => {});
@@ -242,16 +247,26 @@ function ensureLiveNumberSeparator(frm) {
 
 function attachLiveNumberSeparatorInputs(frm) {
 	const config = frm.__sp_live_separator;
-	if (!config?.enabled) {
+	if (!config) {
 		return;
 	}
 	configureLiveNumberSeparatorInput(frm.fields_dict.receipt_payer_exchange_rate, config);
 	const grid = frm.fields_dict.operational_pairs?.grid;
 	for (const gridRow of grid?.grid_rows || []) {
-		for (const fieldname of LIVE_SEPARATOR_FIELDS) {
-			configureLiveNumberSeparatorInput(gridRow.on_grid_fields_dict?.[fieldname], config);
-			configureLiveNumberSeparatorInput(gridRow.grid_form?.fields_dict?.[fieldname], config);
-		}
+		configureReceiptGridRowLifecycle(gridRow);
+	}
+}
+
+// The row edit form (GridRowForm) is created lazily by GridRow.show_form and its
+// fields are built via frappe.ui.form.Layout, which bypasses gridRow.make_control —
+// so the one-shot sweeps never reach them. Attach the moment the form opens.
+function attachLiveNumberSeparatorToRowForm(gridRow) {
+	const config = gridRow.grid?.frm?.__sp_live_separator;
+	if (!config) {
+		return;
+	}
+	for (const fieldname of LIVE_SEPARATOR_FIELDS) {
+		configureLiveNumberSeparatorInput(gridRow.grid_form?.fields_dict?.[fieldname], config);
 	}
 }
 
@@ -477,12 +492,23 @@ function configureReceiptGridRowLifecycle(gridRow) {
 		};
 		gridRow.__sp_make_control = true;
 	}
+	if (!gridRow.__sp_show_form) {
+		gridRow.__sp_show_form = true;
+		const showForm = gridRow.show_form;
+		gridRow.show_form = function () {
+			showForm.call(this);
+			attachLiveNumberSeparatorToRowForm(this);
+		};
+	}
 	for (const fieldname of RECEIPT_NUMBER_FIELDS) {
 		configureCompactNumberInput(gridRow.on_grid_fields_dict?.[fieldname]);
 		configureCompactNumberInput(gridRow.grid_form?.fields_dict?.[fieldname]);
 	}
+	// Attach regardless of the current enabled snapshot: the per-control listeners
+	// re-read the live config on every event, so rows wired before the settings
+	// arrive still activate the separator as soon as the xcall resolves.
 	const liveSeparatorConfig = gridRow.grid?.frm?.__sp_live_separator;
-	if (liveSeparatorConfig?.enabled) {
+	if (liveSeparatorConfig) {
 		for (const fieldname of LIVE_SEPARATOR_FIELDS) {
 			configureLiveNumberSeparatorInput(gridRow.on_grid_fields_dict?.[fieldname], liveSeparatorConfig);
 			configureLiveNumberSeparatorInput(gridRow.grid_form?.fields_dict?.[fieldname], liveSeparatorConfig);
@@ -590,6 +616,9 @@ const receiptForm = {
 			return;
 		}
 		ensureLiveNumberSeparator(frm);
+		// Attach immediately with the lazy config object: the listeners activate
+		// the moment the settings xcall resolves, without waiting for it.
+		attachLiveNumberSeparatorInputs(frm);
 		await this.initializeReceiverType(frm);
 		await this.loadCurrencyOptions(frm);
 		await this.defaultReceiverCurrency(frm, frm.doc.company_currency || "");

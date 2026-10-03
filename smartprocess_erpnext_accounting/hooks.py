@@ -26,7 +26,7 @@ app_include_css = [
 ]
 
 app_include_js = [
-	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.8.3",
+	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.8.4",
 	"/assets/smartprocess_erpnext_accounting/js/smartprocess_receipt_stage.js?v=0.8.0",
 ]
 

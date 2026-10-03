@@ -6,6 +6,7 @@ def after_migrate():
 	_ensure_standard_module()
 	_ensure_workspace()
 	_ensure_workspace_sidebar()
+	_ensure_workspace_settings_link()
 	_ensure_doctype_app()
 	_ensure_financial_intermediary_party_type()
 	_ensure_number_separator_defaults()
@@ -52,6 +53,42 @@ def _ensure_workspace():
 	if frappe.get_meta("Workspace").has_field("app"):
 		values["app"] = "smartprocess_erpnext_accounting"
 	frappe.db.set_value("Workspace", "SmartProcess Accounting", values, update_modified=False)
+
+
+def _ensure_workspace_settings_link():
+	# Idempotent ensure of «تنظیمات حسابداری هوشمند» → SmartProcess Accounting Settings
+	# inside the module's own Workspace page (the links child table, not the sidebar).
+	workspace = frappe.db.exists("Workspace", "SmartProcess Accounting")
+	settings_doctype = frappe.db.exists("DocType", "SmartProcess Accounting Settings")
+	if not workspace or not settings_doctype:
+		return
+	doc = frappe.get_doc("Workspace", "SmartProcess Accounting")
+	link = next(
+		(row for row in (doc.links or []) if (row.link_to or "") == settings_doctype),
+		None,
+	)
+	label = "تنظیمات حسابداری هوشمند"
+	if link is None:
+		doc.append(
+			"links",
+			{
+				"label": label,
+				"type": "Link",
+				"link_type": "DocType",
+				"link_to": settings_doctype,
+				"onboard": 1,
+			},
+		)
+		doc.save()
+		return
+	if link.label != label:
+		frappe.db.set_value(
+			"Workspace Link",
+			link.name,
+			"label",
+			label,
+			update_modified=False,
+		)
 
 
 def _ensure_workspace_sidebar():
