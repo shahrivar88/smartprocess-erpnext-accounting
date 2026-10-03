@@ -9,6 +9,14 @@ const RECEIVER_ACCOUNT_TYPES = {
 	"صندوق": "Cash",
 	"سایر حساب‌ها": null,
 };
+// Display labels only — the stored values stay the native Party Type names
+// (receipt_payer_type links by DocType). Options order comes from the field metadata.
+const RECEIVER_KIND_LABELS = {
+	Customer: "مشتری",
+	Supplier: "تامین‌کننده",
+	"SmartProcess Financial Intermediary": "واسطه مالی",
+	Employee: "کارمند",
+};
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
@@ -574,6 +582,7 @@ const receiptForm = {
 		for (const [fieldname, label] of Object.entries(labels)) {
 			frm.set_df_property(fieldname, "label", label);
 		}
+		this.applyReceiverKindLabels(frm);
 		for (const fieldname of ["receipt_receiver_kind", "receipt_payer_currency"]) {
 			frm.toggle_display(fieldname, isReceipt);
 			frm.toggle_reqd(fieldname, isReceipt);
@@ -597,7 +606,8 @@ const receiptForm = {
 		const foreignPayer = isReceipt
 			&& frm.doc.receipt_payer_currency
 			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
-		frm.toggle_display("receipt_payer_exchange_rate", Boolean(foreignPayer));
+		// Rate visibility belongs to field metadata (Depends On / Customize Form);
+		// the currency only drives its required-ness and value.
 		frm.toggle_reqd("receipt_payer_exchange_rate", Boolean(foreignPayer));
 		frm.set_df_property(
 			"receipt_payer_exchange_rate",
@@ -612,6 +622,21 @@ const receiptForm = {
 		// General Reference is not part of the normal Receipt workflow; other operation
 		// types keep it (field and historical values untouched).
 		frm.toggle_display("general_reference", !isReceipt);
+	},
+	applyReceiverKindLabels(frm) {
+		const df = frm.fields_dict.receipt_receiver_kind?.df;
+		if (!df || Array.isArray(df.options)) {
+			return;
+		}
+		const values = String(df.options || "").split("\n").filter(Boolean);
+		if (!values.length) {
+			return;
+		}
+		frm.set_df_property(
+			"receipt_receiver_kind",
+			"options",
+			values.map((value) => ({ value, label: RECEIVER_KIND_LABELS[value] || value })),
+		);
 	},
 	configureGrid(frm, isReceipt) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
@@ -1095,7 +1120,9 @@ const receiptForm = {
 		if (currentCurrency && currentCurrency === frm.doc.company_currency) {
 			await frm.set_value("receipt_payer_exchange_rate", 1);
 		} else if (currentCurrency !== previousCurrency) {
-			await frm.set_value("receipt_payer_exchange_rate", "");
+			// Fresh foreign currency: 0 is only the UI default, never a valid
+			// accounting rate — the user must enter the real one.
+			await frm.set_value("receipt_payer_exchange_rate", 0);
 		}
 		await this.suggestPayerAccount(frm);
 		await this.recalculatePayerRows(frm);
