@@ -160,6 +160,13 @@ def get_receipt_receiver_total(doc: dict) -> dict | None:
 	try:
 		canonicalize_receipt(receipt)
 	except frappe.ValidationError:
+		# canonicalize_receipt raises via frappe.throw, which appends the message
+		# to frappe.local.message_log BEFORE raising. Catching the exception stops
+		# the error, but the appended message still leaks into the response's
+		# _server_messages and the client shows it as a popup on every mid-edit
+		# refresh. Drop the one leaked message so a mid-edit refresh stays silent
+		# and the form renders the summary as not-ready.
+		frappe.clear_last_message()
 		return None
 	amount = Decimal("0")
 	company_amount = Decimal("0")
