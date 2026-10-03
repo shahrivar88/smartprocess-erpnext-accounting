@@ -104,29 +104,19 @@
 	text-align: end;
 }
 
-.sp-receipt-receiver-total {
-	align-items: center;
-	background: var(--bg-color, #ffffff);
-	border: 1px solid var(--border-color, #d1d8dd);
-	border-radius: var(--border-radius-md, 8px);
-	display: flex;
-	flex-wrap: wrap;
-	font-size: var(--text-md);
-	gap: 0.5rem 1rem;
-	justify-content: space-between;
-	margin: 0.75rem 0 1rem;
-	padding: 0.6rem 0.75rem;
+/*
+ * The receiver total is a single aligned row directly under the 4-column
+ * summary table: it reuses the .sp-receipt-summary .table rules (fixed layout,
+ * 680px minimum, centered cells) so its columns sit exactly under the table's
+ * ارز / مجموع دریافت همان ارز / میانگین وزنی نرخ / جمع کل به ارز پایه columns.
+ */
+.sp-receipt-receiver-summary {
+	margin-top: 1.75rem;
 }
 
 .sp-receipt-receiver-title {
 	font-weight: var(--weight-bold, 600);
-}
-
-.sp-receipt-receiver-values {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem 1rem;
-	justify-content: flex-end;
+	margin-bottom: 0.5rem;
 }
 
 @media (max-width: 768px) {

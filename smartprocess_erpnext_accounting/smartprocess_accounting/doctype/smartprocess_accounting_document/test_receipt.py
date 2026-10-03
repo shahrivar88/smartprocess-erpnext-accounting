@@ -285,8 +285,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_currency_change_client_contract_clears_incompatible_account_and_rates(self):
 		source = self.client_source()
 		self.assertIn("details.account_currency !== row.receipt_currency", source)
-		self.assertIn('set_value(cdt, cdn, "credit_account", "")', source)
-		self.assertIn('frm.set_value("receipt_payer_exchange_rate", "")', source)
+		self.assertIn('setRowValueQuietly(cdt, cdn, "credit_account", "")', source)
+		self.assertIn('setRowValueQuietly(cdt, cdn, "credit_exchange_rate", "")', source)
 
 	def test_all_base_currency_client_contract_hides_fx_fields(self):
 		source = self.client_source()
@@ -302,8 +302,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_mixed_currency_grid_uses_uniform_fx_columns(self):
 		source = self.client_source()
 		self.assertIn("const hasForeign = (frm.doc.operational_pairs || []).some", source)
-		self.assertIn('["credit_exchange_rate", "columns", 1]', source)
-		self.assertIn('["credit_company_amount", "columns", 1]', source)
+		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
+		self.assertIn('["credit_company_amount", "columns", 3]', source)
 
 	def test_currency_changes_add_and_remove_refresh_grid_without_reload(self):
 		source = self.client_source()
@@ -373,8 +373,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 		source = self.client_source()
 		self.assertIn("const setupUserDefinedColumns = grid.setup_user_defined_columns", source)
 		self.assertIn("this.__sp_receipt_columns", source)
-		self.assertIn('["credit_exchange_rate", 1]', source)
-		self.assertIn('["credit_company_amount", 1]', source)
+		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
+		self.assertIn('["credit_company_amount", "columns", 3]', source)
 		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign))', source)
 
 	def test_cross_currency_requires_explicit_payer_rate(self):
@@ -493,6 +493,16 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_closed_date_group_fails_complete_parent_submit(self):
 		closed_date = getdate(nowdate())
 		open_date = getdate(add_days(closed_date, -1))
+		# Leftovers from an interrupted run would overlap the fresh period below
+		# and fail the insert before the finally can disable them. validate_overlap
+		# ignores the disabled flag, so even a correctly-disabled leftover blocks
+		# the insert: remove every test-owned period first (Receipt and Posting).
+		for leftover in frappe.get_all(
+			"Accounting Period",
+			filters={"period_name": ["like", "SP %"], "company": COMPANY},
+			pluck="name",
+		):
+			frappe.delete_doc("Accounting Period", leftover, force=True)
 		period = frappe.get_doc(
 			{
 				"doctype": "Accounting Period",
@@ -797,7 +807,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError) as context:
 			doc.validate()
 		message = str(context.exception)
-		self.assertIn("دو ارز", message)
+		# The canonical server message names the mismatched currency directly.
+		self.assertIn("ثبت به ارز XFA مجاز نیست", message)
 		self.assertIn(FOREIGN_A, message)
 		self.assertIn(FOREIGN_B, message)
 
@@ -805,13 +816,11 @@ class TestReceiptUX(V2IntegrationTestCase):
 		source = self.client_source()
 		for contract in (
 			"get_party_currency_context",
-			"syncReceiverPartyCurrency",
-			"enforceReceiverPartyLedger",
-			"syncReceiptRowCurrency",
 			"setProgrammaticReceiverCurrency",
 			"setRowReceiptCurrency",
-			"__sp_receiver_party_ledger",
-			"رکورد طرف حساب جداگانه",
+			"partyCurrencyMismatchMessage",
+			"rejectRowEntity",
+			"clearIncompatibleRowEntity",
 		):
 			self.assertIn(contract, source)
 
@@ -911,7 +920,10 @@ class TestReceiptUX(V2IntegrationTestCase):
 				"receipt_payer_exchange_rate": payer_rate,
 				"receipt_payer_type": payer_type,
 				"receipt_payer": payer,
-				"receipt_receiver_kind": receiver_kind,
+				# The field default «بانک» is injected server-side into any new Receipt
+			# that omits this field, which would wrongly turn a party receiver into
+			# a bank one: mirror the production fallback explicitly.
+			"receipt_receiver_kind": receiver_kind or payer_type,
 				"general_reference": frappe.generate_hash(length=10),
 				"operational_pairs": rows,
 			}

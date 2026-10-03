@@ -18,6 +18,17 @@ const RECEIVER_KIND_LABELS = {
 	Employee: "کارمند",
 };
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
+// Staged row progress (row.__sp_row_stage): only real user interactions advance
+// it — 1 ارز → 2 نوع → 3 طرف/حساب بانکی → 4 معین → 5 مبلغ → 6 نرخ. The numbers
+// come from the smartprocess_receipt_stage module (with a local fallback).
+const RECEIPT_ROW_STAGE = window.smartprocessAccounting?.receiptRowStage?.STAGE || {
+	CURRENCY: 1,
+	TYPE: 2,
+	ENTITY: 3,
+	ACCOUNT: 4,
+	AMOUNT: 5,
+	RATE: 6,
+};
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
 	"receipt_recipient_type",
@@ -88,20 +99,22 @@ function formatReceiptSummaryValue(value) {
 	);
 }
 
+// The receiver section mirrors the 4-column summary table (same fixed layout and
+// min-width) so the receiver values sit exactly under the same columns; the third
+// column carries the «نرخ ارز» concept (effective rate = base / receiver amount).
 function receiverTotalMarkup() {
-	return `<div class="sp-receipt-receiver-total">
+	return `<div class="sp-receipt-receiver-summary">
 		<div class="sp-receipt-receiver-title">مجموع واریزی به دریافت‌کننده</div>
-		<div class="sp-receipt-receiver-values text-muted">—</div>
+		<table class="table table-bordered sp-receipt-receiver-table">
+			<thead><tr><th>ارز</th><th>مجموع دریافت همان ارز</th><th>نرخ ارز</th><th>مجموع به ارز پایه</th></tr></thead>
+			<tbody><tr class="sp-receipt-receiver-values">${receiverTotalLine(null)}</tr></tbody>
+		</table>
 	</div>`;
 }
 
 function receiverTotalLine(message) {
-	const receiver = message.party ? `${message.account} · ${message.party}` : message.account;
-	return [
-		`<span class="sp-receipt-receiver-name">${frappe.utils.escape_html(receiver)}</span>`,
-		`<span class="sp-receipt-receiver-amount">${frappe.utils.escape_html(message.currency)} ${formatReceiptSummaryValue(Number(message.amount))}</span>`,
-		`<span class="sp-receipt-receiver-base">معادل ${formatReceiptSummaryValue(Number(message.company_amount))} ${frappe.utils.escape_html(message.company_currency)}</span>`,
-	].join(" | ");
+	const build = window.smartprocessAccounting?.receiptRowStage?.receiverSummaryCells;
+	return build ? build(message, formatReceiptSummaryValue) : "";
 }
 
 // A blank auto-created grid row is not user input: live logic ignores it until the
@@ -913,7 +926,6 @@ const receiptForm = {
 				this.showReceiverTotalNotReady(currentTarget);
 				return;
 			}
-			currentTarget.classList.remove("text-muted");
 			currentTarget.innerHTML = receiverTotalLine(message);
 		} catch (error) {
 			if (frm.__sp_receiver_total_request !== requestNumber) {
@@ -930,8 +942,7 @@ const receiptForm = {
 		}
 	},
 	showReceiverTotalNotReady(target) {
-		target.classList.add("text-muted");
-		target.innerHTML = "—";
+		target.innerHTML = receiverTotalLine(null);
 	},
 	configureGridRow(frm, row) {
 		const grid = frm.fields_dict.operational_pairs?.grid;
@@ -1504,15 +1515,76 @@ function partyCurrencyMismatchMessage(party, partyCurrency, targetCurrency) {
 	);
 }
 
+// One user action may raise at most one popup: this is the shared first-error
+// reporter for the staged row validation, focused on the offending field.
+function showRowStageIssue(frm, row, issue) {
+	const rows = frm.doc.operational_pairs || [];
+	const index = rows.findIndex((candidate) => candidate.name === row.name);
+	frappe.msgprint({
+		title: index < 0 ? __("ردیف دریافت") : __("ردیف دریافت {0}", [index + 1]),
+		message: issue[1],
+		indicator: "orange",
+	});
+	const gridRow = frm.fields_dict.operational_pairs?.grid?.grid_rows_by_docname?.[row.name];
+	if (gridRow && !gridRow.grid_form) {
+		gridRow.show_form();
+	}
+	const field = gridRow?.grid_form?.fields_dict?.[issue[0]] || gridRow?.on_grid_fields_dict?.[issue[0]];
+	if (field?.$input?.get(0)) {
+		field.$input.get(0).focus();
+	}
+}
+
+// Advances the row's explicit progress stage and returns true, or reports the
+// first relevant problem among the reached stages and returns false.
+function advanceRowStage(frm, row, stage) {
+	const module = window.smartprocessAccounting?.receiptRowStage;
+	if (!module) {
+		return true;
+	}
+	row.__sp_row_stage = Math.max(row.__sp_row_stage || 0, stage);
+	const issue = module.rowStageIssue(
+		row.__sp_row_stage,
+		row,
+		RECEIPT_RECIPIENT_TYPES,
+		frm.doc.company_currency,
+	);
+	if (issue) {
+		showRowStageIssue(frm, row, issue);
+		return false;
+	}
+	return true;
+}
+
+// Programmatic row writes (cascades, convenience fills, clears, Add Row copy)
+// never count as user entry: the change handlers skip the staged validation
+// while the flag is set.
+async function setRowValueQuietly(cdt, cdn, fieldname, value) {
+	const row = locals[cdt][cdn];
+	const previous = row.__sp_row_quiet;
+	row.__sp_row_quiet = true;
+	try {
+		await frappe.model.set_value(cdt, cdn, fieldname, value);
+	} finally {
+		row.__sp_row_quiet = previous;
+	}
+}
+
+function rowChangeUserInitiated(row) {
+	return !row.__sp_row_quiet && !row.__sp_receipt_copying;
+}
+
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {
+		// Receipt credit rows route here even when the account is being cleared, so
+		// the staged validation still runs for that user action.
+		if (frm.doc.operation_type === RECEIPT && side === "credit") {
+			return this.refreshReceiptAccount(frm, cdt, cdn);
+		}
 		const row = locals[cdt][cdn];
 		const account = row[`${side}_account`];
 		if (!account || !frm.doc.company) {
 			return;
-		}
-		if (frm.doc.operation_type === RECEIPT && side === "credit") {
-			return this.refreshReceiptAccount(frm, cdt, cdn);
 		}
 		const message = await getAccountDetails(account, frm.doc.company);
 		await frappe.model.set_value(cdt, cdn, `${side}_account_currency`, message.account_currency);
@@ -1525,17 +1597,25 @@ const spAccountingPair = {
 	},
 	async refreshReceiptAccount(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
+		if (!rowChangeUserInitiated(row)) {
+			return;
+		}
+		// The user is entering (or editing) the معین stage: every earlier stage must
+		// already be complete, and this stage must hold an account.
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.ACCOUNT)) {
+			return;
+		}
 		if (!row.credit_account) {
 			return;
 		}
 		const details = await getAccountDetails(row.credit_account, frm.doc.company);
 		if (details.account_currency !== row.receipt_currency) {
-			await frappe.model.set_value(cdt, cdn, "credit_account", "");
+			await setRowValueQuietly(cdt, cdn, "credit_account", "");
 			frappe.msgprint(__("ارز معین پرداخت‌کننده با ارز ردیف یکسان نیست."));
 			return;
 		}
-		await frappe.model.set_value(cdt, cdn, "credit_account_currency", details.account_currency);
-		await frappe.model.set_value(cdt, cdn, "company_currency", frm.doc.company_currency);
+		await setRowValueQuietly(cdt, cdn, "credit_account_currency", details.account_currency);
+		await setRowValueQuietly(cdt, cdn, "company_currency", frm.doc.company_currency);
 		await this.calculate(frm, cdt, cdn, "credit");
 	},
 	async calculate(frm, cdt, cdn, side) {
@@ -1607,20 +1687,21 @@ const spAccountingPair = {
 			return;
 		}
 		const row = locals[cdt][cdn];
-		if (row.__sp_receipt_copying) {
+		if (!rowChangeUserInitiated(row)) {
 			return;
 		}
 		// The user is starting to enter this row: the header must be staged-complete.
-		receiptForm.ensureHeaderReadyForRows(frm);
-		// Clearing receipt_recipient is a side effect of this one user action, not a
-		// second row entry: keep rowPartyChanged from re-running the header check.
-		row.__sp_row_party_guard = true;
-		try {
-			await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
-		} finally {
-			row.__sp_row_party_guard = false;
+		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
+			return;
 		}
-		await frappe.model.set_value(cdt, cdn, "credit_account", "");
+		// Type is the second stage: it validates the Currency choice too.
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.TYPE)) {
+			return;
+		}
+		// Clearing receipt_recipient and the معین are side effects of this one user
+		// action, not further row entries: the change handlers stay quiet.
+		await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
+		await setRowValueQuietly(cdt, cdn, "credit_account", "");
 		// Currency comes first in the row: default it only when the user has not
 		// chosen one; an existing choice (possibly foreign) is kept on Type change.
 		if (!row.receipt_currency) {
@@ -1634,11 +1715,17 @@ const spAccountingPair = {
 			return;
 		}
 		const row = locals[cdt][cdn];
-		if (row.__sp_receipt_copying || row.__sp_row_party_guard) {
+		if (!rowChangeUserInitiated(row)) {
 			return;
 		}
-		receiptForm.ensureHeaderReadyForRows(frm);
-		await frappe.model.set_value(cdt, cdn, "credit_account", "");
+		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
+			return;
+		}
+		// Entity is the third stage: Currency and Type must already be complete.
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.ENTITY)) {
+			return;
+		}
+		await setRowValueQuietly(cdt, cdn, "credit_account", "");
 		if (row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT) {
 			await this.applyRowBankAccount(frm, cdt, cdn);
 		} else {
@@ -1668,7 +1755,7 @@ const spAccountingPair = {
 		if (!row.receipt_currency && details.account_currency) {
 			await this.setRowReceiptCurrency(frm, cdt, cdn, details.account_currency);
 		}
-		await frappe.model.set_value(cdt, cdn, "credit_account", details.account);
+		await setRowValueQuietly(cdt, cdn, "credit_account", details.account);
 		await this.calculate(frm, cdt, cdn, "credit");
 	},
 	// The row Entity (Party or Account) must match the row currency chosen first.
@@ -1727,13 +1814,9 @@ const spAccountingPair = {
 	},
 	async rejectRowEntity(frm, cdt, cdn, message) {
 		const row = locals[cdt][cdn];
-		row.__sp_row_party_guard = true;
-		try {
-			await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
-		} finally {
-			row.__sp_row_party_guard = false;
-		}
-		await frappe.model.set_value(cdt, cdn, "credit_account", "");
+		row.__sp_row_entity_rejected = true;
+		await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
+		await setRowValueQuietly(cdt, cdn, "credit_account", "");
 		frappe.msgprint(message);
 	},
 	async setRowReceiptCurrency(frm, cdt, cdn, currency) {
@@ -1741,25 +1824,27 @@ const spAccountingPair = {
 		if (!currency || row.receipt_currency === currency) {
 			return;
 		}
-		row.__sp_receipt_currency_guard = true;
-		try {
-			await frappe.model.set_value(cdt, cdn, "receipt_currency", currency);
-		} finally {
-			row.__sp_receipt_currency_guard = false;
-		}
+		await setRowValueQuietly(cdt, cdn, "receipt_currency", currency);
 	},
 	async rowCurrencyChanged(frm, cdt, cdn) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
 		const row = locals[cdt][cdn];
-		if (!row.__sp_receipt_currency_guard) {
-			// Only a user-initiated row Currency choice starts (or continues) row entry.
-			receiptForm.ensureHeaderReadyForRows(frm);
-			// Currency is the first row choice: an Entity that does not match the new
-			// currency is cleared at once instead of reverting the currency.
-			await this.clearIncompatibleRowEntity(frm, cdt, cdn);
+		if (!rowChangeUserInitiated(row)) {
+			return this.applyRowCurrency(frm, cdt, cdn);
 		}
+		// Currency is the first row stage: only a user-initiated choice starts (or
+		// continues) row entry.
+		if (!receiptForm.ensureHeaderReadyForRows(frm)) {
+			return;
+		}
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.CURRENCY)) {
+			return this.applyRowCurrency(frm, cdt, cdn);
+		}
+		// Currency is the first row choice: an Entity that does not match the new
+		// currency is cleared at once instead of reverting the currency.
+		await this.clearIncompatibleRowEntity(frm, cdt, cdn);
 		return this.applyRowCurrency(frm, cdt, cdn);
 	},
 	async clearIncompatibleRowEntity(frm, cdt, cdn) {
@@ -1769,13 +1854,8 @@ const spAccountingPair = {
 		}
 		const entityCurrency = await this.rowEntityCurrencySafely(frm, cdt, cdn);
 		if (entityCurrency && entityCurrency !== row.receipt_currency) {
-			row.__sp_row_party_guard = true;
-			try {
-				await frappe.model.set_value(cdt, cdn, "receipt_recipient", "");
-			} finally {
-				row.__sp_row_party_guard = false;
-			}
-			await frappe.model.set_value(cdt, cdn, "credit_account", "");
+			await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
+			await setRowValueQuietly(cdt, cdn, "credit_account", "");
 		}
 	},
 	async rowEntityCurrencySafely(frm, cdt, cdn) {
@@ -1812,12 +1892,12 @@ const spAccountingPair = {
 		row.__sp_previous_receipt_currency = row.receipt_currency || "";
 		receiptForm.configureGrid(frm, true);
 		try {
-			await frappe.model.set_value(cdt, cdn, "credit_account_currency", row.receipt_currency || "");
+			await setRowValueQuietly(cdt, cdn, "credit_account_currency", row.receipt_currency || "");
 			if (changed && !row.__sp_receipt_copying) {
-				await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", "");
+				await setRowValueQuietly(cdt, cdn, "credit_exchange_rate", "");
 			}
 			if (row.receipt_currency === frm.doc.company_currency) {
-				await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", 1);
+				await setRowValueQuietly(cdt, cdn, "credit_exchange_rate", 1);
 			} else if (
 				!row.credit_exchange_rate
 				&& frm.doc.receipt_payer_currency
@@ -1826,12 +1906,12 @@ const spAccountingPair = {
 			) {
 				// Default-only: a row Rate the user already entered manually is never
 				// overwritten, and other foreign currencies keep their own rate.
-				await frappe.model.set_value(cdt, cdn, "credit_exchange_rate", frm.doc.receipt_payer_exchange_rate);
+				await setRowValueQuietly(cdt, cdn, "credit_exchange_rate", frm.doc.receipt_payer_exchange_rate);
 			}
 			if (row.credit_account) {
 				const details = await getAccountDetailsSafely(row.credit_account, frm.doc.company);
 				if (details && details.account_currency !== row.receipt_currency) {
-					await frappe.model.set_value(cdt, cdn, "credit_account", "");
+					await setRowValueQuietly(cdt, cdn, "credit_account", "");
 				}
 			}
 			await this.suggestReceiptAccount(frm, cdt, cdn);
@@ -1861,8 +1941,40 @@ const spAccountingPair = {
 			row.receipt_currency,
 		);
 		if (account && !row.credit_account) {
-			await frappe.model.set_value(cdt, cdn, "credit_account", account);
+			await setRowValueQuietly(cdt, cdn, "credit_account", account);
 		}
+	},
+	async creditAmountChanged(frm, cdt, cdn) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return this.calculate(frm, cdt, cdn, "credit");
+		}
+		const row = locals[cdt][cdn];
+		if (!rowChangeUserInitiated(row)) {
+			return this.calculate(frm, cdt, cdn, "credit");
+		}
+		// Amount is the fifth stage: ارز → نوع → طرف/بانک → معین must already be
+		// complete, and the entered Amount must be positive.
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.AMOUNT)) {
+			return;
+		}
+		return this.calculate(frm, cdt, cdn, "credit");
+	},
+	async creditRateChanged(frm, cdt, cdn) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return this.calculate(frm, cdt, cdn, "credit");
+		}
+		const row = locals[cdt][cdn];
+		// calculate() itself writes the Rate (1 for a base-currency row): that is a
+		// programmatic write, not the user entering the Rate stage.
+		if (!rowChangeUserInitiated(row) || row.__sp_calculating) {
+			return this.calculate(frm, cdt, cdn, "credit");
+		}
+		// The Rate stage matters for foreign-currency rows only; a base-currency
+		// row has a fixed Rate of 1.
+		if (!advanceRowStage(frm, row, RECEIPT_ROW_STAGE.RATE)) {
+			return;
+		}
+		return this.calculate(frm, cdt, cdn, "credit");
 	},
 	async copyPreviousReceiptRow(frm, cdt, cdn) {
 		if (frm.doc.operation_type !== RECEIPT) {
@@ -1934,4 +2046,9 @@ for (const side of ["debit", "credit"]) {
 	events[`${side}_party_type`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
 	events[`${side}_party`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
 }
+// The Amount and Rate stages exist for Receipt rows only: replace the generic
+// handlers with the staged wrappers so a user entry validates the reached
+// stages first (and reports at most the first relevant problem).
+events["credit_amount"] = (frm, cdt, cdn) => spAccountingPair.creditAmountChanged(frm, cdt, cdn);
+events["credit_exchange_rate"] = (frm, cdt, cdn) => spAccountingPair.creditRateChanged(frm, cdt, cdn);
 frappe.ui.form.on("SmartProcess Accounting Pair", events);

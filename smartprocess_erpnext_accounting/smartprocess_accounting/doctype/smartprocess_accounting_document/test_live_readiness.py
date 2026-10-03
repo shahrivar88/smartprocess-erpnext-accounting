@@ -210,6 +210,10 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 				"receipt_payer_exchange_rate": 1,
 				"receipt_payer_type": "Customer",
 				"receipt_payer": CUSTOMER_BASE_PARTY,
+				# Server-side defaults inject the JSON default «بانک» into any
+				# Receipt missing this field, which would reject the party
+				# receiver; mirror the production fallback (payer_type).
+				"receipt_receiver_kind": "Customer",
 				"operational_pairs": [
 					{
 						"receipt_recipient_type": "Account",

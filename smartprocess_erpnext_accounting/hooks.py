@@ -22,11 +22,12 @@ after_migrate = "smartprocess_erpnext_accounting.install.after_migrate"
 app_include_css = [
 	"/assets/smartprocess_erpnext_accounting/css/conversion_form.css",
 	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css",
-	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.8.2",
+	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.8.3",
 ]
 
 app_include_js = [
 	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.8.3",
+	"/assets/smartprocess_erpnext_accounting/js/smartprocess_receipt_stage.js?v=0.8.0",
 ]
 
 doctype_js = {

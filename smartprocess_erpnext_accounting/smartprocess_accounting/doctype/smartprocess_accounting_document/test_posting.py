@@ -423,6 +423,16 @@ class TestV2Posting(FrappeTestCase):
 			company.save()
 
 	def test_native_closed_accounting_period_protection_remains_active(self):
+		# Leftovers from an interrupted run would overlap the fresh period below
+		# and fail the insert before the finally can disable them. validate_overlap
+		# ignores the disabled flag, so even a correctly-disabled leftover blocks
+		# the insert: remove every test-owned period first (Receipt and Posting).
+		for leftover in frappe.get_all(
+			"Accounting Period",
+			filters={"period_name": ["like", "SP %"], "company": COMPANY},
+			pluck="name",
+		):
+			frappe.delete_doc("Accounting Period", leftover, force=True)
 		period = frappe.get_doc(
 			{
 				"doctype": "Accounting Period",

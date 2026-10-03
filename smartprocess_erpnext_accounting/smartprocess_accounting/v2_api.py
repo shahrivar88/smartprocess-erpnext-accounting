@@ -166,11 +166,22 @@ def get_receipt_receiver_total(doc: dict) -> dict | None:
 	for row in receipt.operational_pairs or []:
 		amount += to_decimal(row.debit_amount, _("Amount"))
 		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
+	# Effective receiver rate derived from the same canonical sums (never a second
+	# formula): 1 for a base-currency receiver, base / receiver amount for a
+	# foreign one, and "" (rendered as a placeholder) while the amount is not
+	# positive — division by zero is impossible.
+	if receipt.receipt_payer_currency == receipt.company_currency:
+		effective_rate = Decimal("1")
+	elif amount > 0:
+		effective_rate = company_amount / amount
+	else:
+		effective_rate = None
 	return {
 		"account": receipt.receipt_payer_account,
 		"party": receipt.receipt_payer or "",
 		"currency": receipt.receipt_payer_currency,
 		"amount": decimal_text(amount),
+		"effective_rate": decimal_text(effective_rate) if effective_rate is not None else "",
 		"company_amount": decimal_text(company_amount),
 		"company_currency": receipt.company_currency,
 	}

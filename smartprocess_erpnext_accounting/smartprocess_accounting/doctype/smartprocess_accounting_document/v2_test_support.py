@@ -73,6 +73,46 @@ def ensure_single_currency_parties() -> None:
 					"status": "Active",
 				}
 			).insert()
+		# The canonical Party-currency rule (resolve_party_currency) resolves an
+		# Employee from active GL only — Employee has no default_currency field and
+		# no Party Account mapping in this ERPNext version — so a fresh proof site
+		# can never post the Employee in FOREIGN_A. Seed one balanced XFA ledger
+		# pair (the history the original proof site held from real postings) so the
+		# Employee fixture is postable in FOREIGN_A without touching app code.
+		if not frappe.db.exists(
+			"GL Entry",
+			{
+				"party_type": "Employee",
+				"party": EMPLOYEE_A,
+				"account_currency": FOREIGN_A,
+				"is_cancelled": 0,
+			},
+		):
+			voucher_no = f"SP SC Fixture {frappe.generate_hash(length=8)}"
+			for account, debit in ((PAYABLE_A, 0), (BASE_CLEARING, 100)):
+				entry = frappe.get_doc(
+					{
+						"doctype": "GL Entry",
+						"posting_date": nowdate(),
+						"account": account,
+						"account_currency": frappe.get_cached_value("Account", account, "account_currency"),
+						"debit": debit,
+						"credit": 100 - debit,
+						"debit_in_account_currency": debit,
+						"credit_in_account_currency": 100 - debit,
+						"company": COMPANY,
+						"voucher_type": "Journal Entry",
+						"voucher_no": voucher_no,
+						"party_type": "Employee" if account == PAYABLE_A else None,
+						"party": EMPLOYEE_A if account == PAYABLE_A else None,
+						"against": BASE_CLEARING if account == PAYABLE_A else PAYABLE_A,
+					}
+				)
+				# The synthetic voucher name has no source document; skip the
+				# Dynamic Link check (the fixture models pre-existing history).
+				entry.flags.ignore_links = True
+				entry.insert(ignore_permissions=True)
+				entry.db_set("docstatus", 1)
 	finally:
 		frappe.flags.in_import = False
 	frappe.db.commit()

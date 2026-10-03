@@ -85,16 +85,26 @@ class TestSmartProcessAccountingDocument(FrappeTestCase):
 		self.assertEqual(Decimal(str(doc.operational_pairs[1].credit_exchange_rate)), Decimal("20"))
 
 	def test_draft_save_and_blocked_submit_do_not_post(self):
-		gl_before = frappe.db.count("GL Entry")
-		ple_before = frappe.db.count("Payment Ledger Entry")
-		doc = self._document().insert()
-		self.assertEqual(doc.docstatus, 0)
-		self.assertEqual(frappe.db.count("GL Entry"), gl_before)
-		self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
-		with self.assertRaisesRegex(frappe.ValidationError, "V2 posting is disabled"):
-			doc.submit()
-		self.assertEqual(frappe.db.count("GL Entry"), gl_before)
-		self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
+		# The gate must be off for this test regardless of what other suites left
+		# in the persisted settings Single (suite order is not guaranteed).
+		settings = frappe.get_single("SmartProcess Accounting Settings")
+		previous = settings.enable_v2_posting
+		settings.enable_v2_posting = 0
+		settings.save()
+		try:
+			gl_before = frappe.db.count("GL Entry")
+			ple_before = frappe.db.count("Payment Ledger Entry")
+			doc = self._document().insert()
+			self.assertEqual(doc.docstatus, 0)
+			self.assertEqual(frappe.db.count("GL Entry"), gl_before)
+			self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
+			with self.assertRaisesRegex(frappe.ValidationError, "V2 posting is disabled"):
+				doc.submit()
+			self.assertEqual(frappe.db.count("GL Entry"), gl_before)
+			self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
+		finally:
+			settings.enable_v2_posting = previous
+			settings.save()
 
 	def test_mapping_identity_is_unique(self):
 		existing = frappe.db.get_value(

@@ -45,7 +45,21 @@ class SmartProcessAccountingDocument(AccountsController):
 		self.naming_series = self._configured_series()
 
 	def validate(self):
+		if self.operation_type == "Receipt" and self._is_incremental_form_update():
+			# Mid-edit incremental update (frappe.client.set_value, which saves the
+			# whole document — also for child-row changes): the strict full-document
+			# canonicalization would validate rows and stages the user has not
+			# reached yet and pop up errors on every grid change / Add Row. Staged
+			# client-side validation drives the entry UX instead. Save and Submit
+			# stay strict: savedocs and frappe.client.submit (and every server-side
+			# flow without an HTTP command) still run the full validation, and
+			# before_submit always calls _validate_accounting directly.
+			return
 		self._validate_accounting()
+
+	def _is_incremental_form_update(self):
+		form_dict = getattr(frappe.local, "form_dict", None)
+		return bool(form_dict) and form_dict.get("cmd") == "frappe.client.set_value"
 
 	def before_submit(self):
 		require_posting_enabled()
