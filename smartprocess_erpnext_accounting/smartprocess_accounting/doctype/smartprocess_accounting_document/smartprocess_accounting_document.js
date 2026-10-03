@@ -617,7 +617,6 @@ const receiptForm = {
 		if (isReceipt) {
 			configureCompactNumberInput(frm.fields_dict.receipt_payer_exchange_rate);
 		}
-		this.updatePayerRateMeaning(frm);
 		frm.toggle_display("company_currency", !isReceipt);
 		// General Reference is not part of the normal Receipt workflow; other operation
 		// types keep it (field and historical values untouched).
@@ -1141,17 +1140,8 @@ const receiptForm = {
 			// right stage to check the Account against the Receiver Currency.
 			await this.ensurePayerAccountCurrency(frm, true);
 		}
-		this.updatePayerRateMeaning(frm);
 		await this.recalculatePayerRows(frm);
 		this.renderSummary(frm);
-	},
-	updatePayerRateMeaning(frm) {
-		const currency = frm.doc.receipt_payer_currency;
-		const rate = Number(frm.doc.receipt_payer_exchange_rate || 0);
-		const meaning = currency && frm.doc.company_currency && rate > 0
-			? `1 ${currency} = ${rate} ${frm.doc.company_currency}`
-			: "";
-		frm.set_df_property("receipt_payer_exchange_rate", "description", meaning);
 	},
 	// Staged header readiness, in interaction order: ارز → نوع دریافت‌کننده →
 	// دریافت‌کننده → نرخ (foreign only) → معین. Returns null when the header is
