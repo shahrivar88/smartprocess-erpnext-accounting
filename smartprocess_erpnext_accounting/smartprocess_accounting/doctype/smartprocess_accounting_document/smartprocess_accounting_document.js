@@ -1702,8 +1702,9 @@ const spAccountingPair = {
 		}
 		const details = await getAccountDetails(row.credit_account, frm.doc.company);
 		if (details.account_currency !== row.receipt_currency) {
+			// Change handlers never raise validation popups: an incompatible pick is
+			// rejected quietly here; Add Row/Save report the first missing field.
 			await setRowValueQuietly(cdt, cdn, "credit_account", "");
-			frappe.msgprint(__("ارز معین پرداخت‌کننده با ارز ردیف یکسان نیست."));
 			return;
 		}
 		await setRowValueQuietly(cdt, cdn, "credit_account_currency", details.account_currency);
@@ -1821,12 +1822,7 @@ const spAccountingPair = {
 		// The Bank Account list is filtered by the row currency, so a mismatch here
 		// is stale state: reject the Bank Account instead of changing the currency.
 		if (row.receipt_currency && details.account_currency && row.receipt_currency !== details.account_currency) {
-			await this.rejectRowEntity(
-				frm,
-				cdt,
-				cdn,
-				__("حساب بانکی انتخاب‌شده با ارز ردیف یکسان نیست."),
-			);
+			await this.rejectRowEntity(frm, cdt, cdn);
 			return;
 		}
 		if (!row.receipt_currency && details.account_currency) {
@@ -1852,12 +1848,7 @@ const spAccountingPair = {
 			}
 			if (row.receipt_currency) {
 				if (row.receipt_currency !== accountCurrency) {
-					await this.rejectRowEntity(
-						frm,
-						cdt,
-						cdn,
-						__("حساب انتخاب‌شده با ارز ردیف یکسان نیست."),
-					);
+					await this.rejectRowEntity(frm, cdt, cdn);
 				}
 				return;
 			}
@@ -1878,23 +1869,17 @@ const spAccountingPair = {
 		}
 		if (row.receipt_currency) {
 			if (row.receipt_currency !== currency) {
-				await this.rejectRowEntity(
-					frm,
-					cdt,
-					cdn,
-					partyCurrencyMismatchMessage(row.receipt_recipient, currency, row.receipt_currency),
-				);
+				await this.rejectRowEntity(frm, cdt, cdn);
 			}
 			return;
 		}
 		await this.setRowReceiptCurrency(frm, cdt, cdn, currency);
 	},
-	async rejectRowEntity(frm, cdt, cdn, message) {
+	async rejectRowEntity(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
 		row.__sp_row_entity_rejected = true;
 		await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
 		await setRowValueQuietly(cdt, cdn, "credit_account", "");
-		frappe.msgprint(message);
 	},
 	async setRowReceiptCurrency(frm, cdt, cdn, currency) {
 		const row = locals[cdt][cdn];
