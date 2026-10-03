@@ -96,19 +96,24 @@ def _ensure_workspace_sidebar():
 	if not frappe.db.exists("Workspace Sidebar", name):
 		return
 	doc = frappe.get_doc("Workspace Sidebar", name)
-	if any((row.link_to or "") == "party-account-explorer" for row in doc.items):
-		return
-	doc.append(
-		"items",
-		{
-			"label": "گردش و مانده طرف حساب",
-			"type": "Link",
-			"link_type": "Page",
-			"link_to": "party-account-explorer",
-			"icon": "list",
-		},
-	)
-	doc.save()
+	changed = False
+	# The module's right-hand sidebar is built from the Workspace Sidebar doc
+	# (frappe/desk/doctype/workspace_sidebar), not from the Workspace links table.
+	# Frappe's get_can_read_items() permission-filters each item by the linked
+	# doctype, so the Settings item follows the Settings doctype's own permission.
+	for label, link_type, link_to, icon in (
+		("گردش و مانده طرف حساب", "Page", "party-account-explorer", "list"),
+		("تنظیمات حسابداری هوشمند", "DocType", "SmartProcess Accounting Settings", None),
+	):
+		if any((row.link_to or "") == link_to for row in doc.items):
+			continue
+		item = {"label": label, "type": "Link", "link_type": link_type, "link_to": link_to}
+		if icon:
+			item["icon"] = icon
+		doc.append("items", item)
+		changed = True
+	if changed:
+		doc.save()
 
 
 def _ensure_financial_intermediary_party_type():

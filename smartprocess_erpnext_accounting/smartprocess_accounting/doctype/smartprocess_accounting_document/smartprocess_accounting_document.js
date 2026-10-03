@@ -399,7 +399,10 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		for (const row of frm.doc.operational_pairs || []) {
 			await frappe.model.set_value(row.doctype, row.name, "company_currency", message || "");
 			if (frm.doc.operation_type === RECEIPT) {
-				await frappe.model.set_value(row.doctype, row.name, "credit_account", "");
+				// A programmatic clear must not run the معین stage validation: at load
+				// (the company default fires this trigger) the empty placeholder row
+				// would otherwise surface a staged-validation popup.
+				await setRowValueQuietly(row.doctype, row.name, "credit_account", "");
 			}
 		}
 		if (frm.doc.operation_type === RECEIPT) {
