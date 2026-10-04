@@ -1143,7 +1143,7 @@ const receiptForm = {
 		gridRow.toggle_display("receipt_recipient", row.receipt_recipient_type !== ACCOUNT_RECIPIENT);
 		gridRow.toggle_display("credit_exchange_rate", hasForeign);
 		gridRow.toggle_display("credit_company_amount", hasForeign);
-		gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign));
+		gridRow.toggle_editable("credit_exchange_rate", false);
 		gridRow.toggle_display("credit_rate_direction", Boolean(foreign));
 		gridRow.toggle_display("credit_description", true);
 		gridRow.toggle_display("receipt_payer_exchange_rate", false);

@@ -1,291 +1,121 @@
-"""Receipt UI input canonicalization into the existing balanced Pair contract."""
+"""Receipt canonicalization into the existing balanced Pair contract.
+
+Header receiver = Debit, row payers = Credit, all in one transaction currency.
+See ``receipt_contract`` for the contract and ``receipt_builder`` for the rules.
+"""
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
-
 import frappe
 from frappe import _
-from frappe.model.meta import get_field_precision
-from frappe.utils import getdate
+from frappe.utils import escape_html
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
-from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
-	ALLOWED_PARTY_TYPES,
-	assert_one_currency_per_party,
-	get_accounts,
-	get_company_currency,
-	validate_account,
-	validate_party,
-	validate_party_ledger_currency,
+from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_builder import ReceiptBuilder
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import (
+	ACCOUNT_RECIPIENT,
+	BANK_ACCOUNT_RECIPIENT,
+	PAYER_TYPES,
+	CanonicalReceipt,
+	CanonicalRow,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups
+
+__all__ = (
+	"ACCOUNT_RECIPIENT",
+	"BANK_ACCOUNT_RECIPIENT",
+	"PAYER_TYPES",
+	"ReceiptValidationError",
+	"build_canonical_receipt",
+	"canonicalize_receipt",
+	"receipt_summary",
 )
 
 
-ACCOUNT_RECIPIENT = "Account"
-BANK_ACCOUNT_RECIPIENT = "Bank Account"
-ACCOUNT_RECEIVER_TYPES = {
-	"بانک": "Bank",
-	"صندوق": "Cash",
-	"سایر حساب‌ها": None,
-}
+class ReceiptValidationError(frappe.ValidationError):
+	pass
 
 
-def canonicalize_receipt(doc) -> None:
-	"""Rebuild both accounting sides from trusted masters when the operation is Receipt."""
+def build_canonical_receipt(doc, lookups: ReceiptLookups | None = None) -> CanonicalReceipt:
+	"""Collect every Receipt issue without raising or writing; safe for previews."""
+	return ReceiptBuilder(doc, lookups or ReceiptLookups()).build()
+
+
+def canonicalize_receipt(doc, lookups: ReceiptLookups | None = None) -> CanonicalReceipt | None:
+	"""Strict mode: reject any issue, then write the canonical Pair sides onto ``doc``."""
 	if doc.operation_type != "Receipt":
-		return
+		return None
+	receipt = build_canonical_receipt(doc, lookups)
+	if not receipt.ready:
+		_raise_issues(receipt)
+	_apply_receipt(doc, receipt)
+	return receipt
 
-	company_currency = get_company_currency(doc.company)
-	doc.company_currency = company_currency
-	rows = doc.operational_pairs or []
-	_validate_receipt_currencies(doc, rows)
-	account_names = {doc.receipt_payer_account}
-	account_names.update(row.get("credit_account") for row in rows)
-	account_names.discard(None)
-	account_names.discard("")
-	account_details = get_accounts(account_names)
-	accounts = {
-		name: validate_account(name, doc.company, account_details.get(name))
-		for name in account_names
+
+def receipt_summary(receipt: CanonicalReceipt) -> dict:
+	"""JSON-safe preview of the canonical Receipt; totals cover valid rows only."""
+	rate = receipt.exchange_rate
+	return {
+		"ready": receipt.ready,
+		"issues": [issue.as_dict() for issue in receipt.issues],
+		"transaction_currency": receipt.transaction_currency,
+		"transaction_total": decimal_text(receipt.transaction_total),
+		"company_currency": receipt.company_currency,
+		"company_total": decimal_text(receipt.company_total),
+		"exchange_rate": decimal_text(rate) if rate is not None else None,
+		"receiver_account": receipt.receiver.account if receipt.receiver else None,
+		"receiver_party": receipt.receiver.party if receipt.receiver else None,
 	}
-	party_currency_entries = []
-	receiver = _validate_receiver(doc, accounts, party_currency_entries)
-	receiver_rate = _receiver_exchange_rate(doc, receiver, company_currency)
-	precision = _company_currency_precision(company_currency)
-	if not rows:
-		frappe.throw(_("حداقل یک ردیف دریافت لازم است."))
-
-	for number, row in enumerate(rows, start=1):
-		canonicalize_receipt_row(
-			doc,
-			row,
-			number,
-			receiver,
-			company_currency,
-			precision,
-			accounts,
-			party_currency_entries,
-			receiver_rate,
-		)
-	assert_one_currency_per_party(party_currency_entries)
 
 
-def canonicalize_receipt_row(
-	doc,
-	row,
-	number: int,
-	receiver,
-	company_currency: str,
-	precision: int,
-	accounts: dict,
-	party_currency_entries: list,
-	receiver_rate: Decimal,
-) -> None:
-	payer_type = row.get("receipt_recipient_type")
-	payer = row.get("receipt_recipient")
-	receipt_currency = row.get("receipt_currency")
-	if payer_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT):
-		_receipt_error(number, _("نوع پرداخت‌کننده"), _("یک نوع پرداخت‌کننده معتبر انتخاب کنید."))
-	if not receipt_currency:
-		_receipt_error(number, _("ارز"), _("ارز ردیف الزامی است."))
+def _apply_receipt(doc, receipt: CanonicalReceipt) -> None:
+	receiver = receipt.receiver
+	doc.company_currency = receipt.company_currency
+	doc.receipt_payer_exchange_rate = decimal_text(receipt.exchange_rate)
+	doc.receipt_payer_account = receiver.account
+	doc.receipt_payer_type = receiver.party_type
+	doc.receipt_payer = receiver.party
+	doc.receipt_bank_account = receiver.bank_account
+	for row, canonical in zip(doc.operational_pairs, receipt.rows, strict=True):
+		_apply_row(row, canonical, receipt)
 
-	account = accounts.get(row.get("credit_account"))
-	if not account:
-		_receipt_error(number, _("معین پرداخت‌کننده"), _("یک معین معتبر انتخاب کنید."))
-	if account.account_currency != receipt_currency:
-		_receipt_error(
-			number,
-			_("معین پرداخت‌کننده"),
-			_("ارز حساب انتخاب‌شده با ارز ردیف یکسان نیست."),
-		)
 
-	if payer_type == BANK_ACCOUNT_RECIPIENT:
-		if not payer:
-			_receipt_error(number, _("حساب بانکی"), _("حساب بانکی الزامی است."))
-		_validate_row_bank_account(number, payer, doc.company, account)
-		row.credit_party_type = None
-		row.credit_party = None
-		validate_party(None, None, account.account_type)
-	elif payer_type == ACCOUNT_RECIPIENT:
-		row.credit_party_type = None
-		row.credit_party = None
-		validate_party(None, None, account.account_type)
-	else:
-		if not payer:
-			_receipt_error(number, _("نام پرداخت‌کننده"), _("پرداخت‌کننده الزامی است."))
-		_validate_party_account(payer_type, payer, doc.company, account)
-		row.credit_party_type = payer_type
-		row.credit_party = payer
-		party_currency_entries.append(
-			(payer_type, payer, receipt_currency, _("ردیف {0}").format(number))
-		)
-
-	credit_amount = to_decimal(row.get("credit_amount"), _("مبلغ"))
-	if credit_amount <= 0:
-		_receipt_error(number, _("مبلغ"), _("مبلغ باید بزرگ‌تر از صفر باشد."))
-	credit_rate = Decimal("1") if receipt_currency == company_currency else to_decimal(
-		row.get("credit_exchange_rate"), _("نرخ")
+def _apply_row(row, canonical: CanonicalRow, receipt: CanonicalReceipt) -> None:
+	receiver = receipt.receiver
+	currency = receipt.transaction_currency
+	amount = decimal_text(canonical.amount)
+	rate = decimal_text(receipt.exchange_rate)
+	company_amount = decimal_text(canonical.company_amount)
+	row.update(
+		{
+			"receipt_currency": currency,
+			"receipt_posting_date": canonical.posting_date,
+			"receipt_payer_exchange_rate": None,
+			"company_currency": receipt.company_currency,
+			"credit_account": canonical.account,
+			"credit_party_type": canonical.party_type,
+			"credit_party": canonical.party,
+			"credit_account_currency": currency,
+			"credit_amount": amount,
+			"credit_exchange_rate": rate,
+			"credit_company_amount": company_amount,
+			"debit_account": receiver.account,
+			"debit_party_type": receiver.party_type,
+			"debit_party": receiver.party,
+			"debit_account_currency": currency,
+			"debit_amount": amount,
+			"debit_exchange_rate": rate,
+			"debit_company_amount": company_amount,
+			"debit_suggested_account": None,
+			"debit_description": row.get("credit_description"),
+		}
 	)
-	if credit_rate <= 0:
-		_receipt_error(number, _("نرخ"), _("نرخ باید بزرگ‌تر از صفر باشد."))
-	company_amount = _round_company_amount(credit_amount, credit_rate, precision)
-	if company_amount <= 0:
-		_receipt_error(number, _("مبلغ ارز پایه"), _("مبلغ ارز پایه باید بزرگ‌تر از صفر بماند."))
-
-	row.company_currency = company_currency
-	row.credit_account_currency = account.account_currency
-	row.credit_exchange_rate = decimal_text(credit_rate)
-	row.credit_company_amount = decimal_text(company_amount)
-	row.debit_account = receiver.name
-	row.debit_party_type = doc.receipt_payer_type
-	row.debit_party = doc.receipt_payer
-	row.debit_account_currency = receiver.account_currency
-	row.debit_suggested_account = None
-	row.debit_description = row.get("credit_description")
-	row.receipt_posting_date = getdate(row.get("receipt_posting_date") or doc.posting_date)
-	row.receipt_payer_exchange_rate = None
-
-	receiver_amount = (
-		company_amount
-		if receiver.account_currency == company_currency
-		else company_amount / receiver_rate
-	)
-
-	row.debit_amount = decimal_text(receiver_amount)
-	row.debit_exchange_rate = decimal_text(receiver_rate)
-	row.debit_company_amount = decimal_text(company_amount)
+	if canonical.payer_type == ACCOUNT_RECIPIENT:
+		row.receipt_recipient = None
 
 
-def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
-	receiver_kind = doc.get("receipt_receiver_kind") or doc.receipt_payer_type
-	for value, label in (
-		(receiver_kind, _("نوع دریافت‌کننده")),
-		(doc.receipt_payer_currency, _("ارز دریافت‌کننده")),
-		(doc.receipt_payer_account, _("معین دریافت‌کننده")),
-	):
-		if not value:
-			frappe.throw(_("{0} الزامی است.").format(label))
-	if receiver_kind not in (*ALLOWED_PARTY_TYPES, *ACCOUNT_RECEIVER_TYPES):
-		frappe.throw(_("نوع دریافت‌کننده انتخاب‌شده مجاز نیست."))
-	if receiver_kind == "بانک":
-		_validate_receiver_bank_account(doc)
-	elif doc.get("receipt_bank_account"):
-		doc.receipt_bank_account = None
-
-	account = accounts.get(doc.receipt_payer_account)
-	if not account:
-		frappe.throw(_("یک معین دریافت‌کننده معتبر انتخاب کنید."))
-	if account.account_currency != doc.receipt_payer_currency:
-		frappe.throw(_("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."))
-	if receiver_kind in ACCOUNT_RECEIVER_TYPES:
-		_validate_account_receiver(receiver_kind, account)
-		doc.receipt_receiver_kind = receiver_kind
-		doc.receipt_payer_type = None
-		doc.receipt_payer = None
-		return account
-	if not doc.receipt_payer:
-		frappe.throw(_("دریافت‌کننده الزامی است."))
-	doc.receipt_receiver_kind = receiver_kind
-	doc.receipt_payer_type = receiver_kind
-	_validate_party_account(doc.receipt_payer_type, doc.receipt_payer, doc.company, account)
-	party_currency_entries.append(
-		(doc.receipt_payer_type, doc.receipt_payer, doc.receipt_payer_currency, _("دریافت‌کننده"))
-	)
-	return account
-
-
-def _validate_receiver_bank_account(doc) -> None:
-	bank_account = doc.get("receipt_bank_account")
-	if not bank_account:
-		return
-	if not _is_company_bank_account(bank_account, doc.company):
-		frappe.throw(_("حساب بانکی دریافت‌کننده باید یک حساب بانکی شرکت انتخاب‌شده باشد."))
-
-
-def _validate_row_bank_account(number: int, bank_account: str, company: str, account) -> None:
-	if account.account_type != "Bank":
-		_receipt_error(
-			number,
-			_("معین پرداخت‌کننده"),
-			_("برای حساب بانکی، معین پرداخت‌کننده باید یک حساب بانکی باشد."),
-		)
-	if not _is_company_bank_account(bank_account, company):
-		_receipt_error(number, _("حساب بانکی"), _("حساب بانکی انتخاب‌شده متعلق به شرکت نیست."))
-
-
-def _is_company_bank_account(bank_account: str, company: str) -> bool:
-	details = frappe.get_cached_value(
-		"Bank Account",
-		bank_account,
-		["company", "is_company_account"],
-		as_dict=True,
-	)
-	return bool(details) and details.company == company and bool(details.is_company_account)
-
-
-def _validate_account_receiver(receiver_kind, account) -> None:
-	required_account_type = ACCOUNT_RECEIVER_TYPES[receiver_kind]
-	if required_account_type and account.account_type != required_account_type:
-		frappe.throw(
-			_("نوع حساب معین دریافت‌کننده باید {0} باشد.").format(required_account_type)
-		)
-	if receiver_kind == "سایر حساب‌ها" and account.account_type in (
-		"Bank",
-		"Cash",
-		"Receivable",
-		"Payable",
-	):
-		frappe.throw(_("برای سایر حساب‌ها، یک حساب معتبر غیر بانکی، غیر صندوق و غیر طرف حساب انتخاب کنید."))
-	validate_party(None, None, account.account_type)
-
-
-def _validate_receipt_currencies(doc, rows) -> None:
-	currencies = {doc.receipt_payer_currency}
-	currencies.update(row.get("receipt_currency") for row in rows)
-	currencies.discard(None)
-	currencies.discard("")
-	enabled = set(
-		frappe.get_all(
-			"Currency",
-			filters={"enabled": 1, "name": ["in", sorted(currencies)]},
-			pluck="name",
-		)
-	)
-	if doc.receipt_payer_currency and doc.receipt_payer_currency not in enabled:
-		frappe.throw(_("ارز دریافت‌کننده باید یک ارز فعال و معتبر باشد."))
-	for number, row in enumerate(rows, start=1):
-		currency = row.get("receipt_currency")
-		if currency and currency not in enabled:
-			_receipt_error(number, _("ارز"), _("ارز ردیف باید فعال و معتبر باشد."))
-
-
-def _receiver_exchange_rate(doc, receiver, company_currency: str) -> Decimal:
-	if receiver.account_currency == company_currency:
-		rate = Decimal("1")
-	else:
-		rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
-		if rate <= 0:
-			frappe.throw(
-				_("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
-			)
-	doc.receipt_payer_exchange_rate = decimal_text(rate)
-	return rate
-
-
-def _validate_party_account(party_type, party, company, account) -> None:
-	validate_party(party_type, party, account.account_type)
-	validate_party_ledger_currency(party_type, party, company, account.account_currency)
-
-
-def _round_company_amount(amount: Decimal, rate: Decimal, precision: int) -> Decimal:
-	quantizer = Decimal("1").scaleb(-precision)
-	return (amount * rate).quantize(quantizer, rounding=ROUND_HALF_UP)
-
-
-def _company_currency_precision(currency: str) -> int:
-	field = frappe.get_meta("GL Entry").get_field("debit")
-	return get_field_precision(field, currency=currency)
-
-
-def _receipt_error(number: int, field: str, problem: str) -> None:
-	frappe.throw(_("ردیف دریافت {0} · {1}: {2}").format(number, field, problem))
+def _raise_issues(receipt: CanonicalReceipt) -> None:
+	issues = receipt.issues
+	exception = frappe.PermissionError if any(issue.permission for issue in issues) else ReceiptValidationError
+	message = "<br>".join(escape_html(issue.text()) for issue in issues) or _("رسید کامل نیست.")
+	frappe.throw(message, exception, title=_("رسید معتبر نیست"))

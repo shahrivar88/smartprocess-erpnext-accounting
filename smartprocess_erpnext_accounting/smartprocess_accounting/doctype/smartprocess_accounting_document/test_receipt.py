@@ -83,25 +83,35 @@ class TestReceiptUX(V2IntegrationTestCase):
 
 	def test_header_account_receiver_uses_real_account_without_fake_party(self):
 		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 100)],
+			payer_currency=BASE,
+			payer_account=BASE_CLEARING,
+			receiver_kind="سایر حساب‌ها",
+		)
+		doc.validate()
+		row = doc.operational_pairs[0]
+		self.assertEqual(row.debit_account, BASE_CLEARING)
+		self.assertFalse(row.debit_party_type)
+		self.assertFalse(row.debit_party)
+
+	def test_bank_receiver_requires_company_bank_account(self):
+		doc = self.receipt(
 			[self.receipt_row(BASE_CLEARING, BASE, 100)],
 			payer_currency=BASE,
 			payer_account=BASE_BANK,
 			receiver_kind="بانک",
 		)
-		doc.validate()
-		row = doc.operational_pairs[0]
-		self.assertEqual(row.debit_account, BASE_BANK)
-		self.assertFalse(row.debit_party_type)
-		self.assertFalse(row.debit_party)
+		with self.assertRaisesRegex(frappe.ValidationError, "حساب بانکی شرکت الزامی است"):
+			doc.validate()
 
 	def test_header_account_receiver_category_is_enforced(self):
 		doc = self.receipt(
 			[self.receipt_row(BASE_CLEARING, BASE, 100)],
 			payer_currency=BASE,
-			payer_account=CUSTOMER_BASE,
-			receiver_kind="بانک",
+			payer_account=BASE_BANK,
+			receiver_kind="صندوق",
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "Bank"):
+		with self.assertRaisesRegex(frappe.ValidationError, "Cash"):
 			doc.validate()
 
 	def test_receipt_header_types_and_supplementary_section_contract(self):
@@ -163,21 +173,17 @@ class TestReceiptUX(V2IntegrationTestCase):
 			self.assertIn(contract, source)
 		self.assertNotIn('["receipt_posting_date", 1]', source)
 
-	def test_customer_foreign_payer_to_base_account(self):
+	def test_base_row_in_foreign_receipt_is_rejected(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])
-		doc.validate()
-		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
-		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("10"))
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
+			doc.validate()
 
-	def test_customer_foreign_payer_to_other_foreign_account(self):
+	def test_other_foreign_row_in_foreign_receipt_is_rejected(self):
 		doc = self.receipt(
 			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)]
 		)
-		doc.validate()
-		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("100"))
-		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
+			doc.validate()
 
 	def test_supplier_payer(self):
 		doc = self.receipt(
@@ -220,7 +226,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt(
 			[
 				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10),
-				self.receipt_row(BASE_BANK, BASE, 200),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 20),
 			]
 		)
 		doc.validate()
@@ -247,7 +253,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 
 	def test_forged_or_disabled_row_currency_is_rejected(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, "FORGED-CURRENCY", 10, 10)])
-		with self.assertRaisesRegex(frappe.ValidationError, "فعال و معتبر"):
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
 			doc.validate()
 
 	def test_forged_or_disabled_payer_currency_is_rejected(self):
@@ -375,21 +381,21 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertIn("this.__sp_receipt_columns", source)
 		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
 		self.assertIn('["credit_company_amount", "columns", 3]', source)
-		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign))', source)
+		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", false)', source)
 
-	def test_cross_currency_requires_explicit_payer_rate(self):
+	def test_foreign_receipt_requires_header_rate(self):
 		doc = self.receipt(
-			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 5, 20)],
 			payer_rate=None,
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "نرخ ارز دریافت‌کننده"):
+		with self.assertRaisesRegex(frappe.ValidationError, "نرخ ارز"):
 			doc.validate()
 
 	def test_each_generated_pair_balances_in_company_currency(self):
 		doc = self.receipt(
 			[
 				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "10.25", "10"),
-				self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, "5.125", "20"),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "5.5", "20"),
 			]
 		)
 		doc.validate()
@@ -404,8 +410,11 @@ class TestReceiptUX(V2IntegrationTestCase):
 		row["receipt_payer_exchange_rate"] = 999
 		doc = self.receipt([row], payer_rate=5)
 		doc.validate()
-		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_amount)), Decimal("20"))
-		self.assertFalse(doc.operational_pairs[0].receipt_payer_exchange_rate)
+		pair = doc.operational_pairs[0]
+		self.assertEqual(Decimal(str(pair.debit_amount)), Decimal("10"))
+		self.assertEqual(Decimal(str(pair.credit_exchange_rate)), Decimal("5"))
+		self.assertEqual(Decimal(str(pair.credit_company_amount)), Decimal("50"))
+		self.assertFalse(pair.receipt_payer_exchange_rate)
 
 	def test_three_rows_on_one_date_create_one_posting_unit(self):
 		posting_date = getdate(nowdate())

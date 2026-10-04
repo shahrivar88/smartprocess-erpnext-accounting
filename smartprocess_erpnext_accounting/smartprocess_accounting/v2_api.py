@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 import frappe
 from frappe import _
 
 from erpnext.accounts.party import get_party_account
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
+from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import (
 	ACCOUNT_RECIPIENT,
 	BANK_ACCOUNT_RECIPIENT,
-	canonicalize_receipt,
+	build_canonical_receipt,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_api import receipt_draft
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
 	batch_party_currencies,
@@ -227,54 +226,21 @@ def _mapped_party_account(party_type: str, party: str, company: str) -> str | No
 
 @frappe.whitelist()
 def get_receipt_receiver_total(doc: dict) -> dict | None:
-	"""Exact total that Receipt posting will debit to the header receiver (display-only).
+	"""Canonical receiver debit total for the form summary (display-only).
 
-	Runs the same canonicalization the document lifecycle runs before posting, so the
-	returned amounts are the canonical debit sums, not a second client-side formula.
-	The HTTP transport may deliver ``doc`` as a JSON string, so both shapes are
-	accepted. While the draft is incomplete or invalid the canonicalization rejects
-	it (posting would post nothing), so the endpoint returns ``None`` for the client
-	to render as not-ready instead of raising an error on every mid-edit refresh.
-	Unexpected programming errors still propagate to the Error Log.
+	Returns ``None`` while the draft is not ready; validation problems are
+	collected by the canonical builder, so nothing reaches ``_server_messages``.
 	"""
-	if isinstance(doc, str):
-		doc = frappe.parse_json(doc)
-	receipt = frappe.get_doc(doc)
-	if receipt.operation_type != "Receipt":
-		frappe.throw(_("Receiver totals apply to Receipt documents only."))
-	try:
-		canonicalize_receipt(receipt)
-	except frappe.ValidationError:
-		# canonicalize_receipt raises via frappe.throw, which appends the message
-		# to frappe.local.message_log BEFORE raising. Catching the exception stops
-		# the error, but the appended message still leaks into the response's
-		# _server_messages and the client shows it as a popup on every mid-edit
-		# refresh. Drop the one leaked message so a mid-edit refresh stays silent
-		# and the form renders the summary as not-ready.
-		frappe.clear_last_message()
+	receipt = build_canonical_receipt(receipt_draft(doc))
+	if not receipt.ready:
 		return None
-	amount = Decimal("0")
-	company_amount = Decimal("0")
-	for row in receipt.operational_pairs or []:
-		amount += to_decimal(row.debit_amount, _("Amount"))
-		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
-	# Effective receiver rate derived from the same canonical sums (never a second
-	# formula): 1 for a base-currency receiver, base / receiver amount for a
-	# foreign one, and "" (rendered as a placeholder) while the amount is not
-	# positive — division by zero is impossible.
-	if receipt.receipt_payer_currency == receipt.company_currency:
-		effective_rate = Decimal("1")
-	elif amount > 0:
-		effective_rate = company_amount / amount
-	else:
-		effective_rate = None
 	return {
-		"account": receipt.receipt_payer_account,
-		"party": receipt.receipt_payer or "",
-		"currency": receipt.receipt_payer_currency,
-		"amount": decimal_text(amount),
-		"effective_rate": decimal_text(effective_rate) if effective_rate is not None else "",
-		"company_amount": decimal_text(company_amount),
+		"account": receipt.receiver.account,
+		"party": receipt.receiver.party or "",
+		"currency": receipt.transaction_currency,
+		"amount": decimal_text(receipt.transaction_total),
+		"effective_rate": decimal_text(receipt.exchange_rate),
+		"company_amount": decimal_text(receipt.company_total),
 		"company_currency": receipt.company_currency,
 	}
 

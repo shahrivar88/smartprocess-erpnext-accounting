@@ -27,8 +27,7 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 	return rowIssues(row, RECIPIENT_TYPES, companyCurrency).map(([, message]) => message);
 }
 
-// A. An untouched row lists every missing item in report order; the foreign
-// Rate rule stays silent while the currency is unknown.
+// A. An untouched row lists every missing item in report order.
 {
 	assert.deepEqual(messages(freshRow()), [
 		"ارز ردیف الزامی است.",
@@ -39,8 +38,8 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 	]);
 }
 
-// B. The user's example — a foreign Customer row with only currency + type set
-// lists all four remaining problems in one message.
+// B. A foreign Customer row with only currency + type set lists all remaining
+// problems in one message; the row rate comes from the header, never the row.
 {
 	const row = freshRow();
 	row.receipt_currency = "USD";
@@ -49,7 +48,6 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 		"پرداخت‌کننده الزامی است.",
 		"معین پرداخت‌کننده الزامی است.",
 		"مبلغ باید بزرگ‌تر از صفر باشد.",
-		"نرخ باید بزرگ‌تر از صفر باشد.",
 	]);
 }
 
@@ -61,13 +59,11 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 		"حساب بانکی الزامی است.",
 		"معین پرداخت‌کننده الزامی است.",
 		"مبلغ باید بزرگ‌تر از صفر باشد.",
-		"نرخ باید بزرگ‌تر از صفر باشد.",
 	]);
 	assert.equal(rowIssues(bank, RECIPIENT_TYPES, COMPANY_CURRENCY)[0][0], "receipt_recipient");
 }
 
-// D. Account-type rows have no entity field: the entity rule never fires, and a
-// base-currency row never requires a rate.
+// D. Account-type rows have no entity field: the entity rule never fires.
 {
 	const accountType = { ...freshRow(), receipt_currency: COMPANY_CURRENCY, receipt_recipient_type: "Account" };
 	assert.deepEqual(messages(accountType), [
@@ -76,8 +72,8 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 	]);
 }
 
-// E. Complete rows report nothing: base currency, foreign with rate, and Bank
-// with entity + ledger account.
+// E. Complete rows report nothing: base currency, foreign without a row rate,
+// and Bank with entity + ledger account.
 {
 	const base = {
 		...freshRow(),
@@ -89,7 +85,7 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 	};
 	assert.deepEqual(rowIssues(base, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
 
-	const foreign = { ...base, receipt_currency: "USD", credit_account: "1020-USD", credit_exchange_rate: 1500000 };
+	const foreign = { ...base, receipt_currency: "USD", credit_account: "1020-USD" };
 	assert.deepEqual(rowIssues(foreign, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
 
 	const bank = {
@@ -104,8 +100,7 @@ function messages(row, companyCurrency = COMPANY_CURRENCY) {
 	assert.deepEqual(rowIssues(bank, RECIPIENT_TYPES, COMPANY_CURRENCY), []);
 }
 
-// F. Unknown recipient types are invalid; without a company currency context the
-// foreign-rate rule never fires.
+// F. Unknown recipient types are invalid; no company currency context is needed.
 {
 	const badType = { ...freshRow(), receipt_currency: "USD", receipt_recipient_type: "Nope" };
 	assert.ok(messages(badType).includes("نوع پرداخت‌کننده را انتخاب کنید."));

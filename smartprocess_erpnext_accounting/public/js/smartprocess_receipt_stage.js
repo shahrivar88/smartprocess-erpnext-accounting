@@ -18,15 +18,15 @@
 		// two points — «افزودن ردیف» (the current row must be complete before a
 		// new row is created) and Save/Submit (every row); changing a row field
 		// never validates. rowIssues returns EVERY problem of the row in report
-		// order (ارز → نوع → طرف/حساب بانکی → معین → مبلغ → نرخ), so one action
+		// order (ارز → نوع → طرف/حساب بانکی → معین → مبلغ), so one action
 		// shows a single complete message instead of chained popups. Save/Submit
 		// validation stays strict server-side too.
 		const ACCOUNT_RECIPIENT = "Account";
 		const BANK_ACCOUNT_RECIPIENT = "Bank Account";
 
 		// Every problem as [fieldname, message] pairs, in report order; an empty
-		// array means the row is complete. Mirrors the server's
-		// canonicalize_receipt rules: نوع → ارز → معین → طرف/بانک → مبلغ → نرخ.
+		// array means the row is complete. The row rate is not checked: the server
+		// derives it from the single header rate.
 		function rowIssues(row, recipientTypes, companyCurrency) {
 			const issues = [];
 			if (!row.receipt_currency) {
@@ -50,14 +50,6 @@
 			}
 			if (!(Number(row.credit_amount) > 0)) {
 				issues.push(["credit_amount", "مبلغ باید بزرگ‌تر از صفر باشد."]);
-			}
-			if (
-				row.receipt_currency
-				&& companyCurrency
-				&& row.receipt_currency !== companyCurrency
-				&& !(Number(row.credit_exchange_rate) > 0)
-			) {
-				issues.push(["credit_exchange_rate", "نرخ باید بزرگ‌تر از صفر باشد."]);
 			}
 			return issues;
 		}
