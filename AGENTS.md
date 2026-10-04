@@ -10,7 +10,7 @@ This repository extends Frappe and ERPNext. The detailed V2 contract lives in
 - Never create a parallel ledger or balance store. ERPNext GL is the accounting source of truth.
 - Prefer standard Frappe and ERPNext APIs, permissions, workflow, and document lifecycle.
 - Never use `ignore_permissions` as an accounting or security shortcut.
-- Never test on `SmartProcessERP`. Run all posting tests on an isolated site.
+- Follow the test-safety rules below for every test run.
 - Balance every operation pair in `Company.default_currency`.
 - Balance the complete document in `Company.default_currency`.
 - Never hard-code a currency. `Company.default_currency` is the base currency.
@@ -23,6 +23,17 @@ This repository extends Frappe and ERPNext. The detailed V2 contract lives in
 - Do not build a spreadsheet-like custom accounting UI.
 - Make each change reversible and cover it with tests.
 - Report changed files, tests, risks, and rollback steps at every stage.
+
+## Test safety
+
+`SmartProcessERP` is the development and test site. `allow_tests` stays enabled.
+
+- Never run a broad `bench run-tests` on `SmartProcessERP` automatically. A broad run also loads ERPNext test records, which can create companies and accounts.
+- Run only targeted tests, for example `--module` or `--test`, that the current task explicitly authorizes.
+- Tests and helpers that create or change Company, Customer, Supplier, Employee, Account, GL Entry, Payment Ledger Entry or submitted accounting documents must call `assert_accounting_fixtures_authorized()` from `smartprocess_accounting/fixture_guard.py` before any write. DB-writing test classes extend `AccountingFixtureTestCase`.
+- These tests run only when the caller sets `SP_ALLOW_ACCOUNTING_FIXTURES=1` for that run, for example `docker exec -e SP_ALLOW_ACCOUNTING_FIXTURES=1 ...`. Without the variable they fail before any write.
+- Never fabricate GL Entry or Payment Ledger Entry rows. Do not use `ignore_permissions`, `ignore_links`, `db_set("docstatus", 1)` or direct inserts. Tests create GL only through real document submit and posting paths.
+- Pure unit tests that do not write to the database stay unrestricted.
 
 ## Detailed rules
 

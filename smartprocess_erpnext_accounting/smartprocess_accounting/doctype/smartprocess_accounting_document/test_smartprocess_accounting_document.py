@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
 
 import smartprocess_erpnext_accounting
 from smartprocess_erpnext_accounting.smartprocess_accounting import posting
@@ -15,6 +14,8 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils impor
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
 	get_party_account_suggestion,
 )
+
+from .v2_test_support import AccountingFixtureTestCase
 
 
 COMPANY = "SP V2 Proof Company"
@@ -27,7 +28,7 @@ FOREIGN_RECEIVABLE = "MC Receivable A - SPV2"
 FOREIGN_B_RECEIVABLE = "MC Receivable B - SPV2"
 
 
-class TestSmartProcessAccountingDocument(FrappeTestCase):
+class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 	def test_metadata_is_native_and_submittable(self):
 		meta = frappe.get_meta("SmartProcess Accounting Document")
 		self.assertTrue(meta.is_submittable)

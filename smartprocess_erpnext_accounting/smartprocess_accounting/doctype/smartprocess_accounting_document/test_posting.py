@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import frappe
 from erpnext.accounts.party import get_party_gle_currency
-from frappe.tests.utils import FrappeTestCase
 from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting import posting
@@ -32,6 +31,8 @@ from .v2_test_support import (
 	SINGLE_CURRENCY_PARTIES,
 	SUPPLIER_A as SUPPLIER_A_PARTY,
 	SUPPLIER_BASE as SUPPLIER_BASE_PARTY,
+	AccountingFixtureTestCase,
+	party_has_active_ledger_currency,
 )
 
 
@@ -44,7 +45,7 @@ PARTY_CURRENCY_CONFIG = {
 }
 
 
-class TestV2Posting(FrappeTestCase):
+class TestV2Posting(AccountingFixtureTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self._require_proof_fixture()
@@ -92,15 +93,23 @@ class TestV2Posting(FrappeTestCase):
 		)
 		self.assertEqual({Decimal(str(row.debit_in_transaction_currency)) for row in foreign_rows}, {Decimal("10")})
 
-	def test_customer_supplier_and_employee_create_native_ple(self):
+	def test_customer_and_supplier_create_native_ple(self):
 		cases = (
 			self._pair(BASE_BANK, 100, 1, RECEIVABLE_A, 10, 10, credit_party=("Customer", CUSTOMER_A_PARTY)),
 			self._pair(BASE_CLEARING, 100, 1, PAYABLE_A, 10, 10, credit_party=("Supplier", SUPPLIER_A_PARTY)),
-			self._pair(BASE_CLEARING, 100, 1, PAYABLE_A, 10, 10, credit_party=("Employee", EMPLOYEE_A)),
 		)
 		for pair in cases:
 			doc = self._submit([pair])
 			self.assertTrue(self._ple(doc))
+
+	def test_employee_creates_native_ple(self):
+		# Employee currency resolves from active GL only, and fixtures must not fabricate GL.
+		if not party_has_active_ledger_currency("Employee", EMPLOYEE_A, FOREIGN_A):
+			self.skipTest(f"{EMPLOYEE_A} has no real {FOREIGN_A} ledger history on this site.")
+		doc = self._submit(
+			[self._pair(BASE_CLEARING, 100, 1, PAYABLE_A, 10, 10, credit_party=("Employee", EMPLOYEE_A))]
+		)
+		self.assertTrue(self._ple(doc))
 
 	def test_party_to_party(self):
 		doc = self._submit(
