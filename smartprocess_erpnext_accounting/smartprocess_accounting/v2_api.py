@@ -258,20 +258,19 @@ def get_receipt_receiver_total(doc: dict) -> dict | None:
 	for row in receipt.operational_pairs or []:
 		amount += to_decimal(row.debit_amount, _("Amount"))
 		company_amount += to_decimal(row.debit_company_amount, _("Company Currency Amount"))
-	# Effective receiver rate derived from the same canonical sums (never a second
-	# formula): 1 for a base-currency receiver, base / receiver amount for a
-	# foreign one, and "" (rendered as a placeholder) while the amount is not
-	# positive — division by zero is impossible.
-	if receipt.receipt_payer_currency == receipt.company_currency:
-		effective_rate = Decimal("1")
-	elif amount > 0:
-		effective_rate = company_amount / amount
-	else:
-		effective_rate = None
+	# Two-currency contract: the receiver side posts in the header ارز دریافتی.
+	# When the receiving currency is the company base currency the receiver-side
+	# rate is 1; for any foreign receiving currency (payment foreign or base) the
+	# validated header rate converts it into the base currency.
+	effective_rate = (
+		Decimal("1")
+		if receipt.receipt_receiver_currency == receipt.company_currency
+		else to_decimal(receipt.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
+	)
 	return {
 		"account": receipt.receipt_payer_account,
 		"party": receipt.receipt_payer or "",
-		"currency": receipt.receipt_payer_currency,
+		"currency": receipt.receipt_receiver_currency,
 		"amount": decimal_text(amount),
 		"effective_rate": decimal_text(effective_rate) if effective_rate is not None else "",
 		"company_amount": decimal_text(company_amount),

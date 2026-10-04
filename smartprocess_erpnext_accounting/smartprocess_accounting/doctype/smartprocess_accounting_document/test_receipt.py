@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +9,7 @@ import frappe
 from frappe.core.doctype.doctype.doctype import validate_fields_for_doctype
 from frappe.desk.doctype.bulk_update.bulk_update import submit_cancel_or_update_docs
 from frappe.desk.form.linked_with import get_submitted_linked_docs
+from frappe.model.meta import get_field_precision
 from frappe.utils import add_days, getdate, nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
@@ -128,12 +129,17 @@ class TestReceiptUX(V2IntegrationTestCase):
 		for contract in (
 			"summarizeReceiptRows",
 			"جمع کل به ارز پایه",
-			"میانگین وزنی نرخ",
+			"نرخ ارز",
+			"frm.doc.receipt_payer_exchange_rate",
 			"sp-receipt-wide-grid",
 			"operational_pairs_remove",
 			"receiptForm.renderSummary(frm)",
 		):
 			self.assertIn(contract, source)
+		# Single-currency rows leave nothing to average: the weighted-rate summary
+		# is retired and the header rate is shown instead.
+		self.assertNotIn("میانگین وزنی", source)
+		self.assertNotIn("weightedRate", source)
 		css = Path(
 			frappe.get_app_path(
 				"smartprocess_erpnext_accounting",
@@ -164,20 +170,24 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertNotIn('["receipt_posting_date", 1]', source)
 
 	def test_customer_foreign_payer_to_base_account(self):
-		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])
+		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 100, 10)])
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal(str(row.credit_amount)))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("100"))
 		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("10"))
 
 	def test_customer_foreign_payer_to_other_foreign_account(self):
 		doc = self.receipt(
-			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)]
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 5, 20)]
 		)
 		doc.validate()
 		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("100"))
-		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
+		# The stored row rate (20) is ignored: the header rate (10) drives both sides.
+		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("50"))
+		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal("50"))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("5"))
+		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("10"))
 
 	def test_supplier_payer(self):
 		doc = self.receipt(
@@ -219,8 +229,8 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_multiple_receipt_rows(self):
 		doc = self.receipt(
 			[
-				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10),
-				self.receipt_row(BASE_BANK, BASE, 200),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 20),
 			]
 		)
 		doc.validate()
@@ -229,6 +239,15 @@ class TestReceiptUX(V2IntegrationTestCase):
 			[Decimal(str(row.credit_company_amount)) for row in doc.operational_pairs],
 			[Decimal("100"), Decimal("200")],
 		)
+		for row in doc.operational_pairs:
+			self.assertEqual(row.receipt_currency, FOREIGN_A)
+			self.assertEqual(Decimal(str(row.debit_amount)), Decimal(str(row.credit_amount)))
+			self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("10"))
+
+	def test_stale_mixed_currency_draft_row_fails_with_account_currency_error(self):
+		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 200)])
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز حساب"):
+			doc.validate()
 
 	def test_client_account_query_filters_company_state_group_currency_and_party_type(self):
 		source = self.client_source()
@@ -290,19 +309,18 @@ class TestReceiptUX(V2IntegrationTestCase):
 
 	def test_all_base_currency_client_contract_hides_fx_fields(self):
 		source = self.client_source()
-		self.assertIn('gridRow.toggle_display("credit_exchange_rate", hasForeign)', source)
+		self.assertIn('gridRow.toggle_display("receipt_currency", false)', source)
+		self.assertIn('gridRow.toggle_display("credit_exchange_rate", false)', source)
 		self.assertIn('gridRow.toggle_display("credit_company_amount", hasForeign)', source)
 
 	def test_foreign_currency_client_contract_shows_amount_rate_and_base_preview(self):
 		source = self.client_source()
-		self.assertIn('grid.toggle_display("credit_exchange_rate", hasForeign)', source)
 		self.assertIn('grid.toggle_display("credit_company_amount", hasForeign)', source)
 		self.assertIn('hasForeign ? __("مبلغ ارز") : __("مبلغ")', source)
 
 	def test_mixed_currency_grid_uses_uniform_fx_columns(self):
 		source = self.client_source()
 		self.assertIn("const hasForeign = (frm.doc.operational_pairs || []).some", source)
-		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
 		self.assertIn('["credit_company_amount", "columns", 3]', source)
 
 	def test_currency_changes_add_and_remove_refresh_grid_without_reload(self):
@@ -373,13 +391,12 @@ class TestReceiptUX(V2IntegrationTestCase):
 		source = self.client_source()
 		self.assertIn("const setupUserDefinedColumns = grid.setup_user_defined_columns", source)
 		self.assertIn("this.__sp_receipt_columns", source)
-		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
 		self.assertIn('["credit_company_amount", "columns", 3]', source)
-		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign))', source)
+		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", false)', source)
 
 	def test_cross_currency_requires_explicit_payer_rate(self):
 		doc = self.receipt(
-			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)],
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 5)],
 			payer_rate=None,
 		)
 		with self.assertRaisesRegex(frappe.ValidationError, "نرخ ارز دریافت‌کننده"):
@@ -389,7 +406,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt(
 			[
 				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "10.25", "10"),
-				self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, "5.125", "20"),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "5.125", "20"),
 			]
 		)
 		doc.validate()
@@ -398,14 +415,177 @@ class TestReceiptUX(V2IntegrationTestCase):
 				Decimal(str(row.debit_company_amount)),
 				Decimal(str(row.credit_company_amount)),
 			)
+			self.assertEqual(Decimal(str(row.debit_amount)), Decimal(str(row.credit_amount)))
+			self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("10"))
 
 	def test_header_payer_rate_is_authoritative_and_legacy_child_rate_is_ignored(self):
 		row = self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)
 		row["receipt_payer_exchange_rate"] = 999
 		doc = self.receipt([row], payer_rate=5)
 		doc.validate()
-		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_amount)), Decimal("20"))
+		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_amount)), Decimal("10"))
+		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_exchange_rate)), Decimal("5"))
+		self.assertEqual(Decimal(str(doc.operational_pairs[0].debit_company_amount)), Decimal("50"))
+		self.assertEqual(Decimal(str(doc.operational_pairs[0].credit_company_amount)), Decimal("50"))
 		self.assertFalse(doc.operational_pairs[0].receipt_payer_exchange_rate)
+
+	def test_receipt_receiver_currency_field_contract(self):
+		meta = frappe.get_meta("SmartProcess Accounting Document")
+		field = meta.get_field("receipt_receiver_currency")
+		self.assertIsNotNone(field)
+		self.assertEqual(field.fieldtype, "Select")
+		self.assertEqual(field.label, "ارز دریافتی")
+		self.assertEqual(field.depends_on, "eval:doc.operation_type == 'Receipt'")
+		fields = [item.fieldname for item in meta.fields]
+		self.assertLess(fields.index("receipt_payer_currency"), fields.index("receipt_receiver_currency"))
+
+	def test_foreign_payment_converts_debit_to_base_receiving_currency(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 100, 10)],
+			payer_currency=FOREIGN_A,
+			receiving_currency=BASE,
+			payer=CUSTOMER_BASE_PARTY,
+			payer_account=CUSTOMER_BASE,
+			payer_rate=10,
+		)
+		doc.validate()
+		row = doc.operational_pairs[0]
+		# Rows keep the payment currency; the receiver side converts by the header
+		# rate into the base receiving currency with rate 1 — per row, no extras.
+		self.assertEqual(Decimal(str(row.credit_amount)), Decimal("100"))
+		self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("10"))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("1000"))
+		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("1"))
+		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("1000"))
+		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal("1000"))
+
+	def test_two_currency_receipt_posts_converted_debit_and_balanced_gl(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 100, 10)],
+			payer_currency=FOREIGN_A,
+			receiving_currency=BASE,
+			payer=CUSTOMER_BASE_PARTY,
+			payer_account=CUSTOMER_BASE,
+			payer_rate=10,
+		).insert()
+		doc.submit()
+		entries = {row.account: row for row in self.active_gl(doc)}
+		# GL Entry debit/credit are Company-currency columns; the receiver side
+		# posts in the base receiving currency (rate 1) and the payer side keeps
+		# the account-currency amount with the header rate.
+		self.assertEqual(Decimal(str(entries[CUSTOMER_BASE].debit)), Decimal("1000"))
+		self.assertEqual(
+			Decimal(str(entries[CUSTOMER_BASE].debit_in_account_currency)), Decimal("1000")
+		)
+		self.assertEqual(Decimal(str(entries[CUSTOMER_BASE].credit)), Decimal("0"))
+		self.assertEqual(Decimal(str(entries[CUSTOMER_BASE].transaction_exchange_rate)), Decimal("1"))
+		self.assertEqual(Decimal(str(entries[FOREIGN_A_ACCOUNT].debit)), Decimal("0"))
+		self.assertEqual(Decimal(str(entries[FOREIGN_A_ACCOUNT].credit)), Decimal("1000"))
+		self.assertEqual(
+			Decimal(str(entries[FOREIGN_A_ACCOUNT].credit_in_account_currency)), Decimal("100")
+		)
+		self.assertEqual(Decimal(str(entries[FOREIGN_A_ACCOUNT].transaction_exchange_rate)), Decimal("10"))
+
+	def test_base_payment_converts_debit_into_foreign_receiving_currency(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 1234567)],
+			payer_currency=BASE,
+			receiving_currency=FOREIGN_B,
+			payer=CUSTOMER_B_PARTY,
+			payer_account=CUSTOMER_B,
+			payer_rate=12.35,
+		)
+		doc.validate()
+		row = doc.operational_pairs[0]
+		# The credit keeps the entered base amount at rate 1; the debit divides it
+		# by the header rate and rounds to the receiving currency's GL precision.
+		self.assertEqual(Decimal(str(row.credit_amount)), Decimal("1234567"))
+		self.assertEqual(Decimal(str(row.credit_exchange_rate)), Decimal("1"))
+		self.assertEqual(row.debit_account_currency, FOREIGN_B)
+		field = frappe.get_meta("GL Entry").get_field("debit")
+		expected_debit = (Decimal("1234567") / Decimal("12.35")).quantize(
+			Decimal("1").scaleb(-get_field_precision(field, currency=FOREIGN_B)),
+			rounding=ROUND_HALF_UP,
+		)
+		self.assertEqual(Decimal(str(row.debit_amount)), expected_debit)
+		# The stored debit rate is the exact amount ratio, so re-rounding
+		# amount × rate in company currency reproduces the credit exactly.
+		rebalanced = (
+			Decimal(str(row.debit_amount)) * Decimal(str(row.debit_exchange_rate))
+		).quantize(
+			Decimal("1").scaleb(-get_field_precision(field, currency=BASE)),
+			rounding=ROUND_HALF_UP,
+		)
+		self.assertEqual(rebalanced, Decimal("1234567"))
+		self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal("1234567"))
+		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal("1234567"))
+
+	def test_base_payment_to_foreign_receiver_posts_balanced_gl(self):
+		doc = self.receipt(
+			[self.receipt_row(BASE_BANK, BASE, 1234567)],
+			payer_currency=BASE,
+			receiving_currency=FOREIGN_B,
+			payer=CUSTOMER_B_PARTY,
+			payer_account=CUSTOMER_B,
+			payer_rate=12.35,
+		).insert()
+		doc.submit()
+		entries = {row.account: row for row in self.active_gl(doc)}
+		row = doc.operational_pairs[0]
+		# The receiver side debits the foreign receiving currency at the effective
+		# rate while the pair stays exactly balanced in company currency.
+		self.assertEqual(
+			Decimal(str(entries[CUSTOMER_B].debit)), Decimal(str(row.credit_company_amount))
+		)
+		self.assertEqual(
+			Decimal(str(entries[CUSTOMER_B].debit_in_account_currency)),
+			Decimal(str(row.debit_amount)),
+		)
+		self.assertEqual(Decimal(str(entries[CUSTOMER_B].credit)), Decimal("0"))
+		self.assertAlmostEqual(entries[CUSTOMER_B].transaction_exchange_rate, 12.35, places=2)
+		self.assertEqual(Decimal(str(entries[BASE_BANK].debit)), Decimal("0"))
+		self.assertEqual(
+			Decimal(str(entries[BASE_BANK].credit)), Decimal(str(row.credit_company_amount))
+		)
+		self.assertEqual(
+			Decimal(str(entries[BASE_BANK].credit_in_account_currency)), Decimal("1234567")
+		)
+
+	def test_third_receiving_currency_is_rejected(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)],
+			payer_currency=FOREIGN_A,
+			receiving_currency=FOREIGN_B,
+			payer=CUSTOMER_B_PARTY,
+			payer_account=CUSTOMER_B,
+		)
+		with self.assertRaisesRegex(
+			frappe.ValidationError, "ارز دریافتی باید همان ارز پرداختی یا ارز پایه شرکت باشد"
+		):
+			doc.validate()
+
+	def test_receiving_account_currency_mismatch_is_rejected(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)],
+			payer_currency=FOREIGN_A,
+			receiving_currency=BASE,
+			payer_account=CUSTOMER_A,
+		)
+		with self.assertRaisesRegex(
+			frappe.ValidationError, "ارز معین دریافت‌کننده با ارز دریافتی یکسان نیست"
+		):
+			doc.validate()
+
+	def test_receiving_currency_client_contract(self):
+		source = self.client_source()
+		for contract in (
+			"receipt_receiver_currency: \"ارز دریافتی\"",
+			'receiptForm.receiverCurrencyChanged(frm)',
+			"receipt_receiver_currency || frm.doc.receipt_payer_currency",
+			"ارز دریافتی باید همان ارز پرداختی یا ارز پایه شرکت باشد",
+			'frm.set_df_property("receipt_receiver_currency", "options", optionText)',
+		):
+			self.assertIn(contract, source)
 
 	def test_three_rows_on_one_date_create_one_posting_unit(self):
 		posting_date = getdate(nowdate())
@@ -728,7 +908,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		contracts = {
 			"SmartProcess Accounting Document": {"receipt_payer": "receipt_payer_type"},
 			"SmartProcess Accounting Pair": {
-				"receipt_recipient": "receipt_recipient_type",
 				"debit_party": "debit_party_type",
 				"credit_party": "credit_party_type",
 			},
@@ -742,6 +921,26 @@ class TestReceiptUX(V2IntegrationTestCase):
 				controller = meta.get_field(controller_name)
 				self.assertEqual((controller.fieldtype, controller.options), ("Link", "DocType"))
 			validate_fields_for_doctype(doctype)
+		# The Receipt row payer-type dropdown is a static Select by design (same
+		# UX as the header receiver kind); its Dynamic Link is still controlled
+		# by it and the static options are exactly the set the row validation
+		# accepts. frappe accepts a Select controller for a Dynamic Link.
+		pair_meta = frappe.get_meta("SmartProcess Accounting Pair")
+		self.assertEqual(
+			pair_meta.get_field("receipt_recipient").options, "receipt_recipient_type"
+		)
+		recipient_type = pair_meta.get_field("receipt_recipient_type")
+		self.assertEqual(recipient_type.fieldtype, "Select")
+		for option in (
+			"Customer",
+			"Bank Account",
+			"SmartProcess Financial Intermediary",
+			"Supplier",
+			"Employee",
+			"Account",
+		):
+			self.assertIn(option, recipient_type.options)
+		validate_fields_for_doctype("SmartProcess Accounting Pair")
 
 	def test_submit_creates_native_gl_and_payment_ledger(self):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
@@ -906,9 +1105,13 @@ class TestReceiptUX(V2IntegrationTestCase):
 		payer_account=CUSTOMER_A,
 		payer_rate=10,
 		receiver_kind=None,
+		receiving_currency=None,
 	):
 		if payer is None:
 			payer = CUSTOMER_BASE_PARTY if payer_currency == BASE else CUSTOMER_A_PARTY
+		# Two-currency contract: the fixture default keeps the legacy single-currency
+		# semantics (receiver posts the entered amounts as-is) unless a test opts in.
+		receiving_currency = receiving_currency or payer_currency
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
@@ -916,6 +1119,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 				"company": COMPANY,
 				"posting_date": nowdate(),
 				"receipt_payer_currency": payer_currency,
+				"receipt_receiver_currency": receiving_currency,
 				"receipt_payer_account": payer_account,
 				"receipt_payer_exchange_rate": payer_rate,
 				"receipt_payer_type": payer_type,

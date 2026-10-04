@@ -65,9 +65,9 @@ const summary = summarizeReceiptRows(
 );
 assert.deepEqual(summary, {
 	currencies: [
-		{ currency: "IRR", amount: 75, baseAmount: 75, weightedRate: null },
-		{ currency: "USD", amount: 5, baseAmount: 900, weightedRate: 180 },
+		{ currency: "IRR", amount: 75, baseAmount: 75 },
+		{ currency: "USD", amount: 5, baseAmount: 900 },
 	],
 	companyTotal: 975,
 });
-console.log("receipt_summary: base and weighted foreign totals passed");
+console.log("receipt_summary: base and foreign totals passed");

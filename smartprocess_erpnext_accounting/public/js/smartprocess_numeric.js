@@ -59,12 +59,9 @@
 				totals.set(currency, current);
 				companyTotal += baseAmount;
 			}
-			const currencies = [...totals.values()].map((row) => ({
-				...row,
-				weightedRate: row.currency === companyCurrency || row.amount === 0
-					? null
-					: row.baseAmount / row.amount,
-			}));
+			// Single-currency Receipt: every row shares the header currency and rate,
+			// so there is no weighted-average rate to derive.
+			const currencies = [...totals.values()];
 			return { currencies, companyTotal };
 		}
 

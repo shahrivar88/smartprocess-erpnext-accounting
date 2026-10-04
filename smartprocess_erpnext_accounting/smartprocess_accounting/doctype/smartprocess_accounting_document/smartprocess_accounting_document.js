@@ -17,6 +17,14 @@ const RECEIVER_KIND_LABELS = {
 	"SmartProcess Financial Intermediary": "واسطه مالی",
 	Employee: "کارمند",
 };
+// Row Payer Type labels — the same pattern as the header Receiver Kind:
+// the stored value stays the native name and only the displayed label is
+// translated. Order comes from the field's own options.
+const RECIPIENT_TYPE_LABELS = {
+	...RECEIVER_KIND_LABELS,
+	[BANK_ACCOUNT_RECIPIENT]: "حساب بانکی",
+	[ACCOUNT_RECIPIENT]: "سایر حساب‌ها",
+};
 const RECEIPT_RECIPIENT_TYPES = [...PARTY_TYPES, BANK_ACCOUNT_RECIPIENT, ACCOUNT_RECIPIENT];
 const RECEIPT_FIELDS = [
 	"receipt_posting_date",
@@ -127,6 +135,7 @@ function canCalculateLiveReceiptSummary(frm) {
 		&& frm.doc.receipt_receiver_kind
 		&& frm.doc.receipt_payer_account
 		&& frm.doc.receipt_payer_currency
+		&& frm.doc.receipt_receiver_currency
 	) && (frm.doc.operational_pairs || []).some(isRowMeaningfullyStarted);
 }
 
@@ -141,6 +150,7 @@ function receiptReceiverTotalPayload(frm) {
 		receipt_payer_type: frm.doc.receipt_payer_type,
 		receipt_payer: frm.doc.receipt_payer,
 		receipt_payer_currency: frm.doc.receipt_payer_currency,
+		receipt_receiver_currency: frm.doc.receipt_receiver_currency,
 		receipt_payer_exchange_rate: frm.doc.receipt_payer_exchange_rate,
 		receipt_payer_account: frm.doc.receipt_payer_account,
 		operational_pairs: (frm.doc.operational_pairs || []).map((row) => ({
@@ -259,70 +269,6 @@ function attachLiveNumberSeparatorToRowForm(gridRow) {
 	}
 }
 
-// The row Payer Type dropdown is the standard Link control: its suggestions come
-// from frappe.desk.search.search_link, which re-sorts DocType results by the
-// translated DocType name regardless of the custom query order. The configured
-// order and Persian labels from SmartProcess Accounting Settings are therefore
-// applied on the client, right where the Link control hands the list to
-// Awesomplete — the one place every rendering path (fresh RPC, cache hit,
-// keyboard filtering) passes through. The core Link control is untouched.
-function orderRecipientTypeSuggestions(items, frm) {
-	const options = (frm && frm.__sp_recipient_type_options) || [];
-	if (!Array.isArray(items) || !options.length) {
-		return items;
-	}
-	const rankByValue = {};
-	options.forEach((entry, index) => {
-		rankByValue[entry.value] = index;
-	});
-	const ranked = [];
-	const rest = [];
-	for (const item of items) {
-		const rank = item && typeof item === "object" ? rankByValue[item.value] : undefined;
-		if (rank === undefined) {
-			// Create-new / advanced-search / filter-description options keep their
-			// position after the real type entries.
-			rest.push(item);
-			continue;
-		}
-		// The Link control shows the translated DocType name as the bold label
-		// (e.g. Account → «حساب معین»); replace it with the configured label
-		// (Account → «سایر حسابها») and drop the now-duplicate description line.
-		item.label = options[rank].label;
-		item.description = "";
-		ranked.push({ rank, item });
-	}
-	ranked.sort((a, b) => a.rank - b.rank);
-	return ranked.map((entry) => entry.item).concat(rest);
-}
-
-// Shadows the Awesomplete `list` accessor on this one control instance: the
-// base class stores suggestions in `_list` and reads them back from there, so
-// the setter simply reorders (and relabels) the incoming list in place of the
-// prototype accessor. Idempotent per control instance.
-function attachRecipientTypeOrderToControl(control) {
-	if (!control || !control.awesomplete || control.__sp_recipient_type_order) {
-		return;
-	}
-	control.__sp_recipient_type_order = true;
-	Object.defineProperty(control.awesomplete, "list", {
-		configurable: true,
-		enumerable: true,
-		get() {
-			return this._list;
-		},
-		set(value) {
-			this._list = orderRecipientTypeSuggestions(value, control.frm);
-		},
-	});
-}
-
-// The row form is built lazily, so attach the moment it opens — the same
-// pattern as the live thousands separator.
-function attachRecipientTypeOrderToRowForm(gridRow) {
-	attachRecipientTypeOrderToControl(gridRow.grid_form?.fields_dict?.receipt_recipient_type);
-}
-
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	validate(frm) {
 		return validateReceiptRowsForSave(frm);
@@ -338,23 +284,23 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		void receiptForm.initialize(frm);
 	},
 	setup(frm) {
-		// The row Payer Type dropdown order, Persian labels and the new-row default
-		// come from SmartProcess Accounting Settings (server-side query), never from
-		// hard-coded JS — the user can change both without code.
-		frm.set_query("receipt_recipient_type", "operational_pairs", () => ({
-			query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.receipt_recipient_type_query",
-		}));
+		// The receiver (معین/بانک/طرف) is posted in the header ارز دریافتی, so all
+		// receiver-side queries filter by it; the payment currency stays empty on
+		// fresh drafts and the queries fall back to it until defaults fill in.
 		frm.set_query("receipt_payer_account", () => ({
 			filters: receiptAccountFilters(
 				frm.doc.company,
-				frm.doc.receipt_payer_currency,
+				frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency,
 				frm.doc.receipt_payer_type,
 				frm.doc.receipt_receiver_kind,
 			),
 		}));
 		frm.set_query("receipt_bank_account", () => ({
 			query: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.bank_account_query",
-			filters: { company: frm.doc.company, currency: frm.doc.receipt_payer_currency },
+			filters: {
+				company: frm.doc.company,
+				currency: frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency,
+			},
 		}));
 		// Currency is the first Receipt choice: the Party list is filtered by the
 		// selected currency using the single-currency Party rule server-side.
@@ -367,7 +313,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 				filters: {
 					party_type: frm.doc.receipt_payer_type,
 					company: frm.doc.company,
-					currency: frm.doc.receipt_payer_currency,
+					currency: frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency,
 				},
 			};
 		});
@@ -484,6 +430,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	receipt_payer_currency(frm) {
 		return receiptForm.headerCurrencyChanged(frm);
 	},
+	receipt_receiver_currency(frm) {
+		return receiptForm.receiverCurrencyChanged(frm);
+	},
 	receipt_payer_exchange_rate(frm) {
 		return receiptForm.payerRateChanged(frm);
 	},
@@ -551,9 +500,6 @@ function configureReceiptGridRowLifecycle(gridRow) {
 			if (LIVE_SEPARATOR_FIELDS.includes(column.df.fieldname)) {
 				configureLiveNumberSeparatorInput(column.field, gridRow.grid?.frm?.__sp_live_separator);
 			}
-			if (column.df.fieldname === "receipt_recipient_type") {
-				attachRecipientTypeOrderToControl(column.field);
-			}
 		};
 		gridRow.__sp_make_control = true;
 	}
@@ -563,15 +509,12 @@ function configureReceiptGridRowLifecycle(gridRow) {
 		gridRow.show_form = function () {
 			showForm.call(this);
 			attachLiveNumberSeparatorToRowForm(this);
-			attachRecipientTypeOrderToRowForm(this);
 		};
 	}
 	for (const fieldname of RECEIPT_NUMBER_FIELDS) {
 		configureCompactNumberInput(gridRow.on_grid_fields_dict?.[fieldname]);
 		configureCompactNumberInput(gridRow.grid_form?.fields_dict?.[fieldname]);
 	}
-	attachRecipientTypeOrderToControl(gridRow.on_grid_fields_dict?.receipt_recipient_type);
-	attachRecipientTypeOrderToControl(gridRow.grid_form?.fields_dict?.receipt_recipient_type);
 	// Attach regardless of the current enabled snapshot: the per-control listeners
 	// re-read the live config on every event, so rows wired before the settings
 	// arrive still activate the separator as soon as the xcall resolves.
@@ -637,9 +580,11 @@ function receiptGridColumns(hasPartyRecipient, hasForeign) {
 	// proportional flex rules in public/css/receipt_form.css. All states keep
 	// the total above 10 on purpose so frappe's redistribution loop does not
 	// inflate these values.
-	// Row cascade order is Currency → Type → Entity → Account → Amount/Rate.
+	// Receipt rows are single-currency: ارز و نرخ live in the header, so the grid
+	// starts at نوع پرداخت‌کننده. Without the currency column, credit_account and
+	// credit_amount each take one more column in the no-recipient state to keep
+	// the total above 10 (see the redistribution note above).
 	const columns = [
-		["receipt_currency", 1],
 		["receipt_recipient_type", 2],
 	];
 	if (hasPartyRecipient) {
@@ -647,10 +592,10 @@ function receiptGridColumns(hasPartyRecipient, hasForeign) {
 	}
 	columns.push(
 		["credit_account", hasPartyRecipient ? 4 : 5],
-		["credit_amount", 2],
+		["credit_amount", hasPartyRecipient ? 2 : 3],
 	);
 	if (hasForeign) {
-		columns.push(["credit_exchange_rate", 2], ["credit_company_amount", 3]);
+		columns.push(["credit_company_amount", 3]);
 	}
 	return columns;
 }
@@ -677,6 +622,10 @@ const receiptForm = {
 			frm.__sp_previous_payer_currency = frm.doc.receipt_payer_currency || "";
 			frm.__sp_receiver_currency_explicit = !frm.is_new()
 				&& Boolean(frm.doc.receipt_payer_currency);
+			// Separate guard for the two-currency header: on new drafts the ارز دریافتی
+			// default fills silently; only an explicit user change arms the guard.
+			frm.__sp_receiving_currency_explicit = !frm.is_new()
+				&& Boolean(frm.doc.receipt_receiver_currency);
 		}
 	},
 	async initialize(frm) {
@@ -693,65 +642,9 @@ const receiptForm = {
 		if (frm.doc.docstatus === 0 && frm.doc.receipt_payer) {
 			await this.syncReceiverCurrencyFromParty(frm);
 		}
-		await this.initializeRecipientTypeDefault(frm);
-		await this.loadRecipientTypeOptions(frm);
-	},
-	// Preselect the configured Payer Type on rows that still have none (the
-	// framework's mandatory first row is created before this fetch resolves).
-	// Only empty types are filled: a user-chosen type is never overwritten.
-	async initializeRecipientTypeDefault(frm) {
-		if (frm.doc.docstatus !== 0) {
-			return;
-		}
-		const defaultType = await this.loadRecipientTypeDefault(frm);
-		if (!defaultType) {
-			return;
-		}
-		for (const row of frm.doc.operational_pairs || []) {
-			if (!row.receipt_recipient_type) {
-				await setRowValueQuietly(row.doctype, row.name, "receipt_recipient_type", defaultType);
-			}
-		}
-		frm.refresh_field("operational_pairs");
-	},
-	// Both fetches are cached per document name: the SPA reuses the frm object
-	// across new-doc navigations of the same doctype, so a cache keyed only on
-	// the frm would carry the previous document's values.
-	async loadRecipientTypeDefault(frm) {
-		if (frm.__sp_recipient_type_default_for === frm.doc.name && frm.__sp_recipient_type_default) {
-			return frm.__sp_recipient_type_default;
-		}
-		try {
-			const { message } = await frappe.call({
-				type: "GET",
-				method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_recipient_type_default",
-			});
-			frm.__sp_recipient_type_default = typeof message === "string" ? message : "";
-		} catch (error) {
-			frm.__sp_recipient_type_default = "";
-		}
-		frm.__sp_recipient_type_default_for = frm.doc.name;
-		return frm.__sp_recipient_type_default;
-	},
-	// The configured Payer Type order and Persian labels, applied by
-	// attachRecipientTypeOrderToControl every time the Link dropdown hands its
-	// suggestions to Awesomplete. Fetched once per document, so a Settings
-	// change applies on the next form load.
-	async loadRecipientTypeOptions(frm) {
-		if (frm.__sp_recipient_type_options_for === frm.doc.name && frm.__sp_recipient_type_options) {
-			return frm.__sp_recipient_type_options;
-		}
-		try {
-			const { message } = await frappe.call({
-				type: "GET",
-				method: "smartprocess_erpnext_accounting.smartprocess_accounting.v2_api.get_receipt_recipient_type_options",
-			});
-			frm.__sp_recipient_type_options = Array.isArray(message) ? message : [];
-		} catch (error) {
-			frm.__sp_recipient_type_options = [];
-		}
-		frm.__sp_recipient_type_options_for = frm.doc.name;
-		return frm.__sp_recipient_type_options;
+		// Converge rows to the header (ارز پرداختی): drafts saved under the former
+		// per-row currencies settle on load; already-converged rows are untouched.
+		await this.recalculatePayerRows(frm);
 	},
 	async initializeReceiverType(frm) {
 		const defaultKind = frm.fields_dict.receipt_receiver_kind?.df?.default || "";
@@ -770,19 +663,34 @@ const receiptForm = {
 		if (!companyCurrency) {
 			return;
 		}
+		const options = frm.__sp_currency_options || [];
 		const currentCurrency = frm.doc.receipt_payer_currency || "";
-		const currentIsValid = (frm.__sp_currency_options || []).includes(currentCurrency);
-		if (frm.__sp_receiver_currency_explicit && currentIsValid) {
-			return;
-		}
-		frm.__sp_setting_receiver_currency = true;
-		try {
-			if (currentCurrency !== companyCurrency) {
-				await frm.set_value("receipt_payer_currency", companyCurrency);
+		const currentIsValid = options.includes(currentCurrency);
+		if (!(frm.__sp_receiver_currency_explicit && currentIsValid)) {
+			frm.__sp_setting_receiver_currency = true;
+			try {
+				if (currentCurrency !== companyCurrency) {
+					await frm.set_value("receipt_payer_currency", companyCurrency);
+				}
+				frm.__sp_receiver_currency_explicit = false;
+			} finally {
+				frm.__sp_setting_receiver_currency = false;
 			}
-			frm.__sp_receiver_currency_explicit = false;
-		} finally {
-			frm.__sp_setting_receiver_currency = false;
+		}
+		// The receiver side posts in the header ارز دریافتی; the base currency is its
+		// natural default and follows the same explicit-choice guard as the payment.
+		const currentReceiving = frm.doc.receipt_receiver_currency || "";
+		const receivingIsValid = options.includes(currentReceiving);
+		if (!(frm.__sp_receiving_currency_explicit && receivingIsValid)) {
+			frm.__sp_setting_receiving_currency = true;
+			try {
+				if (currentReceiving !== companyCurrency) {
+					await frm.set_value("receipt_receiver_currency", companyCurrency);
+				}
+				frm.__sp_receiving_currency_explicit = false;
+			} finally {
+				frm.__sp_setting_receiving_currency = false;
+			}
 		}
 	},
 	configureHeader(frm, isReceipt) {
@@ -797,7 +705,8 @@ const receiptForm = {
 				operational_pairs: "پرداخت‌کنندگان / منابع",
 				receipt_payer_type: "نوع دریافت‌کننده",
 				receipt_payer: "دریافت‌کننده",
-				receipt_payer_currency: "ارز دریافت‌کننده",
+				receipt_payer_currency: "ارز پرداختی",
+				receipt_receiver_currency: "ارز دریافتی",
 				receipt_payer_exchange_rate: "نرخ ارز دریافت‌کننده",
 				receipt_payer_account: "معین دریافت‌کننده",
 				receipt_bank_account: "دریافت‌کننده",
@@ -815,7 +724,8 @@ const receiptForm = {
 			frm.set_df_property(fieldname, "label", label);
 		}
 		this.applyReceiverKindLabels(frm);
-		for (const fieldname of ["receipt_receiver_kind", "receipt_payer_currency"]) {
+		this.applyRecipientTypeLabels(frm);
+		for (const fieldname of ["receipt_receiver_kind", "receipt_payer_currency", "receipt_receiver_currency"]) {
 			frm.toggle_display(fieldname, isReceipt);
 			frm.toggle_reqd(fieldname, isReceipt);
 		}
@@ -835,12 +745,19 @@ const receiptForm = {
 			"label",
 			isReceipt ? "اطلاعات تکمیلی" : "Additional Information",
 		);
-		const foreignPayer = isReceipt
-			&& frm.doc.receipt_payer_currency
-			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency;
-		// Rate visibility belongs to field metadata (Depends On / Customize Form);
-		// the currency only drives its required-ness and value.
-		frm.toggle_reqd("receipt_payer_exchange_rate", Boolean(foreignPayer));
+		if (isReceipt) {
+			// Rate visibility belongs to field metadata (Depends On / Customize Form);
+			// the two currencies drive its required-ness, value and editability:
+			// both base → locked at 1; one foreign → required and editable.
+			const rateState = this.exchangeRateState(frm);
+			frm.toggle_reqd("receipt_payer_exchange_rate", rateState.foreign);
+			frm.toggle_enable("receipt_payer_exchange_rate", !rateState.bothBase);
+		} else {
+			// Non-Receipt operation types keep the field exactly as before: not
+			// required and editable (a Receipt-locked state is always released).
+			frm.toggle_reqd("receipt_payer_exchange_rate", false);
+			frm.toggle_enable("receipt_payer_exchange_rate", true);
+		}
 		frm.set_df_property(
 			"receipt_payer_exchange_rate",
 			"formatter",
@@ -867,6 +784,36 @@ const receiptForm = {
 			"receipt_receiver_kind",
 			"options",
 			values.map((value) => ({ value, label: RECEIVER_KIND_LABELS[value] || value })),
+		);
+	},
+	// The row Payer Type is a plain Select, like the header Receiver Kind: the
+	// stored value stays the native name, the dropdown shows the Persian label,
+	// and the order is the field's own options order (Customize Form can change
+	// both). Mirrors applyReceiverKindLabels for the table field.
+	applyRecipientTypeLabels(frm) {
+		const grid = frm.fields_dict.operational_pairs?.grid;
+		if (!grid) {
+			return;
+		}
+		const docfield = grid.docfields?.find((field) => field.fieldname === "receipt_recipient_type");
+		if (!docfield || Array.isArray(docfield.options)) {
+			return;
+		}
+		const values = String(docfield.options || "").split("\n").filter(Boolean);
+		if (!values.length) {
+			return;
+		}
+		const labeled = values.map((value) => ({
+			value,
+			label: RECIPIENT_TYPE_LABELS[value] || value,
+		}));
+		updateGridProperty(grid, "receipt_recipient_type", "options", labeled);
+		frm.set_df_property(
+			"operational_pairs",
+			"options",
+			labeled,
+			grid.doctype,
+			"receipt_recipient_type",
 		);
 	},
 	configureGrid(frm, isReceipt) {
@@ -958,10 +905,8 @@ const receiptForm = {
 			"receipt_recipient",
 			hasPartyRecipient,
 		);
-		grid.toggle_display("credit_exchange_rate", hasForeign);
 		grid.toggle_display("credit_company_amount", hasForeign);
 		grid.set_column_disp_in_list_view("receipt_recipient", hasPartyRecipient);
-		grid.set_column_disp_in_list_view("credit_exchange_rate", hasForeign);
 		grid.set_column_disp_in_list_view("credit_company_amount", hasForeign);
 		const visibleColumns = receiptGridColumns(hasPartyRecipient, hasForeign);
 		renderGridProperties(grid, [
@@ -972,7 +917,6 @@ const receiptForm = {
 			["receipt_recipient_type", "label", "نوع پرداخت‌کننده"],
 			["receipt_recipient", "label", "نام پرداخت‌کننده"],
 			["credit_account", "label", "معین پرداخت‌کننده"],
-			["credit_exchange_rate", "label", "نرخ"],
 			["credit_company_amount", "label", "مبلغ به ارز پایه"],
 			["credit_rate_direction", "label", "معنی نرخ"],
 			["credit_description", "label", "توضیح"],
@@ -986,12 +930,10 @@ const receiptForm = {
 			["depositor_name", "label", "نام واریزکننده"],
 			["bank_name", "label", "نام بانک / بانک مبدأ"],
 			["receipt_posting_date", "columns", 1],
-			["receipt_currency", "columns", 1],
 			["receipt_recipient_type", "columns", 2],
 			["receipt_recipient", "columns", 5],
 			["credit_account", "columns", 4],
 			["credit_amount", "columns", 2],
-			["credit_exchange_rate", "columns", 2],
 			["credit_company_amount", "columns", 3],
 			...RECEIPT_NUMBER_FIELDS.map((fieldname) => [fieldname, "formatter", compactNumberFormatter]),
 			[
@@ -1029,18 +971,19 @@ const receiptForm = {
 			return;
 		}
 		const summary = summarize(frm.doc.operational_pairs || [], frm.doc.company_currency);
-		const rows = summary.currencies.map((row) => {
-			const rate = row.weightedRate === null ? "—" : formatReceiptSummaryValue(row.weightedRate);
-			return `<tr>
-				<td>${frappe.utils.escape_html(row.currency)}</td>
-				<td>${formatReceiptSummaryValue(row.amount)}</td>
-				<td>${rate}</td>
-				<td>${formatReceiptSummaryValue(row.baseAmount)}</td>
-			</tr>`;
-		}).join("");
+		// Single-currency rows: the rate column shows the header rate itself
+		// (there is no weighted average of one rate).
+		const headerRate = Number(frm.doc.receipt_payer_exchange_rate || 0);
+		const rate = headerRate > 0 ? formatReceiptSummaryValue(headerRate) : "—";
+		const rows = summary.currencies.map((row) => `<tr>
+			<td>${frappe.utils.escape_html(row.currency)}</td>
+			<td>${formatReceiptSummaryValue(row.amount)}</td>
+			<td>${rate}</td>
+			<td>${formatReceiptSummaryValue(row.baseAmount)}</td>
+		</tr>`).join("");
 		field.$wrapper.html(`<div class="sp-receipt-summary">
 			<table class="table table-bordered">
-				<thead><tr><th>ارز</th><th>مجموع دریافت همان ارز</th><th>میانگین وزنی نرخ</th><th>مجموع به ارز پایه</th></tr></thead>
+				<thead><tr><th>ارز</th><th>مجموع دریافت همان ارز</th><th>نرخ ارز</th><th>مجموع به ارز پایه</th></tr></thead>
 				<tbody>${rows || '<tr><td colspan="4" class="text-muted">ردیف معتبری برای خلاصه وجود ندارد.</td></tr>'}</tbody>
 				<tfoot><tr class="sp-receipt-summary-total"><td colspan="3">جمع کل به ارز پایه</td><td>${formatReceiptSummaryValue(summary.companyTotal)}</td></tr></tfoot>
 			</table>
@@ -1141,9 +1084,12 @@ const receiptForm = {
 			row.receipt_recipient_type === BANK_ACCOUNT_RECIPIENT ? "حساب بانکی" : "نام پرداخت‌کننده",
 		);
 		gridRow.toggle_display("receipt_recipient", row.receipt_recipient_type !== ACCOUNT_RECIPIENT);
-		gridRow.toggle_display("credit_exchange_rate", hasForeign);
+		// Single-currency rows: ارز و نرخ belong to the header — hidden and
+		// non-editable here; the header value is mirrored onto every row.
+		gridRow.toggle_display("receipt_currency", false);
+		gridRow.toggle_display("credit_exchange_rate", false);
+		gridRow.toggle_editable("credit_exchange_rate", false);
 		gridRow.toggle_display("credit_company_amount", hasForeign);
-		gridRow.toggle_editable("credit_exchange_rate", Boolean(foreign));
 		gridRow.toggle_display("credit_rate_direction", Boolean(foreign));
 		gridRow.toggle_display("credit_description", true);
 		gridRow.toggle_display("receipt_payer_exchange_rate", false);
@@ -1177,6 +1123,7 @@ const receiptForm = {
 	applyCurrencyOptions(frm, availableCurrencies) {
 		const storedCurrencies = [
 			frm.doc.receipt_payer_currency,
+			frm.doc.receipt_receiver_currency,
 			...(frm.doc.operational_pairs || []).map((row) => row.receipt_currency),
 		].filter(Boolean);
 		// No leading "" — a blank option must never be selectable; the default value comes
@@ -1184,6 +1131,7 @@ const receiptForm = {
 		const options = [...new Set([...availableCurrencies, ...storedCurrencies])].filter(Boolean);
 		const optionText = options.join("\n");
 		frm.set_df_property("receipt_payer_currency", "options", optionText);
+		frm.set_df_property("receipt_receiver_currency", "options", optionText);
 
 		const grid = frm.fields_dict.operational_pairs?.grid;
 		if (!grid) {
@@ -1217,28 +1165,34 @@ const receiptForm = {
 		if (frm.doc.receipt_payer_account) {
 			await frm.set_value("receipt_payer_account", "");
 		}
-		// Currency is chosen first and is authoritative: the Party must match it.
-		// Server-side compatibility (ledger currency, then native account currency)
-		// confirms the choice; an incompatible Party is rejected and cleared.
+		// The receiver party posts in the header ارز دریافتی: the Party must match
+		// that currency. Server-side compatibility (ledger currency, then native
+		// account currency) confirms the choice; an incompatible Party is rejected
+		// and cleared.
 		const context = await getHeaderPartyContext(frm);
 		if (context) {
 			const partyCurrency = context.ledger_currency || context.account_currency || "";
-			if (frm.doc.receipt_payer_currency) {
-				if (partyCurrency && partyCurrency !== frm.doc.receipt_payer_currency) {
+			if (frm.doc.receipt_receiver_currency) {
+				if (partyCurrency && partyCurrency !== frm.doc.receipt_receiver_currency) {
 					const rejectedParty = frm.doc.receipt_payer;
 					await frm.set_value("receipt_payer", "");
 					frappe.msgprint(
 						partyCurrencyMismatchMessage(
 							rejectedParty,
 							partyCurrency,
-							frm.doc.receipt_payer_currency,
+							frm.doc.receipt_receiver_currency,
 						),
 					);
 					await this.refreshReceiptView(frm);
 					return;
 				}
 			} else if (partyCurrency) {
-				// Convenience fill only when no currency has been chosen yet.
+				// Convenience fill only when no receiving currency has been chosen yet.
+				frm.__sp_receiving_currency_explicit = false;
+				await this.setProgrammaticReceivingCurrency(frm, partyCurrency);
+			}
+			if (!frm.doc.receipt_payer_currency && partyCurrency) {
+				// Legacy single-currency convenience: the rows follow the payer currency.
 				frm.__sp_receiver_currency_explicit = false;
 				await this.setProgrammaticReceiverCurrency(frm, partyCurrency);
 			}
@@ -1255,7 +1209,7 @@ const receiptForm = {
 			|| !frm.doc.receipt_payer_type
 			|| !frm.doc.receipt_payer
 			|| !PARTY_TYPES.includes(frm.doc.receipt_payer_type)
-			|| frm.doc.receipt_payer_currency
+			|| (frm.doc.receipt_payer_currency && frm.doc.receipt_receiver_currency)
 		) {
 			return;
 		}
@@ -1266,8 +1220,14 @@ const receiptForm = {
 		);
 		const currency = context.ledger_currency || context.account_currency || "";
 		if (currency) {
-			frm.__sp_receiver_currency_explicit = false;
-			await this.setProgrammaticReceiverCurrency(frm, currency);
+			if (!frm.doc.receipt_receiver_currency) {
+				frm.__sp_receiving_currency_explicit = false;
+				await this.setProgrammaticReceivingCurrency(frm, currency);
+			}
+			if (!frm.doc.receipt_payer_currency) {
+				frm.__sp_receiver_currency_explicit = false;
+				await this.setProgrammaticReceiverCurrency(frm, currency);
+			}
 		}
 	},
 	async setProgrammaticReceiverCurrency(frm, currency) {
@@ -1279,6 +1239,17 @@ const receiptForm = {
 			await frm.set_value("receipt_payer_currency", currency);
 		} finally {
 			frm.__sp_setting_receiver_currency = false;
+		}
+	},
+	async setProgrammaticReceivingCurrency(frm, currency) {
+		if (!currency || frm.doc.receipt_receiver_currency === currency) {
+			return;
+		}
+		frm.__sp_setting_receiving_currency = true;
+		try {
+			await frm.set_value("receipt_receiver_currency", currency);
+		} finally {
+			frm.__sp_setting_receiving_currency = false;
 		}
 	},
 	async headerTypeChanged(frm) {
@@ -1310,8 +1281,35 @@ const receiptForm = {
 		await this.clearIncompatibleHeaderReceiver(frm);
 		return this.applyReceiverCurrency(frm);
 	},
+	async receiverCurrencyChanged(frm) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return;
+		}
+		const userInitiated = !frm.__sp_setting_receiving_currency;
+		if (userInitiated && frm.doc.receipt_receiver_currency) {
+			frm.__sp_receiving_currency_explicit = true;
+		}
+		// A user currency change re-derives the rate state: both base → locked at 1;
+		// otherwise editable, and a freshly entered foreign state defaults to 0.
+		await this.applyExchangeRateState(frm, {
+			resetToZero: userInitiated && this.exchangeRateState(frm).foreign,
+		});
+		// The receiver side posts in the header ارز دریافتی: dependents that do not
+		// match the new currency are cleared, the معین is re-checked, and every
+		// started row re-mirrors its debit side from the live rate.
+		await this.clearIncompatibleHeaderReceiver(frm);
+		await this.ensurePayerAccountCurrency(frm, false);
+		for (const row of frm.doc.operational_pairs || []) {
+			if (isRowMeaningfullyStarted(row)) {
+				await spAccountingPair.calculateReceiptReceiver(frm, row.doctype, row.name);
+			}
+		}
+		this.refreshReceiptView(frm);
+	},
 	async clearIncompatibleHeaderReceiver(frm) {
-		const currency = frm.doc.receipt_payer_currency;
+		// The receiver posts in ارز دریافتی when set; the payment currency is only
+		// the fallback while the receiving currency is still empty.
+		const currency = frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency;
 		if (!currency || !frm.doc.company) {
 			return;
 		}
@@ -1339,6 +1337,59 @@ const receiptForm = {
 			}
 		}
 	},
+	// The two header currencies decide the rate field: locked at 1 while both are
+	// the company base currency; editable — with 0 as the not-yet-entered default —
+	// as soon as at least one of them is foreign.
+	exchangeRateState(frm) {
+		const base = frm.doc.company_currency || "";
+		const payer = frm.doc.receipt_payer_currency || "";
+		const receiver = frm.doc.receipt_receiver_currency || "";
+		return {
+			bothBase: Boolean(payer && receiver && payer === base && receiver === base),
+			foreign: Boolean((payer && payer !== base) || (receiver && receiver !== base)),
+		};
+	},
+	async applyExchangeRateState(frm, { resetToZero } = {}) {
+		const { bothBase } = this.exchangeRateState(frm);
+		if (bothBase) {
+			frm.toggle_enable("receipt_payer_exchange_rate", false);
+			if (Number(frm.doc.receipt_payer_exchange_rate) !== 1) {
+				await frm.set_value("receipt_payer_exchange_rate", 1);
+			}
+		} else {
+			frm.toggle_enable("receipt_payer_exchange_rate", true);
+			if (resetToZero) {
+				// 0 is only the UI default, never a valid accounting rate — the user
+				// must enter the real one before any row field is touched.
+				await frm.set_value("receipt_payer_exchange_rate", 0);
+			}
+		}
+	},
+	// Foreign state with a still-zero rate: any user change to an operational row
+	// field raises the error and skips the row cascade. Programmatic writes
+	// (__sp_row_quiet / copying) pass through.
+	receiptRowFieldGuard(frm, cdt, cdn) {
+		if (frm.doc.operation_type !== RECEIPT) {
+			return true;
+		}
+		const row = locals[cdt]?.[cdn];
+		if (!row || !rowChangeUserInitiated(row)) {
+			return true;
+		}
+		if (
+			this.exchangeRateState(frm).foreign
+			&& !(Number(frm.doc.receipt_payer_exchange_rate) > 0)
+		) {
+			frappe.msgprint({
+				title: __("نرخ ارز دریافت‌کننده"),
+				message: __("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد."),
+				indicator: "red",
+			});
+			frm.scroll_to_field("receipt_payer_exchange_rate");
+			return false;
+		}
+		return true;
+	},
 	async applyReceiverCurrency(frm) {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
@@ -1347,13 +1398,10 @@ const receiptForm = {
 		const currentCurrency = frm.doc.receipt_payer_currency || "";
 		frm.__sp_previous_payer_currency = currentCurrency;
 		await this.ensurePayerAccountCurrency(frm, false);
-		if (currentCurrency && currentCurrency === frm.doc.company_currency) {
-			await frm.set_value("receipt_payer_exchange_rate", 1);
-		} else if (currentCurrency !== previousCurrency) {
-			// Fresh foreign currency: 0 is only the UI default, never a valid
-			// accounting rate — the user must enter the real one.
-			await frm.set_value("receipt_payer_exchange_rate", 0);
-		}
+		await this.applyExchangeRateState(frm, {
+			resetToZero: currentCurrency !== previousCurrency
+				&& this.exchangeRateState(frm).foreign,
+		});
 		await this.suggestPayerAccount(frm);
 		await this.recalculatePayerRows(frm);
 		await this.refreshReceiptView(frm);
@@ -1362,7 +1410,7 @@ const receiptForm = {
 		if (frm.doc.operation_type !== RECEIPT) {
 			return;
 		}
-		if (frm.doc.receipt_payer_currency === frm.doc.company_currency) {
+		if (this.exchangeRateState(frm).bothBase) {
 			if (Number(frm.doc.receipt_payer_exchange_rate) !== 1) {
 				await frm.set_value("receipt_payer_exchange_rate", 1);
 			}
@@ -1382,7 +1430,19 @@ const receiptForm = {
 			return null;
 		}
 		if (!frm.doc.receipt_payer_currency) {
-			return ["receipt_payer_currency", __("ابتدا ارز دریافت‌کننده را تعیین کنید.")];
+			return ["receipt_payer_currency", __("ابتدا ارز پرداختی را تعیین کنید.")];
+		}
+		if (!frm.doc.receipt_receiver_currency) {
+			return ["receipt_receiver_currency", __("ابتدا ارز دریافتی را تعیین کنید.")];
+		}
+		// Two distinct foreign currencies would need two exchange rates, and the
+		// document carries one — that combination alone is rejected.
+		if (
+			frm.doc.receipt_receiver_currency !== frm.doc.receipt_payer_currency
+			&& frm.doc.receipt_receiver_currency !== frm.doc.company_currency
+			&& frm.doc.receipt_payer_currency !== frm.doc.company_currency
+		) {
+			return ["receipt_receiver_currency", __("ارز دریافتی باید همان ارز پرداختی یا ارز پایه شرکت باشد.")];
 		}
 		if (!frm.doc.receipt_receiver_kind) {
 			return ["receipt_receiver_kind", __("ابتدا نوع دریافت‌کننده را انتخاب کنید.")];
@@ -1394,7 +1454,7 @@ const receiptForm = {
 			return ["receipt_bank_account", __("ابتدا حساب بانکی دریافت‌کننده را انتخاب کنید.")];
 		}
 		if (
-			frm.doc.receipt_payer_currency !== frm.doc.company_currency
+			this.exchangeRateState(frm).foreign
 			&& !(Number(frm.doc.receipt_payer_exchange_rate) > 0)
 		) {
 			return ["receipt_payer_exchange_rate", __("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")];
@@ -1408,8 +1468,29 @@ const receiptForm = {
 		return frm.doc.operation_type === RECEIPT && !this.headerReadinessIssue(frm);
 	},
 	async recalculatePayerRows(frm) {
+		// Single-currency convergence: every row mirrors the header (ارز پرداختی).
+		// Currency writes flow through the existing rowCurrencyChanged cascade
+		// (rate/معین clearing, suggestion); the explicit clearIncompatibleRowEntity
+		// call covers the entity clear that a quiet write skips. Rate writes flow
+		// through calculate (company amount + receiver mirror). Values are written
+		// only when they differ, so a converged draft stays clean on load.
+		const headerCurrency = frm.doc.receipt_payer_currency || "";
+		const foreign = headerCurrency && headerCurrency !== frm.doc.company_currency;
+		const headerRate = Number(frm.doc.receipt_payer_exchange_rate || 0);
 		for (const row of frm.doc.operational_pairs || []) {
-			await spAccountingPair.calculateReceiptReceiver(frm, row.doctype, row.name);
+			let changed = false;
+			if (headerCurrency && row.receipt_currency !== headerCurrency) {
+				await setRowValueQuietly(row.doctype, row.name, "receipt_currency", headerCurrency);
+				await spAccountingPair.clearIncompatibleRowEntity(frm, row.doctype, row.name);
+				changed = true;
+			}
+			if (foreign && headerRate > 0 && Number(row.credit_exchange_rate) !== headerRate) {
+				await setRowValueQuietly(row.doctype, row.name, "credit_exchange_rate", headerRate);
+				changed = true;
+			}
+			if (changed) {
+				await spAccountingPair.calculateReceiptReceiver(frm, row.doctype, row.name);
+			}
 		}
 	},
 	async parentPostingDateChanged(frm) {
@@ -1454,10 +1535,13 @@ const receiptForm = {
 			return;
 		}
 		const details = await getAccountDetails(frm.doc.receipt_payer_account, frm.doc.company);
-		if (details.account_currency !== frm.doc.receipt_payer_currency) {
+		// The معین دریافت‌کننده posts in ارز دریافتی when set; the payment currency
+		// is only the fallback while the receiving currency is still empty.
+		const receiverCurrency = frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency;
+		if (details.account_currency !== receiverCurrency) {
 			await frm.set_value("receipt_payer_account", "");
 			if (notify) {
-				frappe.msgprint(__("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."));
+				frappe.msgprint(__("ارز معین دریافت‌کننده با ارز دریافتی یکسان نیست."));
 			}
 		}
 	},
@@ -1473,16 +1557,18 @@ const receiptForm = {
 		const details = await getBankAccountDetails(frm.doc.receipt_bank_account, frm.doc.company);
 		// The Bank Account list is filtered by the selected currency, so a mismatch
 		// here is stale state: reject the Bank Account instead of changing currency.
-		if (
-			frm.doc.receipt_payer_currency
-			&& details.account_currency
-			&& frm.doc.receipt_payer_currency !== details.account_currency
-		) {
+		// The bank posts in ارز دریافتی when set; the payment currency is only the
+		// fallback while the receiving currency is still empty.
+		const receiverCurrency = frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency;
+		if (receiverCurrency && details.account_currency && receiverCurrency !== details.account_currency) {
 			await frm.set_value("receipt_bank_account", "");
 			await frm.set_value("receipt_payer_account", "");
-			frappe.msgprint(__("حساب بانکی انتخاب‌شده با ارز دریافت‌کننده یکسان نیست."));
+			frappe.msgprint(__("حساب بانکی انتخاب‌شده با ارز دریافتی یکسان نیست."));
 			await this.refreshReceiptView(frm);
 			return;
+		}
+		if (!frm.doc.receipt_receiver_currency) {
+			await this.setProgrammaticReceivingCurrency(frm, details.account_currency);
 		}
 		if (!frm.doc.receipt_payer_currency) {
 			await this.setProgrammaticReceiverCurrency(frm, details.account_currency);
@@ -1501,15 +1587,17 @@ const receiptForm = {
 			|| !frm.doc.receipt_payer_type
 			|| !frm.doc.receipt_payer
 			|| !frm.doc.company
-			|| !frm.doc.receipt_payer_currency
+			|| !(frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency)
 		) {
 			return;
 		}
+		// The معین دریافت‌کننده posts in ارز دریافتی when set; the payment currency
+		// is only the fallback while the receiving currency is still empty.
 		const account = await getReceiptSuggestionSafely(
 			frm.doc.receipt_payer_type,
 			frm.doc.receipt_payer,
 			frm.doc.company,
-			frm.doc.receipt_payer_currency,
+			frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency,
 		);
 		if (account && !frm.doc.receipt_payer_account) {
 			frm.__sp_setting_payer_account = true;
@@ -1858,14 +1946,16 @@ const spAccountingPair = {
 			let rate = Number(row[`${side}_exchange_rate`] || 0);
 			if (accountCurrency && accountCurrency === frm.doc.company_currency) {
 				rate = 1;
-				await frappe.model.set_value(cdt, cdn, `${side}_exchange_rate`, 1);
+				await setRowValueQuietly(cdt, cdn, `${side}_exchange_rate`, 1);
 			}
 			const amount = Number(row[`${side}_amount`] || 0);
-			await frappe.model.set_value(cdt, cdn, `${side}_company_amount`, amount * rate);
+			// Derived writes stay quiet: the rate guard belongs to user-initiated
+			// row edits only, never to cascades from header changes.
+			await setRowValueQuietly(cdt, cdn, `${side}_company_amount`, amount * rate);
 			const meaning = accountCurrency && frm.doc.company_currency && rate > 0
 				? `1 ${accountCurrency} = ${rate} ${frm.doc.company_currency}`
 				: "";
-			await frappe.model.set_value(cdt, cdn, `${side}_rate_direction`, meaning);
+			await setRowValueQuietly(cdt, cdn, `${side}_rate_direction`, meaning);
 			if (frm.doc.operation_type === RECEIPT && side === "credit") {
 				await this.calculateReceiptReceiver(frm, cdt, cdn);
 				receiptForm.renderSummary(frm);
@@ -1880,20 +1970,27 @@ const spAccountingPair = {
 		}
 		const row = locals[cdt][cdn];
 		const companyAmount = Number(row.credit_company_amount || 0);
-		const receiverCurrency = frm.doc.receipt_payer_currency;
+		// The receiver side posts in the header ارز دریافتی; the same formula serves
+		// all valid pairs: receiving == base currency divides by 1, any foreign
+		// receiving currency divides by the header rate (payment → base when the
+		// payment is foreign, receiver → base when the payment is base). The payment
+		// currency is the fallback while the receiving currency is still empty.
+		const receiverCurrency = frm.doc.receipt_receiver_currency || frm.doc.receipt_payer_currency;
 		const baseReceiver = receiverCurrency && receiverCurrency === frm.doc.company_currency;
 		const receiverRate = baseReceiver ? 1 : Number(frm.doc.receipt_payer_exchange_rate || 0);
 		const receiverAmount = companyAmount > 0 && receiverRate > 0
 			? companyAmount / receiverRate
 			: 0;
-		await frappe.model.set_value(cdt, cdn, "debit_account_currency", receiverCurrency || "");
-		await frappe.model.set_value(cdt, cdn, "debit_exchange_rate", receiverRate || "");
-		await frappe.model.set_value(cdt, cdn, "debit_amount", receiverAmount || "");
-		await frappe.model.set_value(cdt, cdn, "debit_company_amount", companyAmount || "");
+		// Derived writes stay quiet: the rate guard belongs to user-initiated
+		// row edits only, never to cascades from header changes.
+		await setRowValueQuietly(cdt, cdn, "debit_account_currency", receiverCurrency || "");
+		await setRowValueQuietly(cdt, cdn, "debit_exchange_rate", receiverRate || "");
+		await setRowValueQuietly(cdt, cdn, "debit_amount", receiverAmount || "");
+		await setRowValueQuietly(cdt, cdn, "debit_company_amount", companyAmount || "");
 		const meaning = receiverCurrency && frm.doc.company_currency && receiverRate > 0
 			? `1 ${receiverCurrency} = ${receiverRate} ${frm.doc.company_currency}`
 			: "";
-		await frappe.model.set_value(cdt, cdn, "debit_rate_direction", meaning);
+		await setRowValueQuietly(cdt, cdn, "debit_rate_direction", meaning);
 	},
 	async suggest(frm, cdt, cdn, side) {
 		const row = locals[cdt][cdn];
@@ -1921,10 +2018,16 @@ const spAccountingPair = {
 		// action, not further row entries: the change handlers stay quiet.
 		await setRowValueQuietly(cdt, cdn, "receipt_recipient", "");
 		await setRowValueQuietly(cdt, cdn, "credit_account", "");
-		// Currency comes first in the row: default it only when the user has not
-		// chosen one; an existing choice (possibly foreign) is kept on Type change.
+		// Currency comes first in the row and always mirrors the header: default
+		// it only when the user has not chosen one; an existing choice is kept on
+		// Type change.
 		if (!row.receipt_currency) {
-			await this.setRowReceiptCurrency(frm, cdt, cdn, frm.doc.company_currency || "");
+			await this.setRowReceiptCurrency(
+				frm,
+				cdt,
+				cdn,
+				frm.doc.receipt_payer_currency || frm.doc.company_currency || "",
+			);
 		}
 		receiptForm.configureGrid(frm, true);
 		receiptForm.renderSummary(frm);
@@ -2141,7 +2244,6 @@ const spAccountingPair = {
 		const index = rows.findIndex((candidate) => candidate.name === cdn);
 		if (index < 1) {
 			await frappe.model.set_value(cdt, cdn, "receipt_posting_date", frm.doc.posting_date || "");
-			await this.applyDefaultReceiptRowType(frm, row);
 			receiptForm.configureGrid(frm, true);
 			return;
 		}
@@ -2164,23 +2266,10 @@ const spAccountingPair = {
 			for (const fieldname of ["debit_amount", "debit_company_amount", "credit_amount", "credit_company_amount"]) {
 				await frappe.model.set_value(cdt, cdn, fieldname, "");
 			}
-			await this.applyDefaultReceiptRowType(frm, row);
 		} finally {
 			row.__sp_receipt_copying = false;
 		}
 		receiptForm.configureGrid(frm, true);
-	},
-	// The configured Payer Type default fills only an empty type: the Add Row
-	// copy keeps the previous row's type, and a user-chosen type is never
-	// overwritten. The default is configured in SmartProcess Accounting Settings.
-	async applyDefaultReceiptRowType(frm, row) {
-		if (row.receipt_recipient_type) {
-			return;
-		}
-		const defaultType = await receiptForm.loadRecipientTypeDefault(frm);
-		if (defaultType) {
-			await setRowValueQuietly(row.doctype, row.name, "receipt_recipient_type", defaultType);
-		}
 	},
 };
 
@@ -2200,20 +2289,45 @@ const events = {
 		}
 	},
 	receipt_recipient_type(frm, cdt, cdn) {
+		if (!receiptForm.receiptRowFieldGuard(frm, cdt, cdn)) {
+			return;
+		}
 		return spAccountingPair.rowTypeChanged(frm, cdt, cdn);
 	},
 	receipt_recipient(frm, cdt, cdn) {
+		if (!receiptForm.receiptRowFieldGuard(frm, cdt, cdn)) {
+			return;
+		}
 		return spAccountingPair.rowPartyChanged(frm, cdt, cdn);
 	},
 	receipt_currency(frm, cdt, cdn) {
+		if (!receiptForm.receiptRowFieldGuard(frm, cdt, cdn)) {
+			return;
+		}
 		return spAccountingPair.rowCurrencyChanged(frm, cdt, cdn);
 	},
 };
+const guardedPairEvent = (handler) => (frm, cdt, cdn) => {
+	if (!receiptForm.receiptRowFieldGuard(frm, cdt, cdn)) {
+		return;
+	}
+	return handler(frm, cdt, cdn);
+};
 for (const side of ["debit", "credit"]) {
-	events[`${side}_account`] = (frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side);
-	events[`${side}_amount`] = (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side);
-	events[`${side}_exchange_rate`] = (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side);
-	events[`${side}_party_type`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
-	events[`${side}_party`] = (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side);
+	events[`${side}_account`] = guardedPairEvent(
+		(frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side),
+	);
+	events[`${side}_amount`] = guardedPairEvent(
+		(frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side),
+	);
+	events[`${side}_exchange_rate`] = guardedPairEvent(
+		(frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side),
+	);
+	events[`${side}_party_type`] = guardedPairEvent(
+		(frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side),
+	);
+	events[`${side}_party`] = guardedPairEvent(
+		(frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side),
+	);
 }
 frappe.ui.form.on("SmartProcess Accounting Pair", events);

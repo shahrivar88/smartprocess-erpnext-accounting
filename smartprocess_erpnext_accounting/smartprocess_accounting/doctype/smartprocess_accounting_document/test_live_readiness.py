@@ -206,6 +206,7 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 				"posting_date": frappe.utils.nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
 				"receipt_payer_currency": BASE,
+				"receipt_receiver_currency": BASE,
 				"receipt_payer_account": "MC Receivable Base - SPV2",
 				"receipt_payer_exchange_rate": 1,
 				"receipt_payer_type": "Customer",

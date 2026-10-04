@@ -9,7 +9,7 @@
  "fields": [
   {"fieldname":"company_currency","fieldtype":"Link","hidden":1,"label":"Company Currency","options":"Currency","read_only":1},
   {"fieldname":"receipt_posting_date","fieldtype":"Date","label":"تاریخ"},
-  {"columns":1,"fieldname":"receipt_recipient_type","fieldtype":"Link","in_list_view":1,"label":"نوع پرداخت‌کننده","options":"DocType"},
+  {"columns":1,"default":"Customer","fieldname":"receipt_recipient_type","fieldtype":"Select","in_list_view":1,"label":"نوع پرداخت‌کننده","options":"Customer\nBank Account\nSmartProcess Financial Intermediary\nSupplier\nEmployee\nAccount"},
   {"columns":1,"fieldname":"receipt_recipient","fieldtype":"Dynamic Link","in_list_view":1,"label":"نام پرداخت‌کننده","options":"receipt_recipient_type"},
   {"columns":1,"fieldname":"receipt_currency","fieldtype":"Select","in_list_view":1,"label":"ارز"},
   {"fieldname":"receipt_payer_exchange_rate","fieldtype":"Float","hidden":1,"label":"Legacy Payer Exchange Rate","precision":"12"},

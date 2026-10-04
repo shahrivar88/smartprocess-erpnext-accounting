@@ -50,8 +50,26 @@ def canonicalize_receipt(doc) -> None:
 	}
 	party_currency_entries = []
 	receiver = _validate_receiver(doc, accounts, party_currency_entries)
-	receiver_rate = _receiver_exchange_rate(doc, receiver, company_currency)
-	precision = _company_currency_precision(company_currency)
+	payment_currency = doc.receipt_payer_currency
+	receiving_currency = doc.receipt_receiver_currency
+	# Single-rate two-currency contract: the rows carry the payment currency and
+	# the header ارز دریافتی is the currency the receiver side is posted in. The
+	# document carries one exchange rate, which converts the single foreign
+	# currency of the pair into the company base currency — the payment currency
+	# when the payment is foreign, the receiving currency otherwise. Two distinct
+	# foreign currencies would need two rates, so that combination alone is
+	# rejected.
+	if (
+		payment_currency != company_currency
+		and receiving_currency not in (payment_currency, company_currency)
+	):
+		frappe.throw(_("ارز دریافتی باید همان ارز پرداختی یا ارز پایه شرکت باشد."))
+	payment_rate = _payment_exchange_rate(doc, payment_currency, company_currency)
+	receiving_rate = _receiving_exchange_rate(doc, receiving_currency, company_currency)
+	if payment_currency == company_currency and receiving_currency == company_currency:
+		# Both header currencies are the company base: the locked rate is stored as 1.
+		doc.receipt_payer_exchange_rate = decimal_text(Decimal("1"))
+	precision = _currency_precision(company_currency)
 	if not rows:
 		frappe.throw(_("حداقل یک ردیف دریافت لازم است."))
 
@@ -65,7 +83,8 @@ def canonicalize_receipt(doc) -> None:
 			precision,
 			accounts,
 			party_currency_entries,
-			receiver_rate,
+			payment_rate,
+			receiving_rate,
 		)
 	assert_one_currency_per_party(party_currency_entries)
 
@@ -79,11 +98,15 @@ def canonicalize_receipt_row(
 	precision: int,
 	accounts: dict,
 	party_currency_entries: list,
-	receiver_rate: Decimal,
+	payment_rate: Decimal,
+	receiving_rate: Decimal,
 ) -> None:
 	payer_type = row.get("receipt_recipient_type")
 	payer = row.get("receipt_recipient")
-	receipt_currency = row.get("receipt_currency")
+	# Single-currency rows: the header ارز پرداختی is the authoritative row
+	# currency and the stored row value always mirrors it.
+	receipt_currency = doc.receipt_payer_currency
+	row.receipt_currency = receipt_currency
 	if payer_type not in (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT):
 		_receipt_error(number, _("نوع پرداخت‌کننده"), _("یک نوع پرداخت‌کننده معتبر انتخاب کنید."))
 	if not receipt_currency:
@@ -123,9 +146,9 @@ def canonicalize_receipt_row(
 	credit_amount = to_decimal(row.get("credit_amount"), _("مبلغ"))
 	if credit_amount <= 0:
 		_receipt_error(number, _("مبلغ"), _("مبلغ باید بزرگ‌تر از صفر باشد."))
-	credit_rate = Decimal("1") if receipt_currency == company_currency else to_decimal(
-		row.get("credit_exchange_rate"), _("نرخ")
-	)
+	# The row shares the header payment currency, so the canonical payment rate
+	# applies to every row — no per-row rate is read or derived.
+	credit_rate = payment_rate
 	if credit_rate <= 0:
 		_receipt_error(number, _("نرخ"), _("نرخ باید بزرگ‌تر از صفر باشد."))
 	company_amount = _round_company_amount(credit_amount, credit_rate, precision)
@@ -145,14 +168,26 @@ def canonicalize_receipt_row(
 	row.receipt_posting_date = getdate(row.get("receipt_posting_date") or doc.posting_date)
 	row.receipt_payer_exchange_rate = None
 
-	receiver_amount = (
-		company_amount
-		if receiver.account_currency == company_currency
-		else company_amount / receiver_rate
-	)
-
-	row.debit_amount = decimal_text(receiver_amount)
-	row.debit_exchange_rate = decimal_text(receiver_rate)
+	# Single-rate two-currency contract: the receiver side posts in the header
+	# ارز دریافتی. Equal currencies share the entered amount; a base receiving
+	# currency converts it by the header rate; a base payment converted into a
+	# foreign receiving currency divides it by the header rate and rounds to the
+	# receiving currency's GL precision. The stored debit rate is then the exact
+	# amount ratio, so the pair still balances in company currency after the
+	# posting-side re-rounding.
+	if doc.receipt_receiver_currency == doc.receipt_payer_currency:
+		debit_amount = credit_amount
+	elif doc.receipt_receiver_currency == company_currency:
+		debit_amount = _round_company_amount(credit_amount, payment_rate, precision)
+	else:
+		debit_amount = _round_to_precision(
+			credit_amount / receiving_rate, _currency_precision(doc.receipt_receiver_currency)
+		)
+		if debit_amount <= 0:
+			_receipt_error(number, _("مبلغ"), _("مبلغ ارز دریافتی باید بزرگ‌تر از صفر بماند."))
+		receiving_rate = _round_to_precision(credit_amount / debit_amount, 12)
+	row.debit_amount = decimal_text(debit_amount)
+	row.debit_exchange_rate = decimal_text(receiving_rate)
 	row.debit_company_amount = decimal_text(company_amount)
 
 
@@ -160,7 +195,8 @@ def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 	receiver_kind = doc.get("receipt_receiver_kind") or doc.receipt_payer_type
 	for value, label in (
 		(receiver_kind, _("نوع دریافت‌کننده")),
-		(doc.receipt_payer_currency, _("ارز دریافت‌کننده")),
+		(doc.receipt_payer_currency, _("ارز پرداختی")),
+		(doc.receipt_receiver_currency, _("ارز دریافتی")),
 		(doc.receipt_payer_account, _("معین دریافت‌کننده")),
 	):
 		if not value:
@@ -175,8 +211,8 @@ def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 	account = accounts.get(doc.receipt_payer_account)
 	if not account:
 		frappe.throw(_("یک معین دریافت‌کننده معتبر انتخاب کنید."))
-	if account.account_currency != doc.receipt_payer_currency:
-		frappe.throw(_("ارز معین دریافت‌کننده با ارز دریافت‌کننده یکسان نیست."))
+	if account.account_currency != doc.receipt_receiver_currency:
+		frappe.throw(_("ارز معین دریافت‌کننده با ارز دریافتی یکسان نیست."))
 	if receiver_kind in ACCOUNT_RECEIVER_TYPES:
 		_validate_account_receiver(receiver_kind, account)
 		doc.receipt_receiver_kind = receiver_kind
@@ -189,7 +225,7 @@ def _validate_receiver(doc, accounts: dict, party_currency_entries: list):
 	doc.receipt_payer_type = receiver_kind
 	_validate_party_account(doc.receipt_payer_type, doc.receipt_payer, doc.company, account)
 	party_currency_entries.append(
-		(doc.receipt_payer_type, doc.receipt_payer, doc.receipt_payer_currency, _("دریافت‌کننده"))
+		(doc.receipt_payer_type, doc.receipt_payer, doc.receipt_receiver_currency, _("دریافت‌کننده"))
 	)
 	return account
 
@@ -240,7 +276,7 @@ def _validate_account_receiver(receiver_kind, account) -> None:
 
 
 def _validate_receipt_currencies(doc, rows) -> None:
-	currencies = {doc.receipt_payer_currency}
+	currencies = {doc.receipt_payer_currency, doc.receipt_receiver_currency}
 	currencies.update(row.get("receipt_currency") for row in rows)
 	currencies.discard(None)
 	currencies.discard("")
@@ -252,22 +288,43 @@ def _validate_receipt_currencies(doc, rows) -> None:
 		)
 	)
 	if doc.receipt_payer_currency and doc.receipt_payer_currency not in enabled:
-		frappe.throw(_("ارز دریافت‌کننده باید یک ارز فعال و معتبر باشد."))
+		frappe.throw(_("ارز پرداختی باید یک ارز فعال و معتبر باشد."))
+	if doc.receipt_receiver_currency and doc.receipt_receiver_currency not in enabled:
+		frappe.throw(_("ارز دریافتی باید یک ارز فعال و معتبر باشد."))
 	for number, row in enumerate(rows, start=1):
 		currency = row.get("receipt_currency")
 		if currency and currency not in enabled:
 			_receipt_error(number, _("ارز"), _("ارز ردیف باید فعال و معتبر باشد."))
 
 
-def _receiver_exchange_rate(doc, receiver, company_currency: str) -> Decimal:
-	if receiver.account_currency == company_currency:
-		rate = Decimal("1")
-	else:
-		rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
-		if rate <= 0:
-			frappe.throw(
-				_("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
-			)
+def _payment_exchange_rate(doc, payment_currency: str, company_currency: str) -> Decimal:
+	# The header rate converts the payment currency into the company base currency.
+	# A base-currency payment normalizes to rate 1 and leaves the stored field
+	# untouched — with a base payer and a foreign receiver the same field carries
+	# the receiver → base rate instead.
+	if payment_currency == company_currency:
+		return Decimal("1")
+	rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
+	if rate <= 0:
+		frappe.throw(
+			_("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
+		)
+	doc.receipt_payer_exchange_rate = decimal_text(rate)
+	return rate
+
+
+def _receiving_exchange_rate(doc, receiving_currency: str, company_currency: str) -> Decimal:
+	# The receiver side posts in ارز دریافتی: rate 1 in the company base currency,
+	# and the header rate itself in a foreign one. The caller already rejected the
+	# two-distinct-foreign combination, so the header rate always converts the
+	# receiving currency into the base currency here.
+	if receiving_currency == company_currency:
+		return Decimal("1")
+	rate = to_decimal(doc.receipt_payer_exchange_rate, _("نرخ ارز دریافت‌کننده"))
+	if rate <= 0:
+		frappe.throw(
+			_("برای دریافت‌کننده ارزی، نرخ ارز دریافت‌کننده الزامی و باید بزرگ‌تر از صفر باشد.")
+		)
 	doc.receipt_payer_exchange_rate = decimal_text(rate)
 	return rate
 
@@ -277,12 +334,16 @@ def _validate_party_account(party_type, party, company, account) -> None:
 	validate_party_ledger_currency(party_type, party, company, account.account_currency)
 
 
-def _round_company_amount(amount: Decimal, rate: Decimal, precision: int) -> Decimal:
+def _round_to_precision(amount: Decimal, precision: int) -> Decimal:
 	quantizer = Decimal("1").scaleb(-precision)
-	return (amount * rate).quantize(quantizer, rounding=ROUND_HALF_UP)
+	return amount.quantize(quantizer, rounding=ROUND_HALF_UP)
 
 
-def _company_currency_precision(currency: str) -> int:
+def _round_company_amount(amount: Decimal, rate: Decimal, precision: int) -> Decimal:
+	return _round_to_precision(amount * rate, precision)
+
+
+def _currency_precision(currency: str) -> int:
 	field = frappe.get_meta("GL Entry").get_field("debit")
 	return get_field_precision(field, currency=currency)
 
