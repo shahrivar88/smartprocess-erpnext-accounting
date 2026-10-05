@@ -1,0 +1,377 @@
+// Pure Receipt Conversion UI tests: Frappe is stubbed, nothing touches a site.
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const DOCTYPE_DIR = path.join(__dirname, "..", "doctype");
+const CONVERSION_DIR = path.join(DOCTYPE_DIR, "smartprocess_receipt_conversion");
+const LEG = "SmartProcess Receipt Conversion Leg";
+
+const calls = { xcall: [], confirm: [], setValue: [], alerts: [] };
+let responses = {};
+let confirmAnswer = true;
+const docs = new Map();
+const linkTitles = {};
+
+globalThis.window = globalThis;
+globalThis.frappe = {
+	xcall(method, args) {
+		calls.xcall.push({ method, args });
+		const response = responses[method.split(".").pop()];
+		return Promise.resolve(typeof response === "function" ? response(args) : response);
+	},
+	confirm(message, yes, no) {
+		calls.confirm.push(message);
+		(confirmAnswer ? yes : no)();
+	},
+	throw(message) {
+		throw new Error(message);
+	},
+	show_alert(options) {
+		calls.alerts.push(options);
+	},
+	get_doc(doctype, name) {
+		return docs.get(name);
+	},
+	model: {
+		async set_value(doctype, name, fieldname, value) {
+			calls.setValue.push({ name, fieldname, value });
+			docs.get(name)[fieldname] = value;
+		},
+	},
+	meta: { docfield_map: {}, get_docfield: () => null },
+	utils: {
+		escape_html: (value) => String(value).replace(/</g, "&lt;"),
+		add_link_title: (doctype, name, title) => (linkTitles[`${doctype}::${name}`] = title),
+		get_link_title: (doctype, name) => linkTitles[`${doctype}::${name}`],
+	},
+};
+globalThis.spConversionLegs = require(path.join(CONVERSION_DIR, "conversion", "conversion_legs.js"));
+globalThis.spConversionForm = require(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
+spConversionForm.PREVIEW_DELAY = 0;
+
+function serverLeg(side, values = {}) {
+	return {
+		source_pair: "pair-1",
+		source_side: side,
+		source_posting: "SP-POST-1",
+		source_account: side === "Receiver" ? "Bank - SP" : "Debtors - SP",
+		source_party_type: side === "Receiver" ? null : "Customer",
+		source_party: side === "Receiver" ? null : "CUST-1",
+		company_currency: "IRR",
+		original_amount: "100000000",
+		already_converted: "0",
+		remaining_amount: "100000000",
+		conversion_amount: 0,
+		target_currency: "USD",
+		...values,
+	};
+}
+
+function form(values = {}) {
+	let counter = 0;
+	const doc = {
+		doctype: "SmartProcess Receipt Conversion",
+		name: "new-conversion",
+		docstatus: 0,
+		source_receipt: "SP-REC-1",
+		company: "SP",
+		target_currency: "",
+		legs: [],
+		...values,
+	};
+	const frm = {
+		doc,
+		docname: doc.name,
+		fields_dict: {},
+		refreshed: 0,
+		tableProperties: {},
+		set_query() {},
+		set_df_property(fieldname, property, value) {
+			this.tableProperties[`${fieldname}:${property}`] = value;
+		},
+		refresh_field() {
+			this.refreshed++;
+		},
+		clear_table(fieldname) {
+			doc[fieldname] = [];
+		},
+		add_child(fieldname, row) {
+			const child = { doctype: LEG, name: `leg-${++counter}`, parent: doc.name, ...row };
+			docs.set(child.name, child);
+			doc[fieldname].push(child);
+			return child;
+		},
+		async set_value(fieldname, value) {
+			doc[fieldname] = value;
+			await spConversionForm.currencyChanged(frm);
+		},
+	};
+	spConversionForm.state(frm);
+	return frm;
+}
+
+async function selectCurrency(frm, currency) {
+	frm.doc.target_currency = currency;
+	await spConversionForm.currencyChanged(frm);
+	await settle();
+}
+
+function reset() {
+	calls.xcall = [];
+	calls.confirm = [];
+	calls.setValue = [];
+	calls.alerts = [];
+	confirmAnswer = true;
+	responses = {
+		get_conversion_legs: () => ({
+			legs: [serverLeg("Receiver"), serverLeg("Payer", { target_party_type: "Customer" })],
+			titles: { Customer: { "CUST-1": "مشتری یک" } },
+		}),
+		preview_target_amounts: ({ legs }) =>
+			Object.fromEntries(legs.map((leg) => [leg.name, Number(leg.conversion_amount) && Number(leg.target_rate) ? "1111.11" : "0"])),
+	};
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+const tests = [];
+const test = (name, run) => tests.push([name, run]);
+const read = (file) => fs.readFileSync(file, "utf-8");
+const legMeta = JSON.parse(read(path.join(DOCTYPE_DIR, "smartprocess_receipt_conversion_leg", "smartprocess_receipt_conversion_leg.json")));
+const conversionMeta = JSON.parse(read(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion.json")));
+const field = (meta, fieldname) => meta.fields.find((df) => df.fieldname === fieldname);
+
+test("selecting the first currency loads every server leg without a confirmation", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	assert.equal(calls.confirm.length, 0);
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.source_side), ["Receiver", "Payer"]);
+	assert.deepEqual(calls.xcall[0].args, { source_receipt: "SP-REC-1", target_currency: "USD" });
+	assert.equal(frm.doc.legs[1].target_party_type, "Customer");
+});
+
+test("a new Conversion drops Frappe's default Company currency and empty mandatory row", async () => {
+	const frm = form({ __islocal: 1, target_currency: "IRR", legs: [{ doctype: LEG, name: "empty-row" }] });
+	responses.get_company_currency = "IRR";
+	await spConversionForm.refresh(frm);
+	assert.equal(frm.doc.target_currency, "");
+	assert.deepEqual(frm.doc.legs, []);
+	assert.deepEqual(frm.tableProperties, { "legs:cannot_add_rows": 1, "legs:cannot_delete_rows": 1 });
+	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_conversion_legs")));
+	await selectCurrency(frm, "USD");
+	assert.equal(calls.confirm.length, 0);
+	assert.equal(frm.doc.legs.length, 2);
+});
+
+test("only server legs are shown: a foreign side the server does not return never appears", async () => {
+	const frm = form();
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver")], titles: {} };
+	await selectCurrency(frm, "USD");
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.source_side), ["Receiver"]);
+});
+
+test("a prefilled suggestion alone never asks for a confirmation", async () => {
+	const frm = form();
+	responses.get_conversion_legs = { legs: [serverLeg("Payer", { target_account: "USD Debtors - SP" })], titles: {} };
+	await selectCurrency(frm, "USD");
+	await selectCurrency(frm, "EUR");
+	assert.equal(calls.confirm.length, 0);
+});
+
+test("a currency change after a rate asks once and resets targets but keeps amounts", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const [receiver, payer] = frm.doc.legs;
+	Object.assign(receiver, { conversion_amount: 100000000, target_rate: 90000, target_account: "USD Bank - SP" });
+	Object.assign(payer, { conversion_amount: 50000000, target_rate: 100000, target_party: "CUST-9" });
+	await selectCurrency(frm, "EUR");
+	assert.equal(calls.confirm.length, 1);
+	const [newReceiver, newPayer] = frm.doc.legs;
+	assert.deepEqual([newReceiver.conversion_amount, newPayer.conversion_amount], [100000000, 50000000]);
+	for (const leg of frm.doc.legs) {
+		assert.equal(leg.target_rate, undefined);
+		assert.equal(leg.target_account, undefined);
+		assert.equal(leg.target_currency, "EUR");
+	}
+	assert.equal(newPayer.target_party, undefined);
+	assert.equal(newPayer.target_party_type, "Customer", "the new currency's suggestion is reloaded");
+});
+
+test("cancelling the confirmation restores the previous currency and keeps every row", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	Object.assign(frm.doc.legs[0], { conversion_amount: 100000000, target_rate: 90000 });
+	const before = frm.doc.legs;
+	confirmAnswer = false;
+	await selectCurrency(frm, "EUR");
+	assert.equal(calls.confirm.length, 1);
+	assert.equal(frm.doc.target_currency, "USD");
+	assert.equal(frm.doc.legs, before);
+	assert.equal(frm.doc.legs[0].target_rate, 90000);
+	assert.equal(calls.xcall.filter((call) => call.method.endsWith("get_conversion_legs")).length, 1);
+});
+
+test("a user-edited target counts as input even before a rate", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	spConversionForm.targetTouched(frm, LEG, frm.doc.legs[0].name);
+	await selectCurrency(frm, "EUR");
+	assert.equal(calls.confirm.length, 1);
+});
+
+test("preview writes only target_amount and never the business rate", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const [receiver, payer] = frm.doc.legs;
+	Object.assign(receiver, { conversion_amount: 100000000, target_rate: 90000 });
+	calls.setValue = [];
+	spConversionForm.rateChanged(frm, LEG, receiver.name);
+	await settle();
+	assert.equal(receiver.target_amount, 1111.11);
+	assert.equal(receiver.target_rate, 90000);
+	assert.equal(payer.target_amount, 0, "a zero leg stays with a zero Target Amount");
+	assert.ok(calls.setValue.every((call) => call.fieldname === "target_amount"));
+});
+
+test("receiver and payer are sent independently: 100m/0 and 100m/50m at different rates", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const [receiver, payer] = frm.doc.legs;
+	Object.assign(receiver, { conversion_amount: 100000000, target_rate: 90000 });
+	spConversionForm.amountChanged(frm);
+	await settle();
+	let sent = calls.xcall.filter((call) => call.method.endsWith("preview_target_amounts")).pop().args.legs;
+	assert.deepEqual(sent.map((leg) => [leg.conversion_amount, leg.target_rate]), [[100000000, 90000], [0, undefined]]);
+	Object.assign(payer, { conversion_amount: 50000000, target_rate: 100000 });
+	spConversionForm.amountChanged(frm);
+	await settle();
+	sent = calls.xcall.filter((call) => call.method.endsWith("preview_target_amounts")).pop().args.legs;
+	assert.deepEqual(sent.map((leg) => [leg.conversion_amount, leg.target_rate]), [[100000000, 90000], [50000000, 100000]]);
+	assert.equal(frm.doc.legs.length, 2, "rows are never merged or removed");
+});
+
+test("a stale preview response is ignored", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const receiver = frm.doc.legs[0];
+	let release;
+	responses.preview_target_amounts = () => new Promise((resolve) => (release = () => resolve({ [receiver.name]: "1" })));
+	const first = spConversionForm.preview(frm);
+	responses.preview_target_amounts = { [receiver.name]: "2" };
+	await spConversionForm.preview(frm);
+	release();
+	await first;
+	assert.equal(receiver.target_amount, 2);
+});
+
+test("کل مانده copies the remaining amount and still allows manual amounts", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const payer = frm.doc.legs[1];
+	payer.remaining_amount = "70000000";
+	await spConversionForm.fillRemaining(frm, LEG, payer.name);
+	assert.equal(payer.conversion_amount, "70000000");
+	frm.doc.docstatus = 1;
+	payer.remaining_amount = "1";
+	await spConversionForm.fillRemaining(frm, LEG, payer.name);
+	assert.equal(payer.conversion_amount, "70000000", "a submitted Conversion never changes");
+});
+
+test("submit with every amount zero stops with a Persian message", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	assert.throws(() => spConversionForm.beforeSubmit(frm), /حداقل یک ردیف/);
+	frm.doc.legs[0].conversion_amount = 1;
+	spConversionForm.beforeSubmit(frm);
+});
+
+test("account and party filters follow the target currency and the chosen Party", () => {
+	assert.deepEqual(spConversionLegs.accountFilters("SP", "USD", "Customer", ""), {
+		company: "SP",
+		disabled: 0,
+		is_group: 0,
+		account_currency: "USD",
+	});
+	assert.equal(spConversionLegs.accountFilters("SP", "USD", "Customer", "CUST-1").account_type, "Receivable");
+	assert.equal(spConversionLegs.accountFilters("SP", "USD", "Supplier", "SUP-1").account_type, "Payable");
+	assert.deepEqual(spConversionLegs.currencyFilters("IRR"), { enabled: 1, name: ["!=", "IRR"] });
+});
+
+test("grid labels: Persian side and party · account", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const formatters = spConversionForm.formatters();
+	const payer = frm.doc.legs[1];
+	assert.equal(formatters.source_side("Receiver"), "دریافت‌کننده");
+	assert.equal(formatters.source_side("Payer"), "پرداخت‌کننده");
+	assert.equal(formatters.source_account(payer.source_account, {}, {}, payer), "مشتری یک · Debtors - SP");
+	assert.equal(formatters.source_account("Bank - SP", {}, {}, frm.doc.legs[0]), "Bank - SP");
+	assert.equal(formatters.target_account("<x>", {}, {}, {}), "&lt;x>");
+	const options = spConversionForm.gridProperties().find(([fieldname, property]) => fieldname === "source_side" && property === "options")[2];
+	assert.deepEqual(options, [
+		{ value: "Receiver", label: "دریافت‌کننده" },
+		{ value: "Payer", label: "پرداخت‌کننده" },
+	]);
+});
+
+test("leg grid columns are the agreed compact set, in order", () => {
+	const columns = legMeta.field_order.filter((fieldname) => field(legMeta, fieldname).in_list_view);
+	assert.deepEqual(columns, [
+		"source_side",
+		"source_account",
+		"original_amount",
+		"already_converted",
+		"remaining_amount",
+		"conversion_amount",
+		"target_rate",
+		"target_amount",
+		"target_account",
+		"fill_remaining",
+	]);
+	const width = columns.reduce((total, fieldname) => total + field(legMeta, fieldname).columns, 0);
+	assert.ok(width > 10, "past 10 columns Frappe scrolls the grid instead of truncating headers");
+	for (const fieldname of ["source_side", "source_account", "original_amount", "already_converted", "remaining_amount", "target_amount"]) {
+		assert.equal(field(legMeta, fieldname).read_only, 1, fieldname);
+	}
+	for (const fieldname of ["conversion_amount", "target_rate", "target_account", "target_party_type", "target_party"]) {
+		assert.ok(!field(legMeta, fieldname).read_only, fieldname);
+	}
+	assert.equal(field(legMeta, "posting_exchange_rate").hidden, 1);
+	assert.equal(field(legMeta, "fill_remaining").label, "کل مانده");
+});
+
+test("header labels are Persian and Receipt/Company are read-only", () => {
+	assert.deepEqual(
+		["source_receipt", "posting_date", "target_currency", "remarks"].map((fieldname) => field(conversionMeta, fieldname).label),
+		["رسید مبدا", "تاریخ تبدیل", "ارز مقصد", "توضیحات"],
+	);
+	assert.equal(field(conversionMeta, "source_receipt").read_only, 1);
+	assert.equal(field(conversionMeta, "company").read_only, 1);
+	assert.ok(!field(conversionMeta, "target_currency").read_only);
+});
+
+test("the Receipt only gains an unsaved-Conversion button", () => {
+	const receiptForm = read(path.join(DOCTYPE_DIR, "smartprocess_accounting_document", "smartprocess_accounting_document.js"));
+	assert.match(receiptForm, /add_custom_button\("تبدیل ارز", \(\) => startReceiptConversion\(frm\)\)/);
+	assert.match(receiptForm, /frappe\.new_doc\(SP_RECEIPT_CONVERSION, \{ source_receipt: frm\.doc\.name, company: frm\.doc\.company \}\)/);
+	assert.match(receiptForm, /frm\.doc\.docstatus === 1/);
+	const conversionForm = read(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
+	assert.ok(!/\.save\(|\.savesubmit\(|\.submit\(/.test(conversionForm), "the form never saves or submits by itself");
+	assert.ok(!/posting_exchange_rate/.test(conversionForm), "the hidden posting rate is never written");
+	const doctypeScript = read(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion.js"));
+	for (const file of ["receipt/receipt_numbers.js", "conversion/conversion_legs.js", "conversion/conversion_form.js"]) {
+		assert.ok(doctypeScript.includes(`${file}" %}`), file);
+	}
+});
+
+(async () => {
+	for (const [name, run] of tests) {
+		reset();
+		await run();
+		console.log(`ok - ${name}`);
+	}
+	console.log(`receipt_conversion_ui: ${tests.length} tests passed`);
+})().catch((error) => {
+	console.error(error);
+	process.exitCode = 1;
+});

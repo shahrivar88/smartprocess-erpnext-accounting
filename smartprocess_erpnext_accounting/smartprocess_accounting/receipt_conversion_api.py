@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 import frappe
 from frappe.query_builder import Order
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion import (
+	has_company_places,
+	target_share,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	CONVERSION_DOCTYPE,
 	LEG_DOCTYPE,
@@ -16,12 +22,14 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 	load_source_receipt,
 	receipt_pair_names,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	get_company_currency,
 	resolve_party_currency,
 )
 
 SUGGESTION_SCAN_LIMIT = 20
+PREVIEW_LEG_LIMIT = 500
 
 
 @frappe.whitelist()
@@ -44,6 +52,30 @@ def make_receipt_conversion(source_receipt: str, target_currency: str | None = N
 			if source.account_currency == company_currency:
 				doc.append("legs", _draft_leg(source, company_currency, target_currency))
 	return doc
+
+
+@frappe.whitelist()
+def get_conversion_legs(source_receipt: str, target_currency: str | None = None) -> dict:
+	"""Draft legs for the form, with Party display titles for the compact grid."""
+	doc = make_receipt_conversion(source_receipt, target_currency)
+	legs = [leg.as_dict(no_default_fields=True) for leg in doc.legs]
+	return {"legs": legs, "titles": _party_titles(legs)}
+
+
+@frappe.whitelist()
+def preview_target_amounts(company: str, target_currency: str, legs: str | list) -> dict:
+	"""Target Amount per leg name with the submit rounding rule; ``None`` where a leg cannot post yet."""
+	company_currency = get_company_currency(company)
+	frappe.has_permission(CONVERSION_DOCTYPE, "read", throw=True)
+	lookups = ReceiptLookups()
+	if not target_currency or target_currency == company_currency or not lookups.is_enabled_currency(target_currency):
+		return {}
+	company_places = lookups.company_precision(company_currency)
+	target_places = lookups.amount_precision(target_currency)
+	return {
+		leg.get("name"): _preview_amount(leg, target_places, company_places)
+		for leg in (frappe.parse_json(legs) or [])[:PREVIEW_LEG_LIMIT]
+	}
 
 
 @frappe.whitelist()
@@ -110,8 +142,49 @@ def _draft_leg(source, company_currency: str, target_currency: str | None) -> di
 		suggestion = get_target_suggestion(
 			source.company, source.account, source.side, target_currency, source.party_type, source.party
 		)
-		leg.update(suggestion or {})
+		leg.update(suggestion or {"target_party_type": source.party_type})
 	return leg
+
+
+def _preview_amount(leg: dict, target_places: int, company_places: int) -> str | None:
+	amount = _optional_decimal(leg.get("conversion_amount"))
+	rate = _optional_decimal(leg.get("target_rate"))
+	if amount == 0:
+		return "0"
+	if amount is None or amount < 0 or rate is None or rate <= 0 or not has_company_places(amount, company_places):
+		return None
+	share = target_share(amount, rate, target_places, company_places)
+	if share.amount <= 0 or share.rate is None:
+		return None
+	return decimal_text(share.amount)
+
+
+def _optional_decimal(value) -> Decimal | None:
+	if value in (None, ""):
+		return None
+	try:
+		number = Decimal(str(value))
+	except InvalidOperation:
+		return None
+	return number if number.is_finite() else None
+
+
+def _party_titles(legs: list[dict]) -> dict:
+	"""``{party_type: {party: title}}`` for the parties the grid shows."""
+	titles: dict = {}
+	for prefix in ("source", "target"):
+		for leg in legs:
+			party_type, party = leg.get(f"{prefix}_party_type"), leg.get(f"{prefix}_party")
+			if party_type and party and party not in titles.get(party_type, {}):
+				titles.setdefault(party_type, {})[party] = _party_title(party_type, party)
+	return titles
+
+
+def _party_title(party_type: str, party: str) -> str:
+	title_field = frappe.get_meta(party_type).title_field
+	if not title_field or not frappe.has_permission(party_type, "read", doc=party):
+		return party
+	return frappe.db.get_value(party_type, party, title_field) or party
 
 
 def _usable_target(row, company: str, target_currency: str) -> bool:

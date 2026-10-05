@@ -18,8 +18,10 @@ from smartprocess_erpnext_accounting.smartprocess_accounting import receipt_conv
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import start_correction
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import PostingLine, _make_gl_entry
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
+	get_conversion_legs,
 	get_target_suggestion,
 	make_receipt_conversion,
+	preview_target_amounts,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import NON_GENERIC_ACCOUNT_TYPES
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
@@ -233,6 +235,37 @@ class TestReceiptConversion(AccountingFixtureTestCase):
 		self.assertEqual(suggestion, expected)
 		payer = self.legs(make_receipt_conversion(receipt.name, self.target))[1]
 		self.assertEqual({key: payer.get(key) for key in expected}, expected)
+
+	def test_preview_matches_submit_without_touching_the_rate(self):
+		receipt = self.submitted_receipt()
+		legs = [
+			{"name": "receiver", "conversion_amount": str(HUNDRED_M), "target_rate": "90000"},
+			{"name": "payer", "conversion_amount": "50000000", "target_rate": "100000"},
+			{"name": "zero", "conversion_amount": 0, "target_rate": None},
+			{"name": "no-rate", "conversion_amount": "1000", "target_rate": ""},
+			{"name": "too-small", "conversion_amount": "1", "target_rate": "90000"},
+			{"name": "bad", "conversion_amount": "abc", "target_rate": "90000"},
+		]
+		preview = preview_target_amounts(self.company, self.target, frappe.as_json(legs))
+		self.assertEqual(
+			preview,
+			{"receiver": "1111.11", "payer": "500", "zero": "0", "no-rate": None, "too-small": None, "bad": None},
+		)
+		conversion = self.convert(receipt, receiver=HUNDRED_M, payer="50000000", payer_rate="100000")
+		receiver, payer = self.legs(conversion)
+		self.assertEqual((Decimal(str(receiver.target_amount)), Decimal(str(payer.target_amount))), (Decimal("1111.11"), Decimal("500")))
+		self.assertEqual((Decimal(str(receiver.target_rate)), Decimal(str(payer.target_rate))), (Decimal("90000"), Decimal("100000")))
+		self.assertEqual(preview_target_amounts(self.company, self.base, frappe.as_json(legs)), {})
+
+	def test_form_legs_carry_party_titles_and_source_party_type(self):
+		receipt = self.submitted_receipt()
+		response = get_conversion_legs(receipt.name, self.target)
+		receiver, payer = sorted(response["legs"], key=lambda leg: leg["source_side"] != "Receiver")
+		self.assertIsNone(receiver.get("target_party_type"))
+		self.assertEqual((payer["target_party_type"], payer.get("target_party")), ("Customer", None))
+		title = frappe.db.get_value("Customer", self.customer, "customer_name")
+		self.assertEqual(response["titles"], {"Customer": {self.customer: title}})
+		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
 
 	def assertPair(self, conversion, leg, reversal, target):
 		"""One source reversal + one target line per positive leg, balanced in base."""

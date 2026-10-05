@@ -40,6 +40,15 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 )
 
 
+def target_share(amount: Decimal, rate: Decimal, target_places: int, company_places: int):
+	"""The single rounding rule shared by submit and the form preview."""
+	return ReceiverAllocation(rate, target_places, company_places).shares([amount])[0]
+
+
+def has_company_places(amount: Decimal, company_places: int) -> bool:
+	return amount == amount.quantize(Decimal("1").scaleb(-company_places))
+
+
 @dataclass(frozen=True)
 class LegPosting:
 	leg: object
@@ -186,7 +195,7 @@ class ReceiptConversionService:
 		rate = to_decimal(leg.target_rate, _("Target Rate"))
 		if rate <= 0:
 			_leg_error(leg, _("Target Rate must be greater than zero."))
-		share = ReceiverAllocation(rate, self.target_places, self.company_places).shares([amount])[0]
+		share = target_share(amount, rate, self.target_places, self.company_places)
 		if share.amount <= 0:
 			_leg_error(leg, _("Conversion Amount is too small: the Target Amount rounds to zero."))
 		if share.rate is None:
@@ -220,7 +229,7 @@ class ReceiptConversionService:
 		amount = to_decimal(leg.conversion_amount, _("Conversion Amount"))
 		if amount < 0:
 			_leg_error(leg, _("Conversion Amount cannot be negative."))
-		if amount != amount.quantize(Decimal("1").scaleb(-self.company_places)):
+		if not has_company_places(amount, self.company_places):
 			_leg_error(leg, _("Conversion Amount has more decimals than the Company currency allows."))
 		return amount
 

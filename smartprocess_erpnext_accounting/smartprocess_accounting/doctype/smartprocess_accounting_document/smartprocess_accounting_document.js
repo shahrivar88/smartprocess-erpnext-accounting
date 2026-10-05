@@ -40,6 +40,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		if (canStartCorrection(frm)) {
 			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
 		}
+		if (canConvertCurrency(frm)) {
+			frm.add_custom_button("تبدیل ارز", () => startReceiptConversion(frm));
+		}
 		void spReceiptForm.refresh(frm);
 	},
 	validate(frm) {
@@ -99,6 +102,17 @@ function canStartCorrection(frm) {
 		(frm.perm || []).some((permission) => Boolean(permission[permissionType]));
 	return [1, 2].includes(frm.doc.docstatus)
 		&& ["read", "write", "cancel", "amend", "create"].every(hasPermission);
+}
+
+const SP_RECEIPT_CONVERSION = "SmartProcess Receipt Conversion";
+
+function canConvertCurrency(frm) {
+	return isReceiptForm(frm) && frm.doc.docstatus === 1 && frappe.model.can_create(SP_RECEIPT_CONVERSION);
+}
+
+// Opens an unsaved Conversion; nothing is saved until the user saves it.
+function startReceiptConversion(frm) {
+	return frappe.new_doc(SP_RECEIPT_CONVERSION, { source_receipt: frm.doc.name, company: frm.doc.company });
 }
 
 function promptForCorrection(frm) {
