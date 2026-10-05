@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 import frappe
 from frappe.query_builder import Order
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion import (
 	has_company_places,
@@ -17,7 +18,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 	LEG_DOCTYPE,
 	PAYER,
 	RECEIVER,
-	converted_amount,
 	load_source_leg,
 	load_source_receipt,
 	receipt_pair_names,
@@ -64,8 +64,8 @@ def get_receipt_conversion_status(source_receipt: str) -> dict:
 	receipt = load_source_receipt(source_receipt)
 	company_currency = get_company_currency(receipt.company)
 	balances = [
-		(source.original_amount, converted_amount(source))
-		for source in _company_currency_sources(receipt.name, company_currency)
+		(consumption.original, consumption.converted)
+		for consumption in map(source_consumption, _company_currency_sources(receipt.name, company_currency))
 	]
 	return {
 		"status": conversion_status(balances),
@@ -171,7 +171,7 @@ def _linked_conversion_counts(receipt: str) -> dict:
 
 
 def _draft_leg(source, company_currency: str, target_currency: str | None) -> dict:
-	already = converted_amount(source)
+	consumption = source_consumption(source)
 	leg = {
 		"source_pair": source.pair,
 		"source_side": source.side,
@@ -180,9 +180,9 @@ def _draft_leg(source, company_currency: str, target_currency: str | None) -> di
 		"source_party_type": source.party_type,
 		"source_party": source.party,
 		"company_currency": company_currency,
-		"original_amount": decimal_text(source.original_amount),
-		"already_converted": decimal_text(already),
-		"remaining_amount": decimal_text(source.original_amount - already),
+		"original_amount": decimal_text(consumption.original),
+		"already_converted": decimal_text(consumption.converted),
+		"remaining_amount": decimal_text(consumption.remaining),
 		"conversion_amount": 0,
 		"target_currency": target_currency,
 	}

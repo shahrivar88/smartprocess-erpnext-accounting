@@ -19,13 +19,13 @@ import frappe
 from frappe import _
 from frappe.utils import getdate
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import PostingLine
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_allocation import ReceiverAllocation
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	POSTING_DOCTYPE,
 	SourceLeg,
-	converted_amount,
 	load_source_leg,
 	load_source_receipt,
 	lock_source_receipt,
@@ -157,10 +157,8 @@ class ReceiptConversionService:
 			_leg_error(leg, _("Only Company-currency ({0}) Receipt sides can be converted.").format(self.company_currency))
 		if getdate(doc.posting_date) < getdate(source.posting_date):
 			_leg_error(leg, _("Posting Date cannot be before the source posting date {0}.").format(source.posting_date))
-		already = converted_amount(source, lock=lock)
-		remaining = source.original_amount - already
-		if remaining < 0:
-			_leg_error(leg, _("Converted amount exceeds the source amount. The ledger needs review."))
+		consumption = source_consumption(source, lock=lock)
+		already, remaining = consumption.converted, consumption.remaining
 		amount = self._conversion_amount(leg)
 		if amount > remaining:
 			_leg_error(

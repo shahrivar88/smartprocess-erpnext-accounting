@@ -14,7 +14,9 @@ from unittest.mock import patch
 import frappe
 from frappe.utils import add_days, nowdate
 
-from smartprocess_erpnext_accounting.smartprocess_accounting import receipt_conversion
+from smartprocess_erpnext_accounting.smartprocess_accounting import conversion_consumption, receipt_conversion
+from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import balance_conversion_sources
+from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import start_correction
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import PostingLine, _make_gl_entry
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
@@ -26,6 +28,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 	preview_target_amounts,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import NON_GENERIC_ACCOUNT_TYPES
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import SourceLeg, load_source_leg
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
 
 from ..smartprocess_accounting_document.v2_test_support import AccountingFixtureTestCase
@@ -49,6 +52,18 @@ class TestPostingLineAgainstReference(unittest.TestCase):
 	def test_partial_against_reference_is_rejected(self):
 		with self.assertRaises(frappe.ValidationError):
 			_make_gl_entry(_GLDictDoc(), _line(against_voucher="SP-POST-X"))
+
+
+class TestSourceConsumptionBounds(unittest.TestCase):
+	def test_consumption_outside_the_source_is_reported_not_clamped(self):
+		source = SourceLeg("REC", "POST", "PAIR", 1, "Payer", "Co", "2026-10-06", "AR", "XBA", None, None, HUNDRED_M)
+		for converted in (HUNDRED_M + 1, Decimal("-1")):
+			with self.subTest(converted=converted):
+				with patch.object(conversion_consumption, "converted_amount", return_value=converted):
+					with self.assertRaisesRegex(frappe.ValidationError, "needs review"):
+						source_consumption(source)
+		with patch.object(conversion_consumption, "converted_amount", return_value=HUNDRED_M):
+			self.assertEqual(source_consumption(source).remaining, 0)
 
 
 class TestReceiptConversion(AccountingFixtureTestCase):
@@ -313,6 +328,115 @@ class TestReceiptConversion(AccountingFixtureTestCase):
 		self.assertStatus(receipt, "Fully Converted", linked=1, active=1)
 		self.assertIsNone(conversion_status([]))
 
+	def test_receipt_and_balance_consumption_share_one_remaining(self):
+		receipt = self.submitted_receipt()
+		self.convert(receipt, payer="40000000")
+		self.assertConsumption(receipt, "Payer", converted="40000000")
+		self.simulate_balance_consumption(receipt, payer="30000000")
+		self.assertConsumption(receipt, "Payer", converted="70000000")
+		with self.assertRaisesRegex(frappe.ValidationError, "exceeds the remaining"):
+			self.convert(receipt, payer="30000001")
+		self.convert(receipt, payer="30000000")
+		self.assertConsumption(receipt, "Payer", converted=HUNDRED_M)
+		self.assertConsumption(receipt, "Receiver", converted=0)
+
+	def test_balance_only_consumption_counts_until_cancelled(self):
+		receipt = self.submitted_receipt()
+		balance = self.simulate_balance_consumption(receipt, payer="30000000")
+		self.assertConsumption(receipt, "Payer", converted="30000000")
+		self.assertStatus(receipt, "Partially Converted", linked=0, active=0)
+		with self.assertRaisesRegex(frappe.ValidationError, "locked|Cancel every linked Conversion"):
+			frappe.get_doc(RECEIPT, receipt.name).cancel()
+		frappe.get_doc(CONVERSION, balance.name).cancel()
+		self.assertConsumption(receipt, "Payer", converted=0)
+		self.assertStatus(receipt, "Not Converted", linked=0, active=0)
+
+	def test_balance_sources_take_only_one_exact_source_row(self):
+		customer = self.clean_customer()
+		single = self.submitted_receipt(payer=(customer, self.receivable, str(HUNDRED_M), None))
+		double = self.submitted_receipt(
+			payer=(customer, self.receivable, "30000000", None), extra=[(customer, self.receivable, "20000000", None)]
+		)
+		picture = balance_conversion_sources(self.company, "Customer", customer, self.receivable)
+		self.assertEqual((picture.as_of_balance, picture.side), (Decimal("-150000000"), "credit"))
+		self.assertEqual(picture.max_convertible, HUNDRED_M)
+		eligible, ambiguous = self.balance_source(picture, single), self.balance_source(picture, double)
+		self.assertEqual(
+			(eligible.source.posting, eligible.source.pair, eligible.source.side, eligible.convertible, eligible.reason),
+			(self.source_posting(single), single.operational_pairs[0].name, "Payer", HUNDRED_M, None),
+		)
+		self.assertEqual((ambiguous.source, ambiguous.convertible), (None, 0))
+		self.assertIn("multiple matching accounting rows", ambiguous.reason)
+
+	def test_native_voucher_counts_in_balance_but_not_in_max_convertible(self):
+		customer = self.clean_customer()
+		receipt = self.submitted_receipt(payer=(customer, self.receivable, str(HUNDRED_M), None))
+		journal = self.native_credit(customer, "50000000")
+		picture = balance_conversion_sources(self.company, "Customer", customer, self.receivable)
+		self.assertEqual((picture.as_of_balance, picture.max_convertible), (Decimal("-150000000"), HUNDRED_M))
+		native = self.balance_source(picture, journal)
+		self.assertEqual((native.item.voucher_type, native.convertible), ("Journal Entry", 0))
+		self.assertIn("Only SmartProcess Receipt postings", native.reason)
+		self.convert(receipt, payer="40000000")
+		self.simulate_balance_consumption(receipt, payer="30000000")
+		picture = balance_conversion_sources(self.company, "Customer", customer, self.receivable)
+		self.assertEqual((picture.as_of_balance, picture.max_convertible), (Decimal("-80000000"), Decimal("30000000")))
+		with self.assertRaisesRegex(frappe.ValidationError, "only today's posting date"):
+			balance_conversion_sources(self.company, "Customer", customer, self.receivable, add_days(nowdate(), -1))
+
+	def assertConsumption(self, receipt, side, *, converted):
+		pair = receipt.operational_pairs[0].name
+		consumption = source_consumption(load_source_leg(receipt.name, pair, side))
+		converted = Decimal(str(converted))
+		self.assertEqual(
+			(consumption.original, consumption.converted, consumption.remaining),
+			(HUNDRED_M, converted, HUNDRED_M - converted),
+		)
+		self.assertEqual(self.remaining(receipt)[side], HUNDRED_M - converted)
+
+	def simulate_balance_consumption(self, receipt, payer):
+		"""A Balance Conversion has no header link to one Receipt; only its Leg carries the source key."""
+		conversion = self.convert(receipt, payer=payer)
+		elsewhere = self.submitted_receipt().name
+		frappe.db.set_value(CONVERSION, conversion.name, "source_receipt", elsewhere, update_modified=False)
+		return conversion
+
+	def balance_source(self, picture, voucher):
+		name = voucher.name if voucher.doctype == "Journal Entry" else self.source_posting(voucher)
+		return next(source for source in picture.sources if source.item.voucher_no == name)
+
+	def native_credit(self, customer, amount):
+		journal = frappe.get_doc(
+			{
+				"doctype": "Journal Entry",
+				"voucher_type": "Journal Entry",
+				"company": self.company,
+				"posting_date": nowdate(),
+				"accounts": [
+					{"account": self.bank.account, "debit_in_account_currency": amount},
+					{
+						"account": self.receivable,
+						"party_type": "Customer",
+						"party": customer,
+						"credit_in_account_currency": amount,
+					},
+				],
+			}
+		)
+		journal.insert()
+		journal.submit()
+		return journal
+
+	def clean_customer(self):
+		"""A Company-currency Customer without any ledger history, so balances start at zero."""
+		names = frappe.get_all("Customer", filters={"disabled": 0}, pluck="name", limit=500)
+		currencies = batch_party_currencies("Customer", self.company, names)
+		used = set(frappe.get_all("GL Entry", filters={"party_type": "Customer"}, pluck="party", distinct=True))
+		customer = next((name for name in names if currencies.get(name) == self.base and name not in used), None)
+		if not customer:
+			self.skipTest(f"No {self.base} Customer without ledger history.")
+		return customer
+
 	def assertStatus(self, receipt, status, *, linked, active):
 		self.assertEqual(
 			get_receipt_conversion_status(receipt.name),
@@ -338,9 +462,19 @@ class TestReceiptConversion(AccountingFixtureTestCase):
 		self.assertTrue(row[side], f"{row.account} is not on the {side} side")
 		return Decimal(str(row[f"{side}_in_account_currency"])), Decimal(str(row[side]))
 
-	def submitted_receipt(self, payer=None):
+	def submitted_receipt(self, payer=None, extra=()):
 		customer, account, amount, rate = payer or (self.customer, self.receivable, str(HUNDRED_M), None)
 		payer_currency = frappe.get_cached_value("Account", account, "account_currency")
+		pairs = [
+			{
+				"credit_exchange_rate": row_rate,
+				"receipt_recipient_type": "Customer",
+				"receipt_recipient": row_customer,
+				"credit_account": row_account,
+				"credit_amount": row_amount,
+			}
+			for row_customer, row_account, row_amount, row_rate in [(customer, account, amount, rate), *extra]
+		]
 		doc = frappe.get_doc(
 			{
 				"doctype": RECEIPT,
@@ -352,15 +486,7 @@ class TestReceiptConversion(AccountingFixtureTestCase):
 				"receipt_credit_currency": payer_currency,
 				"receipt_receiver_kind": "بانک",
 				"receipt_bank_account": self.bank.name,
-				"operational_pairs": [
-					{
-						"credit_exchange_rate": rate,
-						"receipt_recipient_type": "Customer",
-						"receipt_recipient": customer,
-						"credit_account": account,
-						"credit_amount": amount,
-					}
-				],
+				"operational_pairs": pairs,
 			}
 		)
 		doc.insert()

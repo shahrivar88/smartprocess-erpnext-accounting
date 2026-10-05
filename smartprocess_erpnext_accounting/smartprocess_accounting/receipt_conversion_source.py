@@ -1,8 +1,7 @@
-"""Source side of a Receipt Conversion: one posted Receipt Pair side and its converted balance.
+"""Source side of a Conversion: one posted Receipt Pair side.
 
 GL is the only truth. A source leg is one (Receipt Pair, side) GL line on a
-submitted posting unit. Its converted balance is the net source-reversal GL that
-Conversions posted against that posting unit for that Pair side.
+submitted posting unit. Its converted balance lives in ``conversion_consumption``.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from decimal import Decimal
 
 import frappe
 from frappe import _
-from frappe.query_builder.functions import Sum
 from frappe.utils import cint
 
 RECEIPT_DOCTYPE = "SmartProcess Accounting Document"
@@ -111,45 +109,14 @@ def load_source_leg(receipt: str, pair: str, side: str) -> SourceLeg:
 	)
 
 
-def converted_amount(source: SourceLeg, *, lock: bool = False) -> Decimal:
-	"""Net base amount already reversed from this source leg by submitted Conversions.
-
-	``lock`` makes it a locking read, so it sees the latest committed Conversion
-	even when this transaction's snapshot is older.
-	"""
-	gle = frappe.qb.DocType("GL Entry")
-	leg = frappe.qb.DocType(LEG_DOCTYPE)
-	query = (
-		frappe.qb.from_(gle)
-		.join(leg)
-		.on(gle.voucher_detail_no == leg.name)
-		.select(Sum(_gl_column(gle, source.reversal_side) - _gl_column(gle, source.gl_side)))
-		.where(gle.voucher_type == CONVERSION_DOCTYPE)
-		.where(gle.against_voucher_type == POSTING_DOCTYPE)
-		.where(gle.against_voucher == source.posting)
-		.where(gle.account == source.account)
-		.where(gle.is_cancelled == 0)
-		.where(leg.source_pair == source.pair)
-		.where(leg.source_side == source.side)
-	)
-	if lock:
-		query = query.for_update()
-	return Decimal(str(query.run()[0][0] or 0))
-
-
 def assert_no_active_conversions(receipt: str) -> None:
-	"""Keep the source Receipt and its ledger untouched while a Conversion depends on it."""
+	"""Keep the source Receipt and its ledger untouched while a Conversion depends on it.
+
+	A Conversion depends on the Receipt through its header or through any Leg that
+	consumes one of the Receipt's posting units, whatever the Conversion mode.
+	"""
 	frappe.db.get_value(RECEIPT_DOCTYPE, receipt, "name", for_update=True)
-	conversion = frappe.qb.DocType(CONVERSION_DOCTYPE)
-	active = (
-		frappe.qb.from_(conversion)
-		.select(conversion.name)
-		.where(conversion.source_receipt == receipt)
-		.where(conversion.docstatus == 1)
-		.limit(1)
-		.for_update()
-		.run(pluck=True)
-	)
+	active = _linked_active_conversions(receipt) or _consuming_active_conversions(receipt)
 	if active:
 		frappe.throw(
 			_("Receipt {0} has submitted Receipt Conversion {1}. Cancel every linked Conversion first.").format(
@@ -159,8 +126,37 @@ def assert_no_active_conversions(receipt: str) -> None:
 		)
 
 
-def _gl_column(gle, side: str):
-	return gle.debit if side == "debit" else gle.credit
+def _linked_active_conversions(receipt: str) -> list[str]:
+	conversion = frappe.qb.DocType(CONVERSION_DOCTYPE)
+	return (
+		frappe.qb.from_(conversion)
+		.select(conversion.name)
+		.where(conversion.source_receipt == receipt)
+		.where(conversion.docstatus == 1)
+		.limit(1)
+		.for_update()
+		.run(pluck=True)
+	)
+
+
+def _consuming_active_conversions(receipt: str) -> list[str]:
+	conversion = frappe.qb.DocType(CONVERSION_DOCTYPE)
+	leg = frappe.qb.DocType(LEG_DOCTYPE)
+	posting = frappe.qb.DocType(POSTING_DOCTYPE)
+	return (
+		frappe.qb.from_(leg)
+		.join(conversion)
+		.on(leg.parent == conversion.name)
+		.join(posting)
+		.on(posting.name == leg.source_posting)
+		.select(conversion.name)
+		.where(leg.parenttype == CONVERSION_DOCTYPE)
+		.where(posting.source_document == receipt)
+		.where(conversion.docstatus == 1)
+		.limit(1)
+		.for_update()
+		.run(pluck=True)
+	)
 
 
 def _source_gl_entry(pair: str, gl_side: str, pair_index) -> frappe._dict:
