@@ -1,5 +1,6 @@
-// Receipt number display: compact decimals (no trailing zeros) and the live
-// thousands separator. Presentation only — model values stay raw numbers.
+// Receipt number display: compact decimals (no trailing zeros, when the global
+// "Hide Insignificant Trailing Zeros" setting is on) and the live thousands
+// separator. Presentation only — model values stay raw numbers.
 const SP_RECEIPT_NUMBER_SETTINGS_METHOD =
 	"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_settings.smartprocess_accounting_settings.get_number_input_settings";
 const spReceiptCompactControls = new WeakSet();
@@ -11,7 +12,7 @@ const spReceiptNumbers = {
 
 	compact(formatted, df, doc) {
 		const numeric = window.smartprocessAccounting?.numeric;
-		if (!numeric) {
+		if (!numeric || !frappe.boot?.smartprocess_accounting?.hide_insignificant_trailing_zeros) {
 			return formatted;
 		}
 		const currency = df.fieldtype === "Currency" ? frappe.meta.get_field_currency(df, doc) : null;

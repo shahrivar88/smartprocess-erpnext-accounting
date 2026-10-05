@@ -18,7 +18,11 @@ def _ensure_number_separator_defaults():
 		return
 	present = frappe.db.get_singles_dict(doctype)
 	meta = frappe.get_meta(doctype)
-	for fieldname in ("enable_live_number_separator", "number_separator"):
+	for fieldname in (
+		"enable_live_number_separator",
+		"number_separator",
+		"hide_insignificant_trailing_zeros",
+	):
 		df = meta.get_field(fieldname)
 		if not df or df.default is None or fieldname in present:
 			continue

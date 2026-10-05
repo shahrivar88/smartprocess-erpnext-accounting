@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const {
 	compactFormattedNumber,
+	wrapNumericFormatters,
 	liveNumberSeparator,
 } = require("../../public/js/smartprocess_numeric.js");
 
@@ -16,6 +17,25 @@ const cases = [
 		".",
 		'<span class="currency">B 100</span>',
 	],
+	["100.00", ".", "100"],
+	["100.50", ".", "100.5"],
+	["100.05", ".", "100.05"],
+	["0.00", ".", "0"],
+	["-20.00", ".", "-20"],
+	["1.230000", ".", "1.23"],
+	["1,500,000.000000", ".", "1,500,000"],
+	["1,500,000", ".", "1,500,000"],
+	["1.500.000", ",", "1.500.000"],
+	["-1.234,50", ",", "-1.234,5"],
+	["$ 1,250.50", ".", "$ 1,250.5"],
+	["1,250.00 IRR", ".", "1,250 IRR"],
+	["Rs. 1,250.00", ".", "Rs. 1,250"],
+	["100.00 د.إ", ".", "100 د.إ"],
+	["12.50%", ".", "12.5%"],
+	["1 234,000", ",", "1 234"],
+	["<div style='text-align: right'>100.00</div>", ".", "<div style='text-align: right'>100</div>"],
+	["100.00", "", "100.00"],
+	["", ".", ""],
 ];
 
 for (const [input, separator, expected] of cases) {
@@ -25,6 +45,36 @@ for (const [input, separator, expected] of cases) {
 }
 
 console.log(`smartprocess_numeric: ${cases.length} cases passed`);
+
+// Global formatter registry wrap: display string only, original args untouched.
+{
+	const calls = [];
+	const formatters = {
+		Currency: (value, df, options) => (options?.only_value ? `${value}.00` : `<div>${value}.00</div>`),
+		Float: (value, df) => (df.options ? formatters.Currency(value, df) : `${value}.230000`),
+		Percent: (value) => `${value}.50%`,
+		Int: (value) => `${value}.00`,
+		Data: (value) => `${value}.00`,
+	};
+	const decimalFor = (fieldtype) => {
+		calls.push(fieldtype);
+		return ".";
+	};
+	assert.equal(wrapNumericFormatters(formatters, decimalFor), true);
+	assert.equal(wrapNumericFormatters(formatters, decimalFor), false, "installs once");
+	const df = { fieldtype: "Currency" };
+	assert.equal(formatters.Currency(100, df), "<div>100</div>");
+	assert.equal(formatters.Currency(100, df, { only_value: true }), "100");
+	assert.equal(formatters.Float(1, { fieldtype: "Float" }), "1.23");
+	assert.equal(formatters.Float(7, { fieldtype: "Float", options: "currency" }), "<div>7</div>");
+	assert.equal(formatters.Float(1, { fieldtype: "Float" }, { always_show_decimals: 1 }), "1.23");
+	assert.equal(formatters.Percent(12, { fieldtype: "Percent" }), "12.5%");
+	assert.equal(formatters.Int(5, {}), "5.00", "Int is not wrapped");
+	assert.equal(formatters.Data(5, {}), "5.00", "non-numeric types are not wrapped");
+	assert.deepEqual(df, { fieldtype: "Currency" }, "docfield is not mutated");
+	assert.ok(!calls.includes("Int"));
+	console.log("wrapNumericFormatters: 10 cases passed");
+}
 
 // Live thousands separator — pure formatting/cleaning/caret functions.
 const liveCases = [

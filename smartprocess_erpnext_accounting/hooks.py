@@ -26,7 +26,11 @@ app_include_css = [
 ]
 
 app_include_js = [
-	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.9.0",
+	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.9.2",
+]
+
+extend_bootinfo = [
+	"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_settings.smartprocess_accounting_settings.extend_bootinfo",
 ]
 
 doctype_js = {

@@ -5,7 +5,9 @@ import unittest
 import frappe
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_settings.smartprocess_accounting_settings import (
+	extend_bootinfo,
 	get_number_input_settings,
+	hide_insignificant_trailing_zeros,
 )
 
 
@@ -47,3 +49,14 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 		self.assertIn(settings["enabled"], (0, 1))
 		self.assertEqual(len(settings["separator"]), 1)
 		self.assertNotIn(settings["separator"], "0123456789+-.")
+
+	def test_trailing_zero_flag_reaches_bootinfo(self):
+		df = frappe.get_meta("SmartProcess Accounting Settings").get_field("hide_insignificant_trailing_zeros")
+		self.assertEqual((df.fieldtype, df.default), ("Check", "1"))
+		bootinfo = frappe._dict()
+		extend_bootinfo(bootinfo)
+		self.assertEqual(
+			bootinfo.smartprocess_accounting,
+			{"hide_insignificant_trailing_zeros": hide_insignificant_trailing_zeros()},
+		)
+		self.assertIn(hide_insignificant_trailing_zeros(), (0, 1))

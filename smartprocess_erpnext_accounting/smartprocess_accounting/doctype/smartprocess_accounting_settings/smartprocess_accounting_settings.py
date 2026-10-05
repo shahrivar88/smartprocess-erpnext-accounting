@@ -58,3 +58,18 @@ def get_number_input_settings():
 		"decimal_str": decimal_str,
 		"group_str": group_str,
 	}
+
+
+def hide_insignificant_trailing_zeros():
+	doctype = "SmartProcess Accounting Settings"
+	value = frappe.db.get_singles_dict(doctype, cast=False).get("hide_insignificant_trailing_zeros")
+	if value is None:
+		value = frappe.get_meta(doctype).get_field("hide_insignificant_trailing_zeros").default
+	return cint(value)
+
+
+def extend_bootinfo(bootinfo):
+	"""Desk display flags, read once per page load by smartprocess_numeric.js."""
+	bootinfo.smartprocess_accounting = {
+		"hide_insignificant_trailing_zeros": hide_insignificant_trailing_zeros(),
+	}

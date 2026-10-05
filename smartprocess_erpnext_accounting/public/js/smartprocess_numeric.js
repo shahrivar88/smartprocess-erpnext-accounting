@@ -6,6 +6,26 @@
 	if (root) {
 		root.smartprocessAccounting = root.smartprocessAccounting || {};
 		root.smartprocessAccounting.numeric = numeric;
+		installTrailingZeroDisplay(root, numeric);
+	}
+
+	// frappe.boot is assigned before app_include_js runs. With the setting off the
+	// formatter registry is left untouched, so output is exactly native Frappe.
+	function installTrailingZeroDisplay(win, api) {
+		const frappe = win.frappe;
+		if (
+			!frappe?.boot?.smartprocess_accounting?.hide_insignificant_trailing_zeros ||
+			!frappe.form?.formatters ||
+			typeof win.get_number_format !== "function" ||
+			typeof win.get_number_format_info !== "function"
+		) {
+			return;
+		}
+		api.wrapNumericFormatters(frappe.form.formatters, (fieldtype, docfield, doc) => {
+			const currency =
+				fieldtype === "Currency" ? frappe.meta.get_field_currency(docfield, doc) : null;
+			return win.get_number_format_info(win.get_number_format(currency)).decimal_str;
+		});
 	}
 })(
 	typeof window !== "undefined"
@@ -14,6 +34,13 @@
 			? this
 			: globalThis,
 	() => {
+		function escapeRegExp(text) {
+			return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		}
+
+		// String-only: trims the trailing zeros of the last "<digit><decimal><digits>"
+		// run, so currency symbols, HTML wrappers, signs and group separators stay
+		// as formatted and the value is never re-parsed as a JS number.
 		function compactFormattedNumber(formattedValue, decimalSeparator = ".") {
 			if (formattedValue === null || formattedValue === undefined) {
 				return "";
@@ -24,20 +51,57 @@
 				return formatted;
 			}
 
-			const decimalIndex = formatted.lastIndexOf(decimalSeparator);
-			if (decimalIndex < 0) {
+			const pattern = new RegExp(`\\d(${escapeRegExp(decimalSeparator)})(\\d+)(?!\\d)`, "g");
+			let last = null;
+			for (const match of formatted.matchAll(pattern)) {
+				last = match;
+			}
+			if (!last) {
 				return formatted;
 			}
 
-			const fractionAndSuffix = formatted.slice(decimalIndex + decimalSeparator.length);
-			const match = fractionAndSuffix.match(/^(\d+)(.*)$/s);
-			if (!match) {
-				return formatted;
-			}
-
-			const meaningfulFraction = match[1].replace(/0+$/, "");
+			const decimalIndex = last.index + 1;
+			const meaningfulFraction = last[2].replace(/0+$/, "");
 			const fraction = meaningfulFraction ? decimalSeparator + meaningfulFraction : "";
-			return formatted.slice(0, decimalIndex) + fraction + match[2];
+			return (
+				formatted.slice(0, decimalIndex) +
+				fraction +
+				formatted.slice(decimalIndex + decimalSeparator.length + last[2].length)
+			);
+		}
+
+		// Display-only wrap of the standard numeric entries of frappe.form.formatters
+		// (the registry frappe.format() resolves on every call). Each wrapper returns
+		// the original formatter's string with only its trailing fractional zeros
+		// removed; inputs, raw values and precision are never touched.
+		const TRAILING_ZERO_FIELDTYPES = ["Currency", "Float", "Percent"];
+
+		function delegatesToCurrency(fieldtype, docfield) {
+			// Float with options is rendered by the (already wrapped) Currency formatter.
+			return fieldtype === "Float" && Boolean(docfield?.options && String(docfield.options).trim());
+		}
+
+		function wrapNumericFormatters(formatters, decimalFor) {
+			if (!formatters || formatters.__spTrailingZeros) {
+				return false;
+			}
+			for (const fieldtype of TRAILING_ZERO_FIELDTYPES) {
+				const original = formatters[fieldtype];
+				if (typeof original !== "function") {
+					continue;
+				}
+				formatters[fieldtype] = function (...args) {
+					const formatted = original.apply(this, args);
+					const [, docfield, , doc] = args;
+					// Reports pass always_show_decimals; the global setting overrides it.
+					if (typeof formatted !== "string" || delegatesToCurrency(fieldtype, docfield)) {
+						return formatted;
+					}
+					return compactFormattedNumber(formatted, decimalFor(fieldtype, docfield, doc));
+				};
+			}
+			Object.defineProperty(formatters, "__spTrailingZeros", { value: true });
+			return true;
 		}
 
 		// Live thousands-separator input mask. Presentation only: the input text is
@@ -183,6 +247,7 @@
 
 		return {
 			compactFormattedNumber,
+			wrapNumericFormatters,
 			liveNumberSeparator: {
 				cleanNumericText,
 				formatLiveNumberText,
