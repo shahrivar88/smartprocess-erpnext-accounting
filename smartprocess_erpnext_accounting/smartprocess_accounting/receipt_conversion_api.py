@@ -30,6 +30,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 SUGGESTION_SCAN_LIMIT = 20
 PREVIEW_LEG_LIMIT = 500
+NOT_CONVERTED = "Not Converted"
+PARTIALLY_CONVERTED = "Partially Converted"
+FULLY_CONVERTED = "Fully Converted"
 
 
 @frappe.whitelist()
@@ -46,12 +49,39 @@ def make_receipt_conversion(source_receipt: str, target_currency: str | None = N
 			"target_currency": target_currency,
 		}
 	)
-	for pair in receipt_pair_names(receipt.name):
-		for side in (RECEIVER, PAYER):
-			source = load_source_leg(receipt.name, pair, side)
-			if source.account_currency == company_currency:
-				doc.append("legs", _draft_leg(source, company_currency, target_currency))
+	for source in _company_currency_sources(receipt.name, company_currency):
+		doc.append("legs", _draft_leg(source, company_currency, target_currency))
 	return doc
+
+
+@frappe.whitelist()
+def get_receipt_conversion_status(source_receipt: str) -> dict:
+	"""Read-only status derived from the posted ledger on every call; nothing is stored.
+
+	Every Company-currency Receipt side counts on its own, so one fully converted side
+	next to an unconverted one is a partial conversion.
+	"""
+	receipt = load_source_receipt(source_receipt)
+	company_currency = get_company_currency(receipt.company)
+	balances = [
+		(source.original_amount, converted_amount(source))
+		for source in _company_currency_sources(receipt.name, company_currency)
+	]
+	return {
+		"status": conversion_status(balances),
+		**_linked_conversion_counts(receipt.name),
+	}
+
+
+def conversion_status(balances: list[tuple]) -> str | None:
+	"""``balances`` holds ``(original, already_converted)`` per side; ``None`` when nothing is convertible."""
+	if not balances:
+		return None
+	if all(already == 0 for _original, already in balances):
+		return NOT_CONVERTED
+	if all(original - already == 0 for original, already in balances):
+		return FULLY_CONVERTED
+	return PARTIALLY_CONVERTED
 
 
 @frappe.whitelist()
@@ -120,6 +150,24 @@ def get_target_suggestion(
 				"target_account": row.target_account,
 			}
 	return None
+
+
+def _company_currency_sources(receipt: str, company_currency: str):
+	for pair in receipt_pair_names(receipt):
+		for side in (RECEIVER, PAYER):
+			source = load_source_leg(receipt, pair, side)
+			if source.account_currency == company_currency:
+				yield source
+
+
+def _linked_conversion_counts(receipt: str) -> dict:
+	"""Counts only the Conversions the user may read."""
+	if not frappe.has_permission(CONVERSION_DOCTYPE, "read"):
+		return {"linked_count": 0, "active_count": 0}
+	docstatuses = frappe.get_list(
+		CONVERSION_DOCTYPE, filters={"source_receipt": receipt}, pluck="docstatus", limit_page_length=0
+	)
+	return {"linked_count": len(docstatuses), "active_count": docstatuses.count(1)}
 
 
 def _draft_leg(source, company_currency: str, target_currency: str | None) -> dict:

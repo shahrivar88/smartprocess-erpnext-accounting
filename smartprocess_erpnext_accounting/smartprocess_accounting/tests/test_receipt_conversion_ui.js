@@ -46,6 +46,9 @@ globalThis.frappe = {
 		get_link_title: (doctype, name) => linkTitles[`${doctype}::${name}`],
 	},
 };
+const RECEIPT_DIR = path.join(DOCTYPE_DIR, "smartprocess_accounting_document", "receipt");
+globalThis.spReceiptConfig = require(path.join(RECEIPT_DIR, "receipt_config.js"));
+globalThis.spReceiptConversionStatus = require(path.join(RECEIPT_DIR, "receipt_conversion_status.js"));
 globalThis.spConversionLegs = require(path.join(CONVERSION_DIR, "conversion", "conversion_legs.js"));
 globalThis.spConversionForm = require(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
 spConversionForm.PREVIEW_DELAY = 0;
@@ -362,6 +365,63 @@ test("the Receipt only gains an unsaved-Conversion button", () => {
 	for (const file of ["receipt/receipt_numbers.js", "conversion/conversion_legs.js", "conversion/conversion_form.js"]) {
 		assert.ok(doctypeScript.includes(`${file}" %}`), file);
 	}
+});
+
+function receiptForm(values = {}) {
+	const shown = { indicators: [], buttons: [] };
+	const frm = {
+		doc: { name: "SP-REC-1", operation_type: "Receipt", docstatus: 1, ...values },
+		dashboard: { add_indicator: (label, color) => shown.indicators.push([label, color]) },
+		add_custom_button: (label, action) => shown.buttons.push([label, action]),
+	};
+	return { frm, shown };
+}
+
+test("Receipt status indicator uses the server status and Persian labels", async () => {
+	const expected = {
+		"Not Converted": ["تبدیل نشده", "gray"],
+		"Partially Converted": ["تبدیل جزئی", "orange"],
+		"Fully Converted": ["تبدیل کامل", "green"],
+	};
+	for (const [status, indicator] of Object.entries(expected)) {
+		const { frm, shown } = receiptForm();
+		responses.get_receipt_conversion_status = { status, linked_count: 0, active_count: 0 };
+		await spReceiptConversionStatus.refresh(frm);
+		assert.deepEqual(shown.indicators, [indicator]);
+		assert.deepEqual(shown.buttons, [], "no linked Conversion, no list button");
+	}
+	assert.deepEqual(calls.xcall.at(-1).args, { source_receipt: "SP-REC-1" });
+});
+
+test("linked Conversions button shows the active count and opens a list of this Receipt only", async () => {
+	const { frm, shown } = receiptForm();
+	const routes = [];
+	frappe.set_route = (...args) => routes.push(args);
+	responses.get_receipt_conversion_status = { status: "Partially Converted", linked_count: 3, active_count: 2 };
+	await spReceiptConversionStatus.refresh(frm);
+	assert.equal(shown.buttons[0][0], "تبدیل‌های مرتبط (2)");
+	shown.buttons[0][1]();
+	assert.deepEqual(routes, [["List", "SmartProcess Receipt Conversion", { source_receipt: "SP-REC-1" }]]);
+	assert.equal(spReceiptConversionStatus.listLabel(0), "تبدیل‌های مرتبط", "only drafts/cancelled: no count");
+	delete frappe.set_route;
+});
+
+test("status is shown only on a submitted Receipt and a stale response is dropped", async () => {
+	for (const values of [{ docstatus: 0 }, { docstatus: 2 }, { operation_type: "Payment" }]) {
+		const { frm, shown } = receiptForm(values);
+		await spReceiptConversionStatus.refresh(frm);
+		assert.deepEqual(shown.indicators, []);
+	}
+	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_receipt_conversion_status")));
+	const { frm, shown } = receiptForm();
+	let release;
+	responses.get_receipt_conversion_status = () => new Promise((resolve) => (release = resolve));
+	const first = spReceiptConversionStatus.refresh(frm);
+	responses.get_receipt_conversion_status = { status: "Fully Converted", linked_count: 1, active_count: 1 };
+	await spReceiptConversionStatus.refresh(frm);
+	release({ status: "Not Converted", linked_count: 0, active_count: 0 });
+	await first;
+	assert.deepEqual(shown.indicators, [["تبدیل کامل", "green"]]);
 });
 
 (async () => {

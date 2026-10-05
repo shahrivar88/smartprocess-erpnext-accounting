@@ -7,6 +7,7 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_events.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_validation_ui.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_summary.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_conversion_status.js" %}
 
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	setup(frm) {
@@ -43,6 +44,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		if (canConvertCurrency(frm)) {
 			frm.add_custom_button("تبدیل ارز", () => startReceiptConversion(frm));
 		}
+		void spReceiptConversionStatus.refresh(frm);
 		void spReceiptForm.refresh(frm);
 	},
 	validate(frm) {

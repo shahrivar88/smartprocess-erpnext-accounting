@@ -6,6 +6,7 @@ Reads metadata and app files only; never writes.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -35,11 +36,21 @@ HEADER_ORDER = (
 	"receipt_credit_currency",
 	"general_description",
 )
-# Site Customize Form breaks, if present, must stay where the user placed them.
-CUSTOM_BREAKS = {
-	"custom_section_break_sjvzg": ("receipt_payer_type", "company_currency"),
-	"custom_column_break_6utww": ("general_description", "pairs_section"),
+APP = "smartprocess_erpnext_accounting"
+APP_DIR = FORM_DIR.parents[2]
+# Anything that can write DocType layout metadata (field order, breaks, Custom Fields, Property Setters).
+LAYOUT_WRITERS = re.compile(
+	r"make_property_setter|create_custom_fields?\(|[\"'](?:Property Setter|Custom Field|Customize Form)[\"']"
+	r"|reset_to_defaults|frappe\.client\.(?:set_value|save|insert)"
+)
+# Every such reference in the app, and why it cannot move the user's Receipt layout.
+LAYOUT_WRITER_ALLOWLIST = {
+	# verify_desk_customization(): a read-only Customize Form check of SmartProcess Currency Conversion.
+	"install.py",
+	# Applied once; deletes only a stale field_order setter that lists a field removed from the DocType.
+	"patches/v0_1/remove_abandoned_conversion_metadata.py",
 }
+ABANDONED_PATCH = "smartprocess_erpnext_accounting.patches.v0_1.remove_abandoned_conversion_metadata"
 GRID_COLUMNS = (
 	"receipt_recipient_type",
 	"receipt_recipient",
@@ -67,13 +78,34 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(meta.get_field("receipt_credit_currency").label, "ارز پرداخت‌کننده")
 		self.assertEqual(meta.get_field("company_currency").depends_on, "eval:doc.operation_type != 'Receipt'")
 
-	def test_site_layout_breaks_keep_their_place(self):
-		order = [field.fieldname for field in frappe.get_meta(DOCTYPE).fields]
-		for fieldname, (before, after) in CUSTOM_BREAKS.items():
-			if fieldname not in order:
-				continue
-			position = order.index(fieldname)
-			self.assertEqual((order[position - 1], order[position + 1]), (before, after), fieldname)
+	def test_app_never_rewrites_the_site_receipt_layout(self):
+		"""The user arranges the Receipt in Customize Form; the app must not reorder or rewrite it."""
+		writers = {
+			path.relative_to(APP_DIR).as_posix()
+			for path in APP_DIR.rglob("*")
+			if path.suffix in (".py", ".js")
+			and "tests" not in path.parts
+			and not path.name.startswith("test_")
+			and LAYOUT_WRITERS.search(path.read_text(encoding="utf-8", errors="replace"))
+		}
+		self.assertEqual(writers, LAYOUT_WRITER_ALLOWLIST)
+
+		install = (APP_DIR / "install.py").read_text(encoding="utf-8")
+		self.assertNotIn(DOCTYPE, install)
+		self.assertNotIn(PAIR, install)
+		after_migrate = install.split("def after_migrate():", 1)[1].split("\ndef ", 1)[0]
+		self.assertNotIn("verify_desk_customization", after_migrate)
+
+		self.assertTrue(frappe.db.exists("Patch Log", {"patch": ABANDONED_PATCH}), "the cleanup patch never runs again")
+		self.assertIsNone(frappe.get_meta(DOCTYPE).get_field("receipt_receiver_currency"))
+
+		fixtures = json.dumps(frappe.get_hooks("fixtures", app_name=APP))
+		for doctype in ("Property Setter", "Custom Field", DOCTYPE, PAIR):
+			self.assertNotIn(doctype, fixtures)
+
+		for name in ("smartprocess_accounting_document", "smartprocess_accounting_pair"):
+			definition = json.loads((FORM_DIR.parent / name / f"{name}.json").read_text(encoding="utf-8"))
+			self.assertFalse([field for field in definition["field_order"] if field.startswith("custom_")], name)
 
 	def test_row_currency_is_a_read_only_mirror_outside_the_grid(self):
 		meta = frappe.get_meta(PAIR)
@@ -97,6 +129,7 @@ class TestReceiptClientContract(unittest.TestCase):
 			"spReceiptRowEvents",
 			"spReceiptValidation",
 			"spReceiptSummary",
+			"spReceiptConversionStatus",
 		):
 			self.assertIn(f"const {name} = {{", script)
 		self.assertIn("receipt_api.preview_receipt", script)

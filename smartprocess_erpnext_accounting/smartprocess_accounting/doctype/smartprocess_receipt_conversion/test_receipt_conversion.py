@@ -18,7 +18,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting import receipt_conv
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import start_correction
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import PostingLine, _make_gl_entry
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
+	conversion_status,
 	get_conversion_legs,
+	get_receipt_conversion_status,
 	get_target_suggestion,
 	make_receipt_conversion,
 	preview_target_amounts,
@@ -266,6 +268,56 @@ class TestReceiptConversion(AccountingFixtureTestCase):
 		title = frappe.db.get_value("Customer", self.customer, "customer_name")
 		self.assertEqual(response["titles"], {"Customer": {self.customer: title}})
 		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+
+	def test_status_treats_receiver_and_payer_independently(self):
+		receipt = self.submitted_receipt()
+		self.assertStatus(receipt, "Not Converted", linked=0, active=0)
+		self.convert(receipt, receiver=HUNDRED_M, payer=0)
+		self.assertStatus(receipt, "Partially Converted", linked=1, active=1)
+		self.convert(receipt, payer="50000000")
+		self.assertStatus(receipt, "Partially Converted", linked=2, active=2)
+		last = self.convert(receipt, payer="50000000")
+		self.assertStatus(receipt, "Fully Converted", linked=3, active=3)
+		frappe.get_doc(CONVERSION, last.name).cancel()
+		self.assertStatus(receipt, "Partially Converted", linked=3, active=2)
+
+	def test_status_ignores_cancelled_and_sums_repeated_partials(self):
+		receipt = self.submitted_receipt()
+		first = self.convert(receipt, payer="30000000")
+		frappe.get_doc(CONVERSION, first.name).cancel()
+		self.assertStatus(receipt, "Not Converted", linked=1, active=0)
+		for amount in ("30000000", "45000000", "25000000"):
+			self.convert(receipt, payer=amount)
+		self.assertEqual(self.remaining(receipt), {"Receiver": HUNDRED_M, "Payer": 0})
+		self.assertStatus(receipt, "Partially Converted", linked=4, active=3)
+		self.convert(receipt, receiver=HUNDRED_M)
+		self.assertStatus(receipt, "Fully Converted", linked=5, active=4)
+
+	def test_status_and_linked_counts_belong_to_one_receipt(self):
+		receipt, other = self.submitted_receipt(), self.submitted_receipt()
+		self.convert(other, receiver=HUNDRED_M, payer=HUNDRED_M)
+		self.assertStatus(receipt, "Not Converted", linked=0, active=0)
+		self.assertStatus(other, "Fully Converted", linked=1, active=1)
+		listed = frappe.get_list(CONVERSION, filters={"source_receipt": other.name}, pluck="source_receipt")
+		self.assertEqual(listed, [other.name])
+
+	def test_foreign_side_is_not_part_of_the_status(self):
+		receipt = self.submitted_receipt(payer=(self.target_customer, self.target_receivable, "2", "1600000"))
+		self.assertStatus(receipt, "Not Converted", linked=0, active=0)
+		draft = make_receipt_conversion(receipt.name, self.target)
+		receiver = draft.legs[0]
+		receiver.update(
+			{"conversion_amount": receiver.remaining_amount, "target_account": self.target_receiver, "target_rate": "90000"}
+		)
+		draft.insert().submit()
+		self.assertStatus(receipt, "Fully Converted", linked=1, active=1)
+		self.assertIsNone(conversion_status([]))
+
+	def assertStatus(self, receipt, status, *, linked, active):
+		self.assertEqual(
+			get_receipt_conversion_status(receipt.name),
+			{"status": status, "linked_count": linked, "active_count": active},
+		)
 
 	def assertPair(self, conversion, leg, reversal, target):
 		"""One source reversal + one target line per positive leg, balanced in base."""

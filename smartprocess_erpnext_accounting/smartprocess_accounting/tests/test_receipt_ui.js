@@ -16,6 +16,7 @@ const MODULES = {
 	spReceiptRowEvents: "receipt_row_events.js",
 	spReceiptValidation: "receipt_validation_ui.js",
 	spReceiptSummary: "receipt_summary.js",
+	spReceiptConversionStatus: "receipt_conversion_status.js",
 };
 
 const calls = { xcall: [], msgprint: [], setValue: [], confirm: [] };
