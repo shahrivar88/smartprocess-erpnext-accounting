@@ -51,7 +51,10 @@ globalThis.spReceiptConfig = require(path.join(RECEIPT_DIR, "receipt_config.js")
 globalThis.spReceiptConversionStatus = require(path.join(RECEIPT_DIR, "receipt_conversion_status.js"));
 globalThis.spConversionLegs = require(path.join(CONVERSION_DIR, "conversion", "conversion_legs.js"));
 globalThis.spConversionForm = require(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
+globalThis.spReceiptNumbers = require(path.join(RECEIPT_DIR, "receipt_numbers.js"));
+globalThis.spBalanceForm = require(path.join(CONVERSION_DIR, "conversion", "balance_form.js"));
 spConversionForm.PREVIEW_DELAY = 0;
+spBalanceForm.DELAY = 0;
 
 function serverLeg(side, values = {}) {
 	return {
@@ -349,7 +352,7 @@ test("header labels are Persian and Receipt/Company are read-only", () => {
 		["رسید مبدا", "تاریخ تبدیل", "ارز مقصد", "توضیحات"],
 	);
 	assert.equal(field(conversionMeta, "source_receipt").read_only, 1);
-	assert.equal(field(conversionMeta, "company").read_only, 1);
+	assert.equal(field(conversionMeta, "company").read_only_depends_on, "eval:doc.conversion_mode!=='Balance'");
 	assert.ok(!field(conversionMeta, "target_currency").read_only);
 });
 
@@ -422,6 +425,114 @@ test("status is shown only on a submitted Receipt and a stale response is droppe
 	release({ status: "Not Converted", linked_count: 0, active_count: 0 });
 	await first;
 	assert.deepEqual(shown.indicators, [["تبدیل کامل", "green"]]);
+});
+
+function balanceForm(values = {}) {
+	const frm = form({
+		conversion_mode: "Balance",
+		source_receipt: null,
+		target_currency: "USD",
+		source_party_type: "Customer",
+		source_party: "CUST-1",
+		source_account: "Debtors - SP",
+		...values,
+	});
+	frm.set_value = async (fieldname, value) => {
+		Object.assign(frm.doc, typeof fieldname === "object" ? fieldname : { [fieldname]: value });
+	};
+	return frm;
+}
+
+const SUMMARY = {
+	company_currency: "IRR",
+	as_of_balance: "150000000",
+	balance_side: "Credit",
+	max_convertible: "100000000",
+	suggestion: { target_party_type: "Customer", target_party: "CUST-USD", target_account: "Debtors USD - SP" },
+};
+
+test("Balance mode fields are Persian, separate from the Receipt grid and hide Receipt-only fields", () => {
+	const labels = Object.fromEntries(conversionMeta.fields.map((df) => [df.fieldname, df.label]));
+	assert.deepEqual(
+		["balance_source_section", "as_of_balance", "max_convertible", "balance_conversion_section", "fill_max_convertible", "target_amount", "balance_target_section"].map((name) => labels[name]),
+		["منبع", "مانده حساب", "حداکثر قابل تبدیل", "تبدیل", "کل مانده قابل تبدیل", "مبلغ مقصد", "مقصد"],
+	);
+	assert.equal(field(conversionMeta, "conversion_mode").default, "Receipt");
+	assert.equal(field(conversionMeta, "source_receipt").depends_on, "eval:doc.conversion_mode!=='Balance'");
+	assert.equal(field(conversionMeta, "legs").depends_on, "eval:doc.conversion_mode!=='Balance' || doc.docstatus>0");
+	assert.equal(field(conversionMeta, "posting_date").read_only_depends_on, "eval:doc.conversion_mode==='Balance'");
+	for (const name of ["as_of_balance", "balance_side", "max_convertible", "target_amount"]) {
+		assert.equal(field(conversionMeta, name).read_only, 1, name);
+	}
+	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
+});
+
+test("Balance summary comes from the server, keeps balance and maximum apart and prefills only an empty target", async () => {
+	const frm = balanceForm();
+	responses.get_balance_summary = SUMMARY;
+	await spBalanceForm.loadSummary(frm);
+	assert.deepEqual(calls.xcall.at(-1).args, {
+		company: "SP",
+		source_party_type: "Customer",
+		source_party: "CUST-1",
+		source_account: "Debtors - SP",
+		posting_date: null,
+		target_currency: "USD",
+	});
+	assert.deepEqual([frm.doc.as_of_balance, frm.doc.max_convertible, frm.doc.balance_side], [150000000, 100000000, "Credit"]);
+	assert.equal(frm.tableProperties["max_convertible:description"], spBalanceForm.MESSAGES.partial);
+	assert.equal(frm.doc.target_account, "Debtors USD - SP");
+	frm.doc.target_account = "My USD - SP";
+	frm.doc.target_party = "";
+	await spBalanceForm.loadSummary(frm);
+	assert.equal(frm.doc.target_account, "My USD - SP", "a user target is never replaced");
+});
+
+test("Balance summary errors are shown on the source and a stale answer is dropped", async () => {
+	const frm = balanceForm();
+	responses.get_balance_summary = { error: "Source Account must be in the Company currency IRR." };
+	await spBalanceForm.loadSummary(frm);
+	assert.deepEqual([frm.doc.as_of_balance ?? null, frm.doc.max_convertible ?? null], [null, null]);
+	assert.match(frm.tableProperties["source_account:description"], /Company currency/);
+	let release;
+	responses.get_balance_summary = () => new Promise((resolve) => (release = resolve));
+	const first = spBalanceForm.loadSummary(frm);
+	responses.get_balance_summary = { ...SUMMARY, max_convertible: "150000000", suggestion: null };
+	await spBalanceForm.loadSummary(frm);
+	release({ ...SUMMARY, max_convertible: "1" });
+	await first;
+	assert.equal(frm.doc.max_convertible, 150000000);
+	assert.equal(frm.tableProperties["max_convertible:description"], "", "equal balance and maximum: no note");
+});
+
+test("the full-maximum button uses max_convertible, never the account balance", async () => {
+	const frm = balanceForm({ as_of_balance: 150000000, max_convertible: 100000000 });
+	await spBalanceForm.fillMax(frm);
+	assert.equal(frm.doc.conversion_amount, 100000000);
+	const submitted = balanceForm({ docstatus: 1, max_convertible: 5, conversion_amount: 1 });
+	await spBalanceForm.fillMax(submitted);
+	assert.equal(submitted.doc.conversion_amount, 1);
+});
+
+test("the Balance Target Amount is a server preview and the rate is never written", async () => {
+	const frm = balanceForm({ conversion_amount: 100000000, target_rate: 90000 });
+	await spBalanceForm.preview(frm);
+	const call = calls.xcall.at(-1);
+	assert.ok(call.method.endsWith("receipt_conversion_api.preview_target_amounts"));
+	assert.deepEqual(call.args.legs, [{ name: "total", conversion_amount: 100000000, target_rate: 90000 }]);
+	assert.deepEqual([frm.doc.target_amount, frm.doc.target_rate], [1111.11, 90000]);
+});
+
+test("Receipt-mode legs never load for a Balance Conversion", async () => {
+	const frm = balanceForm();
+	responses.get_company_currency = "IRR";
+	responses.get_balance_summary = { ...SUMMARY, suggestion: null };
+	await spConversionForm.refresh(frm);
+	await spBalanceForm.refresh(frm);
+	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_conversion_legs")));
+	assert.equal(frm.tableProperties["legs:read_only"], 1);
+	assert.equal(frm.tableProperties["legs:label"], spBalanceForm.MESSAGES.legsLabel);
+	assert.deepEqual(frm.tableProperties["conversion_mode:options"].map((option) => option.label), ["از رسید", "از مانده حساب"]);
 });
 
 (async () => {

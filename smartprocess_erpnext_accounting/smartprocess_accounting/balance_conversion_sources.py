@@ -1,4 +1,4 @@
-"""Read-only source picture of a Party balance for the future Balance Conversion (phase 1).
+"""Read-only source picture of a Party balance for the Balance Conversion (phase 1).
 
 Nothing posts here. The Party balance comes from GL, its open items from the
 Payment Ledger. An open item can be consumed only when it is a SmartProcess Receipt
@@ -17,7 +17,10 @@ from frappe import _
 from frappe.query_builder.functions import Min, Sum
 from frappe.utils import getdate, today
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
+from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import (
+	SourceConsumption,
+	source_consumption,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	PAYER,
 	POSTING_DOCTYPE,
@@ -41,6 +44,7 @@ class LedgerKey:
 	party_type: str
 	party: str
 	as_of: object
+	lock: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,7 @@ class BalanceSource:
 	source: SourceLeg | None
 	convertible: Decimal
 	reason: str | None
+	consumption: SourceConsumption | None = None
 
 
 @dataclass(frozen=True)
@@ -75,12 +80,24 @@ class BalanceSources:
 	def side(self) -> str | None:
 		return _side(self.as_of_balance)
 
+	@property
+	def source_side(self) -> str | None:
+		"""Receipt side of the consumable rows: a credit balance comes from Payer rows."""
+		return {"credit": PAYER, "debit": RECEIVER}.get(self.side)
+
+	def eligible(self) -> list[BalanceSource]:
+		return [source for source in self.sources if source.convertible > 0]
+
 
 def balance_conversion_sources(
-	company: str, party_type: str, party: str, account: str, posting_date=None
+	company: str, party_type: str, party: str, account: str, posting_date=None, *, lock: bool = False
 ) -> BalanceSources:
-	"""Balance, maximum convertible amount and every open item with its eligibility."""
-	key = LedgerKey(company, account, party_type, party, _phase_one_date(posting_date))
+	"""Balance, maximum convertible amount and every open item with its eligibility.
+
+	``lock`` turns every ledger read into a locking read, so a Submit sees the latest
+	committed ledger after it has locked the source Receipts.
+	"""
+	key = LedgerKey(company, account, party_type, party, _phase_one_date(posting_date), lock)
 	account_type, places = _validate_source(key)
 	_assert_no_later_entries(key)
 	balance = _round(_gl_balance(key), places)
@@ -88,7 +105,7 @@ def balance_conversion_sources(
 	if sum((item.amount for item in items), Decimal("0")) != balance:
 		frappe.throw(_("Payment Ledger does not match General Ledger for this Party and Account. The ledger needs review."))
 	postings = _posting_rows(key, [item.voucher_no for item in items if item.voucher_type == POSTING_DOCTYPE])
-	sources = [_classify(item, balance, postings.get(item.voucher_no)) for item in items]
+	sources = [_classify(key, item, balance, postings.get(item.voucher_no)) for item in items]
 	eligible = sum((source.convertible for source in sources), Decimal("0"))
 	return BalanceSources(balance, min(abs(balance), eligible), sources)
 
@@ -118,7 +135,7 @@ def _assert_no_later_entries(key: LedgerKey) -> None:
 
 def _gl_balance(key: LedgerKey) -> Decimal:
 	gle = frappe.qb.DocType("GL Entry")
-	total = (
+	query = (
 		frappe.qb.from_(gle)
 		.select(Sum(gle.debit - gle.credit))
 		.where(gle.company == key.company)
@@ -127,15 +144,16 @@ def _gl_balance(key: LedgerKey) -> Decimal:
 		.where(gle.party == key.party)
 		.where(gle.is_cancelled == 0)
 		.where(gle.posting_date <= key.as_of)
-		.run()[0][0]
 	)
-	return Decimal(str(total or 0))
+	if key.lock:
+		query = query.for_update()
+	return Decimal(str(query.run()[0][0] or 0))
 
 
 def _open_items(key: LedgerKey, account_type: str, places: int) -> list[OpenItem]:
 	"""Payment Ledger open amount per voucher, oldest first."""
 	ple = frappe.qb.DocType("Payment Ledger Entry")
-	rows = (
+	query = (
 		frappe.qb.from_(ple)
 		.select(
 			ple.against_voucher_type,
@@ -151,8 +169,8 @@ def _open_items(key: LedgerKey, account_type: str, places: int) -> list[OpenItem
 		.where(ple.party == key.party)
 		.where(ple.posting_date <= key.as_of)
 		.groupby(ple.against_voucher_type, ple.against_voucher_no)
-		.run(as_dict=True)
 	)
+	rows = (query.for_update() if key.lock else query).run(as_dict=True)
 	direction = Decimal("1") if account_type == "Receivable" else Decimal("-1")
 	rows.sort(key=lambda row: (row.posting_date, row.creation, row.against_voucher_no))
 	items = [
@@ -186,7 +204,7 @@ def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]
 	return found
 
 
-def _classify(item: OpenItem, balance: Decimal, posting: PostingRows | None) -> BalanceSource:
+def _classify(key: LedgerKey, item: OpenItem, balance: Decimal, posting: PostingRows | None) -> BalanceSource:
 	if item.voucher_type != POSTING_DOCTYPE:
 		return _not_eligible(item, _("Only SmartProcess Receipt postings can be converted for now."))
 	if _side(item.amount) != _side(balance):
@@ -203,10 +221,11 @@ def _classify(item: OpenItem, balance: Decimal, posting: PostingRows | None) -> 
 	if row_side != _side(item.amount):
 		return _not_eligible(item, _("Open amount is on the opposite side of its source row."))
 	source = load_source_leg(posting.receipt, row.voucher_detail_no, RECEIVER if row_side == "debit" else PAYER)
-	convertible = min(abs(item.amount), source_consumption(source).remaining)
+	consumption = source_consumption(source, lock=key.lock)
+	convertible = min(abs(item.amount), consumption.remaining)
 	if convertible <= 0:
-		return BalanceSource(item, source, Decimal("0"), _("Source is already fully converted."))
-	return BalanceSource(item, source, convertible, None)
+		return BalanceSource(item, source, Decimal("0"), _("Source is already fully converted."), consumption)
+	return BalanceSource(item, source, convertible, None, consumption)
 
 
 def _not_eligible(item: OpenItem, reason: str) -> BalanceSource:

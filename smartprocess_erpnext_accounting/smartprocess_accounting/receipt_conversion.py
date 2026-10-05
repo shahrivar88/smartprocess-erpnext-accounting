@@ -208,20 +208,7 @@ class ReceiptConversionService:
 		return LegPosting(leg, source, amount, share.amount, share.rate)
 
 	def _validate_target_account(self, leg) -> None:
-		doc = self.doc
-		if not leg.target_account:
-			_leg_error(leg, _("Target Account is required."))
-		account = validate_account(leg.target_account, doc.company)
-		if account.account_currency != doc.target_currency:
-			_leg_error(
-				leg,
-				_("Target Account currency {0} must be the Target Currency {1}.").format(
-					account.account_currency, doc.target_currency
-				),
-			)
-		party_type, party = leg.target_party_type or None, leg.target_party or None
-		validate_party(party_type, party, account.account_type)
-		validate_party_ledger_currency(party_type, party, doc.company, doc.target_currency)
+		validate_target(self.doc.company, self.doc.target_currency, leg, lambda message: _leg_error(leg, message))
 
 	def _conversion_amount(self, leg) -> Decimal:
 		amount = to_decimal(leg.conversion_amount, _("Conversion Amount"))
@@ -230,6 +217,22 @@ class ReceiptConversionService:
 		if not has_company_places(amount, self.company_places):
 			_leg_error(leg, _("Conversion Amount has more decimals than the Company currency allows."))
 		return amount
+
+
+def validate_target(company: str, target_currency: str, row, fail) -> None:
+	"""Target Account and optional Party of a Leg or a Balance header, in the Target Currency."""
+	if not row.target_account:
+		fail(_("Target Account is required."))
+	account = validate_account(row.target_account, company)
+	if account.account_currency != target_currency:
+		fail(
+			_("Target Account currency {0} must be the Target Currency {1}.").format(
+				account.account_currency, target_currency
+			)
+		)
+	party_type, party = row.target_party_type or None, row.target_party or None
+	validate_party(party_type, party, account.account_type)
+	validate_party_ledger_currency(party_type, party, company, target_currency)
 
 
 def _leg_error(leg, message: str) -> None:

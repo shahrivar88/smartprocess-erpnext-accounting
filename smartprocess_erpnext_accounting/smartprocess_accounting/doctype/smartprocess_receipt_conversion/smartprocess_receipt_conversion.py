@@ -5,6 +5,10 @@ from frappe import _
 from frappe.utils import cint
 from erpnext.controllers.accounts_controller import AccountsController
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion import (
+	BALANCE_MODE,
+	BalanceConversionService,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	assert_native_posting_contract,
 	cancel_voucher,
@@ -16,12 +20,12 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion 
 
 class SmartProcessReceiptConversion(AccountsController):
 	def validate(self):
-		ReceiptConversionService(self).validate()
+		self._service().validate()
 
 	def before_submit(self):
 		require_posting_enabled()
 		assert_native_posting_contract()
-		service = ReceiptConversionService(self)
+		service = self._service()
 		service.validate(for_submit=True)
 		self.flags.posting_lines = service.posting_lines()
 
@@ -53,3 +57,8 @@ class SmartProcessReceiptConversion(AccountsController):
 
 	def get_value_in_transaction_currency(self, account_currency, gl_dict, field):
 		return gl_dict.get(f"{field}_in_account_currency")
+
+	def _service(self):
+		if self.conversion_mode == BALANCE_MODE:
+			return BalanceConversionService(self)
+		return ReceiptConversionService(self)
