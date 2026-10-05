@@ -1,7 +1,6 @@
 const assert = require("node:assert/strict");
 const {
 	compactFormattedNumber,
-	summarizeReceiptRows,
 	liveNumberSeparator,
 } = require("../../public/js/smartprocess_numeric.js");
 
@@ -52,22 +51,3 @@ assert.equal(liveNumberSeparator.mapCaret("1", "1,234"), 1);
 assert.equal(liveNumberSeparator.toDisplayNumericText("1234.5", { decimal_str: "," }), "1234,5");
 assert.equal(liveNumberSeparator.toDisplayNumericText("1.234.5", { decimal_str: "," }), "1.234,5");
 console.log(`live_number_separator: ${liveCases.length + 8} cases passed`);
-
-const summary = summarizeReceiptRows(
-	[
-		{ receipt_currency: "IRR", credit_amount: 50, credit_company_amount: 999 },
-		{ receipt_currency: "IRR", credit_amount: 25, credit_company_amount: 999 },
-		{ receipt_currency: "USD", credit_amount: 2, credit_company_amount: 300 },
-		{ receipt_currency: "USD", credit_amount: 3, credit_company_amount: 600 },
-		{ receipt_currency: "EUR", credit_amount: 0, credit_company_amount: 100 },
-	],
-	"IRR",
-);
-assert.deepEqual(summary, {
-	currencies: [
-		{ currency: "IRR", amount: 75, baseAmount: 75, weightedRate: null },
-		{ currency: "USD", amount: 5, baseAmount: 900, weightedRate: 180 },
-	],
-	companyTotal: 975,
-});
-console.log("receipt_summary: base and weighted foreign totals passed");

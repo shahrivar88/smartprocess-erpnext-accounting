@@ -18,13 +18,20 @@
  * Receipt child-grid column proportions.
  * Frappe's grid gives every column an equal flex-grow once the total colsize
  * exceeds 10, which flattens any intended proportions at wide screens. These
- * rules replace the equal grow with the designed weights (نوع پرداخت‌کننده 1.2 /
- * نام پرداخت‌کننده 2.4 / ارز 0.8 / معین پرداخت‌کننده 2.0 / مبلغ 1.2 / نرخ 1.2 /
- * مبلغ به ارز پایه 1.4) and proportional pixel minimums, so columns keep their
- * proportions at every width and a horizontal scrollbar only appears when the
- * minimums genuinely cannot fit. Hidden columns (FX rows) simply release their
- * share to the remaining columns.
+ * rules replace the equal grow with the designed weights (ارز 0.7 /
+ * نوع پرداخت‌کننده 1.2 / پرداخت‌کننده 2.4 / معین پرداخت‌کننده 2.0 / مبلغ 1.2 /
+ * نرخ ارز 1.2 / مبلغ به ارز پایه 1.4) and proportional pixel minimums, so
+ * columns keep their proportions at every width and a horizontal scrollbar
+ * only appears when the minimums genuinely cannot fit.
  */
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_currency"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_currency"] {
+	flex: 0.7 0 64px;
+	min-width: 0;
+	max-width: none;
+	position: static;
+}
+
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_recipient_type"],
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_recipient_type"] {
 	flex: 1.2 0 84px;
@@ -36,14 +43,6 @@
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_recipient"],
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_recipient"] {
 	flex: 2.4 0 168px;
-	min-width: 0;
-	max-width: none;
-	position: static;
-}
-
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_currency"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_currency"] {
-	flex: 0.8 0 56px;
 	min-width: 0;
 	max-width: none;
 	position: static;
@@ -102,32 +101,23 @@
 	text-align: center;
 }
 
-/* All numeric values align from one fixed side (the RTL start edge), so the
- * amounts, rates and base totals of every row and of the «جمع کل به ارز پایه»
- * tfoot row sit on the same right edge of their columns. */
-.sp-receipt-summary tbody td,
-.sp-receipt-summary tfoot td {
+/* Every value cell aligns from the same RTL start edge, so the receipt row and
+ * the receiver row sit on one edge per column. */
+.sp-receipt-summary tbody td {
 	text-align: right;
+	font-variant-numeric: tabular-nums;
 }
 
-.sp-receipt-summary-total td {
+/* The receiver total lives in the same table, so its cells share the summary
+ * columns exactly. */
+.sp-receipt-summary .sp-receipt-receiver-head th {
+	font-weight: var(--weight-medium, 500);
+}
+
+.sp-receipt-summary .sp-receipt-receiver-title th {
 	font-weight: var(--weight-bold, 600);
-}
-
-/*
- * The receiver total is a single aligned row directly under the 4-column
- * summary table: it reuses the .sp-receipt-summary .table rules (fixed layout,
- * 680px minimum, same fixed-side numeric alignment) so its columns sit exactly
- * under the table's ارز / مجموع دریافت همان ارز / میانگین وزنی نرخ / جمع کل به
- * ارز پایه columns.
- */
-.sp-receipt-receiver-summary {
-	margin-top: 1.75rem;
-}
-
-.sp-receipt-receiver-title {
-	font-weight: var(--weight-bold, 600);
-	margin-bottom: 0.5rem;
+	text-align: right;
+	background: var(--subtle-fg, transparent);
 }
 
 @media (max-width: 768px) {

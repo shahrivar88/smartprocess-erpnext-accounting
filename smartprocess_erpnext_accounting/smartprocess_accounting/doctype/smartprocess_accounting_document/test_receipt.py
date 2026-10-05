@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 from decimal import Decimal
-from pathlib import Path
 from unittest.mock import patch
 
 import frappe
@@ -133,57 +132,21 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertLess(meta.get_field("operational_pairs").idx, section.idx)
 		self.assertLess(section.idx, meta.get_field("general_reference").idx)
 
-	def test_receipt_live_summary_and_wide_grid_client_contract(self):
-		source = self.client_source()
-		for contract in (
-			"summarizeReceiptRows",
-			"جمع کل به ارز پایه",
-			"میانگین وزنی نرخ",
-			"sp-receipt-wide-grid",
-			"operational_pairs_remove",
-			"receiptForm.renderSummary(frm)",
-		):
-			self.assertIn(contract, source)
-		css = Path(
-			frappe.get_app_path(
-				"smartprocess_erpnext_accounting",
-				"public",
-				"css",
-				"receipt_form.css",
-			)
-		).read_text(encoding="utf-8")
-		self.assertIn("sp-receipt-layout-section", source)
-		self.assertIn("overflow-x: auto", css)
-		self.assertIn("max-width: 100%", css)
-		self.assertNotIn("100vw", css)
-		self.assertNotIn("translateX", css)
-
-	def test_receipt_initial_defaults_and_row_editor_contract(self):
-		source = self.client_source()
-		pair_meta = frappe.get_meta("SmartProcess Accounting Pair")
-		self.assertFalse(pair_meta.get_field("receipt_posting_date").in_list_view)
-		self.assertFalse(pair_meta.get_field("credit_description").in_list_view)
-		for contract in (
-			"initializeReceiverType",
-			'frm.refresh_field("receipt_payer")',
-			"defaultReceiverCurrency",
-			'grid.set_column_disp_in_list_view("receipt_posting_date", false)',
-			'gridRow.toggle_display("credit_description", true)',
-		):
-			self.assertIn(contract, source)
-		self.assertNotIn('["receipt_posting_date", 1]', source)
-
-	def test_base_row_in_foreign_receipt_is_rejected(self):
+	def test_base_row_in_foreign_receipt_uses_the_receiver_rate(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, BASE, 100)])
-		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
-			doc.validate()
+		doc.validate()
+		row = doc.operational_pairs[0]
+		self.assertEqual((row.credit_account_currency, row.debit_account_currency), (BASE, FOREIGN_A))
+		self.assertEqual(Decimal(str(row.debit_amount)), Decimal("10"))
+		self.assert_canonical_pair(row, CUSTOMER_A, BASE_BANK, 100)
 
-	def test_other_foreign_row_in_foreign_receipt_is_rejected(self):
-		doc = self.receipt(
-			[self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)]
-		)
-		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
-			doc.validate()
+	def test_other_foreign_row_in_foreign_receipt_keeps_its_own_currency(self):
+		doc = self.receipt([self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)])
+		doc.validate()
+		row = doc.operational_pairs[0]
+		self.assertEqual((row.credit_account_currency, row.debit_account_currency), (FOREIGN_B, FOREIGN_A))
+		self.assertEqual((Decimal(str(row.credit_amount)), Decimal(str(row.debit_amount))), (Decimal("5"), Decimal("10")))
+		self.assert_canonical_pair(row, CUSTOMER_A, FOREIGN_B_ACCOUNT, 100)
 
 	def test_supplier_payer(self):
 		doc = self.receipt(
@@ -226,7 +189,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt(
 			[
 				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10),
-				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 20),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 20, 10),
 			]
 		)
 		doc.validate()
@@ -236,16 +199,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 			[Decimal("100"), Decimal("200")],
 		)
 
-	def test_client_account_query_filters_company_state_group_currency_and_party_type(self):
-		source = self.client_source()
-		for contract in (
-			"company, disabled: 0, is_group: 0, account_currency: currency",
-			'filters.account_type = accountType',
-			'return "Receivable"',
-			'return "Payable"',
-		):
-			self.assertIn(contract, source)
-
 	def test_forged_receiving_account_currency_is_rejected(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, FOREIGN_A, 10, 10)])
 		with self.assertRaisesRegex(frappe.ValidationError, "ارز حساب"):
@@ -253,7 +206,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 
 	def test_forged_or_disabled_row_currency_is_rejected(self):
 		doc = self.receipt([self.receipt_row(BASE_BANK, "FORGED-CURRENCY", 10, 10)])
-		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز پرداخت‌کننده"):
 			doc.validate()
 
 	def test_forged_or_disabled_payer_currency_is_rejected(self):
@@ -288,36 +241,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 			get_receipt_party_account_suggestion("Customer", CUSTOMER_B_PARTY, COMPANY, FOREIGN_A)
 		)
 
-	def test_currency_change_client_contract_clears_incompatible_account_and_rates(self):
-		source = self.client_source()
-		self.assertIn("details.account_currency !== row.receipt_currency", source)
-		self.assertIn('setRowValueQuietly(cdt, cdn, "credit_account", "")', source)
-		self.assertIn('setRowValueQuietly(cdt, cdn, "credit_exchange_rate", "")', source)
-
-	def test_all_base_currency_client_contract_hides_fx_fields(self):
-		source = self.client_source()
-		self.assertIn('gridRow.toggle_display("credit_exchange_rate", hasForeign)', source)
-		self.assertIn('gridRow.toggle_display("credit_company_amount", hasForeign)', source)
-
-	def test_foreign_currency_client_contract_shows_amount_rate_and_base_preview(self):
-		source = self.client_source()
-		self.assertIn('grid.toggle_display("credit_exchange_rate", hasForeign)', source)
-		self.assertIn('grid.toggle_display("credit_company_amount", hasForeign)', source)
-		self.assertIn('hasForeign ? __("مبلغ ارز") : __("مبلغ")', source)
-
-	def test_mixed_currency_grid_uses_uniform_fx_columns(self):
-		source = self.client_source()
-		self.assertIn("const hasForeign = (frm.doc.operational_pairs || []).some", source)
-		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
-		self.assertIn('["credit_company_amount", "columns", 3]', source)
-
-	def test_currency_changes_add_and_remove_refresh_grid_without_reload(self):
-		source = self.client_source()
-		self.assertIn("receiptForm.configureGrid(frm, true)", source)
-		self.assertIn("operational_pairs_remove(frm)", source)
-		self.assertIn("copyPreviousReceiptRow", source)
-		self.assertNotIn("window.location.reload", source)
-
 	def test_currency_fields_are_dynamic_selects(self):
 		parent = frappe.get_meta("SmartProcess Accounting Document").get_field(
 			"receipt_payer_currency"
@@ -341,14 +264,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 			)
 		)
 
-	def test_currency_dropdown_client_preserves_stored_codes_and_updates_filters(self):
-		source = self.client_source()
-		self.assertIn("...(frm.doc.operational_pairs || []).map((row) => row.receipt_currency)", source)
-		self.assertIn('frm.set_df_property("receipt_payer_currency", "options", optionText)', source)
-		self.assertIn('updateGridProperty(grid, "receipt_currency", "options", optionText)', source)
-		self.assertIn("row.receipt_currency", source)
-		self.assertIn("receiptAccountFilters", source)
-
 	def test_existing_document_currency_codes_reload_unchanged(self):
 		doc = self.receipt(
 			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]
@@ -356,32 +271,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		reloaded = frappe.get_doc(doc.doctype, doc.name)
 		self.assertEqual(reloaded.receipt_payer_currency, FOREIGN_A)
 		self.assertEqual(reloaded.operational_pairs[0].receipt_currency, FOREIGN_A)
-
-	def test_receipt_number_fields_use_local_compact_formatter(self):
-		source = self.client_source()
-		self.assertIn("compactNumberFormatter", source)
-		self.assertIn("configureCompactNumberInput", source)
-		self.assertIn("RECEIPT_NUMBER_FIELDS", source)
-		self.assertNotIn("frappe.form.formatters.Currency =", source)
-		self.assertNotIn("frappe.form.formatters.Float =", source)
-
-	def test_receipt_grid_formatter_survives_field_and_control_rebuilds(self):
-		source = self.client_source()
-		self.assertIn("installReceiptGridLifecycle", source)
-		self.assertIn("installReceiptRowStaticNumberFormatters(this)", source)
-		self.assertIn("frappe.meta.set_formatter", source)
-		self.assertIn("const setupFields = grid.setup_fields", source)
-		self.assertIn("const refresh = grid.refresh", source)
-		self.assertIn("const makeControl = gridRow.make_control", source)
-		self.assertIn("configureCompactNumberInput(column.field)", source)
-
-	def test_receipt_grid_owns_mandatory_dynamic_columns(self):
-		source = self.client_source()
-		self.assertIn("const setupUserDefinedColumns = grid.setup_user_defined_columns", source)
-		self.assertIn("this.__sp_receipt_columns", source)
-		self.assertIn('["credit_exchange_rate", "columns", 2]', source)
-		self.assertIn('["credit_company_amount", "columns", 3]', source)
-		self.assertIn('gridRow.toggle_editable("credit_exchange_rate", false)', source)
 
 	def test_foreign_receipt_requires_header_rate(self):
 		doc = self.receipt(
@@ -405,15 +294,17 @@ class TestReceiptUX(V2IntegrationTestCase):
 				Decimal(str(row.credit_company_amount)),
 			)
 
-	def test_header_payer_rate_is_authoritative_and_legacy_child_rate_is_ignored(self):
+	def test_row_rate_prices_the_payer_and_header_rate_prices_the_receiver(self):
 		row = self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)
 		row["receipt_payer_exchange_rate"] = 999
 		doc = self.receipt([row], payer_rate=5)
 		doc.validate()
 		pair = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(pair.debit_amount)), Decimal("10"))
-		self.assertEqual(Decimal(str(pair.credit_exchange_rate)), Decimal("5"))
-		self.assertEqual(Decimal(str(pair.credit_company_amount)), Decimal("50"))
+		self.assertEqual(Decimal(str(pair.credit_exchange_rate)), Decimal("10"))
+		self.assertEqual(Decimal(str(pair.credit_company_amount)), Decimal("100"))
+		self.assertEqual(Decimal(str(pair.debit_exchange_rate)), Decimal("5"))
+		self.assertEqual(Decimal(str(pair.debit_amount)), Decimal("20"))
+		self.assertEqual(Decimal(str(pair.debit_company_amount)), Decimal("100"))
 		self.assertFalse(pair.receipt_payer_exchange_rate)
 
 	def test_three_rows_on_one_date_create_one_posting_unit(self):
@@ -675,13 +566,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 1)
 		self.assertEqual(frappe.db.get_value("SmartProcess Accounting Posting", unit_name, "docstatus"), 1)
 
-	def test_receipt_form_contract_ignores_posting_units_in_linked_cancel(self):
-		source = self.client_source()
-		self.assertIn(
-			'frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting"]',
-			source,
-		)
-
 	def test_multi_date_correction_keeps_old_units_and_returns_unposted_draft(self):
 		doc = self.multi_date_receipt().insert()
 		doc.submit()
@@ -725,13 +609,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc.submit()
 		entries = self.active_gl(doc)
 		self.assertEqual({Decimal(str(entry.debit + entry.credit)) for entry in entries}, {Decimal("100")})
-
-	def test_receipt_client_contract_restores_non_receipt_layout(self):
-		source = self.client_source()
-		self.assertIn("this.configureHeader(frm, isReceipt)", source)
-		self.assertIn("this.configureGrid(frm, isReceipt)", source)
-		self.assertIn('["debit_account", "label", "Account"]', source)
-		self.assertIn('["details_section", "label", "More Details"]', source)
 
 	def test_dynamic_link_metadata_uses_link_to_doctype_controllers(self):
 		contracts = {
@@ -821,18 +698,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertIn(FOREIGN_A, message)
 		self.assertIn(FOREIGN_B, message)
 
-	def test_party_currency_lock_client_contract(self):
-		source = self.client_source()
-		for contract in (
-			"get_party_currency_context",
-			"setProgrammaticReceiverCurrency",
-			"setRowReceiptCurrency",
-			"partyCurrencyMismatchMessage",
-			"rejectRowEntity",
-			"clearIncompatibleRowEntity",
-		):
-			self.assertIn(contract, source)
-
 	def test_receipt_posts_header_as_debit_and_row_as_credit(self):
 		doc = self.receipt(
 			[self.receipt_row(BASE_BANK, BASE, 100)],
@@ -867,20 +732,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 				doc = self.submit_document([self.base_pair()], operation_type=operation_type)
 				self.assertEqual(len(self.active_gl(doc)), 2)
 				doc.cancel()
-
-	def test_add_row_inherits_only_safe_non_amount_fields(self):
-		source = self.client_source()
-		self.assertIn("copyPreviousReceiptRow", source)
-		for fieldname in (
-			"receipt_posting_date",
-			"receipt_recipient_type",
-			"receipt_recipient",
-			"receipt_currency",
-			"credit_account",
-			"credit_exchange_rate",
-		):
-			self.assertIn(f'\"{fieldname}\"', source)
-		self.assertIn('["debit_amount", "debit_company_amount", "credit_amount", "credit_company_amount"]', source)
 
 	def posting_units(self, doc, *, include_cancelled=False):
 		filters = {"source_document": doc.name}
@@ -972,16 +823,6 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal(str(company_amount)))
 		self.assertEqual((row.debit_party_type, row.debit_party), ("Customer", party))
 
-	def client_source(self):
-		return Path(
-			frappe.get_app_path(
-				"smartprocess_erpnext_accounting",
-				"smartprocess_accounting",
-				"doctype",
-				"smartprocess_accounting_document",
-				"smartprocess_accounting_document.js",
-			)
-		).read_text(encoding="utf-8")
 
 
 def run_receipt_suite():

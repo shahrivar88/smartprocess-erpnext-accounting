@@ -7,13 +7,10 @@ from frappe import _
 
 from erpnext.accounts.party import get_party_account
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import (
 	ACCOUNT_RECIPIENT,
 	BANK_ACCOUNT_RECIPIENT,
-	build_canonical_receipt,
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_api import receipt_draft
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	ALLOWED_PARTY_TYPES,
 	batch_party_currencies,
@@ -222,27 +219,6 @@ def _mapped_party_account(party_type: str, party: str, company: str) -> str | No
 		return get_party_account(party_type, party, company)
 	except frappe.PermissionError:
 		return None
-
-
-@frappe.whitelist()
-def get_receipt_receiver_total(doc: dict) -> dict | None:
-	"""Canonical receiver debit total for the form summary (display-only).
-
-	Returns ``None`` while the draft is not ready; validation problems are
-	collected by the canonical builder, so nothing reaches ``_server_messages``.
-	"""
-	receipt = build_canonical_receipt(receipt_draft(doc))
-	if not receipt.ready:
-		return None
-	return {
-		"account": receipt.receiver.account,
-		"party": receipt.receiver.party or "",
-		"currency": receipt.transaction_currency,
-		"amount": decimal_text(receipt.transaction_total),
-		"effective_rate": decimal_text(receipt.exchange_rate),
-		"company_amount": decimal_text(receipt.company_total),
-		"company_currency": receipt.company_currency,
-	}
 
 
 @frappe.whitelist(methods=["GET"])

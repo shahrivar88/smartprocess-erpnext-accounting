@@ -1,7 +1,8 @@
 """Receipt canonicalization into the existing balanced Pair contract.
 
-Header receiver = Debit, row payers = Credit, all in one transaction currency.
-See ``receipt_contract`` for the contract and ``receipt_builder`` for the rules.
+Header receiver = Debit in the receiver currency; each row payer = Credit in
+that row's own currency. See ``receipt_contract`` for the contract and
+``receipt_builder`` for the rules.
 """
 
 from __future__ import annotations
@@ -54,24 +55,48 @@ def canonicalize_receipt(doc, lookups: ReceiptLookups | None = None) -> Canonica
 
 def receipt_summary(receipt: CanonicalReceipt) -> dict:
 	"""JSON-safe preview of the canonical Receipt; totals cover valid rows only."""
-	rate = receipt.exchange_rate
 	return {
 		"ready": receipt.ready,
 		"issues": [issue.as_dict() for issue in receipt.issues],
-		"transaction_currency": receipt.transaction_currency,
-		"transaction_total": decimal_text(receipt.transaction_total),
 		"company_currency": receipt.company_currency,
-		"company_total": decimal_text(receipt.company_total),
-		"exchange_rate": decimal_text(rate) if rate is not None else None,
+		"receiver_currency": receipt.receiver_currency,
+		"receiver_rate": _text(receipt.receiver_rate),
+		"receiver_amount": _text(receipt.receiver_amount),
+		"receiver_base_amount": decimal_text(receipt.base_total) if receipt.receiver_amount is not None else None,
+		"receiver_effective_rate": _text(receipt.receiver_effective_rate),
 		"receiver_account": receipt.receiver.account if receipt.receiver else None,
 		"receiver_party": receipt.receiver.party if receipt.receiver else None,
+		"total_base_amount": decimal_text(receipt.base_total),
+		"payer_totals": [
+			{
+				"currency": total.currency,
+				"amount": decimal_text(total.amount),
+				"rate": decimal_text(total.rate),
+				"base_amount": decimal_text(total.base_amount),
+			}
+			for total in receipt.payer_totals()
+		],
+		"rows": [
+			{
+				"row": row.number,
+				"currency": row.currency,
+				"amount": decimal_text(row.amount),
+				"rate": decimal_text(row.exchange_rate),
+				"base_amount": decimal_text(row.base_amount),
+			}
+			for row in receipt.rows
+		],
 	}
+
+
+def _text(value) -> str | None:
+	return decimal_text(value) if value is not None else None
 
 
 def _apply_receipt(doc, receipt: CanonicalReceipt) -> None:
 	receiver = receipt.receiver
 	doc.company_currency = receipt.company_currency
-	doc.receipt_payer_exchange_rate = decimal_text(receipt.exchange_rate)
+	doc.receipt_payer_exchange_rate = decimal_text(receipt.receiver_rate)
 	doc.receipt_payer_account = receiver.account
 	doc.receipt_payer_type = receiver.party_type
 	doc.receipt_payer = receiver.party
@@ -82,30 +107,27 @@ def _apply_receipt(doc, receipt: CanonicalReceipt) -> None:
 
 def _apply_row(row, canonical: CanonicalRow, receipt: CanonicalReceipt) -> None:
 	receiver = receipt.receiver
-	currency = receipt.transaction_currency
-	amount = decimal_text(canonical.amount)
-	rate = decimal_text(receipt.exchange_rate)
-	company_amount = decimal_text(canonical.company_amount)
+	base_amount = decimal_text(canonical.base_amount)
 	row.update(
 		{
-			"receipt_currency": currency,
+			"receipt_currency": canonical.currency,
 			"receipt_posting_date": canonical.posting_date,
 			"receipt_payer_exchange_rate": None,
 			"company_currency": receipt.company_currency,
 			"credit_account": canonical.account,
 			"credit_party_type": canonical.party_type,
 			"credit_party": canonical.party,
-			"credit_account_currency": currency,
-			"credit_amount": amount,
-			"credit_exchange_rate": rate,
-			"credit_company_amount": company_amount,
+			"credit_account_currency": canonical.currency,
+			"credit_amount": decimal_text(canonical.amount),
+			"credit_exchange_rate": decimal_text(canonical.exchange_rate),
+			"credit_company_amount": base_amount,
 			"debit_account": receiver.account,
 			"debit_party_type": receiver.party_type,
 			"debit_party": receiver.party,
-			"debit_account_currency": currency,
-			"debit_amount": amount,
-			"debit_exchange_rate": rate,
-			"debit_company_amount": company_amount,
+			"debit_account_currency": receipt.receiver_currency,
+			"debit_amount": decimal_text(canonical.receiver_amount),
+			"debit_exchange_rate": decimal_text(canonical.receiver_rate),
+			"debit_company_amount": base_amount,
 			"debit_suggested_account": None,
 			"debit_description": row.get("credit_description"),
 		}

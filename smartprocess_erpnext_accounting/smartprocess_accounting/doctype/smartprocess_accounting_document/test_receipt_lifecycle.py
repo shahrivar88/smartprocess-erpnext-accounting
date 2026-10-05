@@ -38,78 +38,143 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
-	def test_base_receipt_posts_native_gl_and_cancels_through_receipt(self):
+	def test_base_receiver_base_payer_posts_native_gl_and_cancels(self):
 		bank = self.company_bank_account(self.base)
 		customer, receivable = self.customer_with_account(self.base)
 		doc = self.receipt(
 			self.base,
 			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
-			[self.customer_row(customer, receivable, "125")],
+			[self.customer_row(customer, receivable, self.base, "125")],
 		)
 		native_api = posting_module.make_gl_entries
 		with patch.object(posting_module, "make_gl_entries", autospec=True, side_effect=native_api) as native:
 			doc.insert()
 			doc.submit()
 		self.assertTrue(native.called)
-		postings = frappe.get_all(POSTING, filters={"source_document": doc.name, "docstatus": 1}, pluck="name")
+		postings = self.postings(doc)
 		self.assertEqual(len(postings), 1)
-		entries = self.gl_by_account(postings)
-		self.assertEqual(Decimal(str(entries[bank.account].debit)), Decimal("125"))
-		self.assertEqual(Decimal(str(entries[receivable].credit)), Decimal("125"))
-		self.assertEqual((entries[receivable].party_type, entries[receivable].party), ("Customer", customer))
+		self.assertLedger(postings, [
+			(bank.account, self.base, "debit", "125", "125"),
+			(receivable, self.base, "credit", "125", "125"),
+		])
+		entries = self.gl_rows(postings)
+		self.assertEqual({(row.party_type, row.party) for row in entries if row.account == receivable}, {("Customer", customer)})
 
 		with self.assertRaisesRegex(frappe.ValidationError, "source Receipt"):
 			frappe.get_doc(POSTING, postings[0]).cancel()
+		self.cancel_and_assert_reversed(doc, postings)
 
-		frappe.get_doc(DOCTYPE, doc.name).cancel()
-		self.assertEqual(frappe.db.get_value(POSTING, postings[0], "docstatus"), 2)
-		ledger = frappe.get_all(
-			"GL Entry",
-			filters={"voucher_type": POSTING, "voucher_no": ["in", postings]},
-			fields=["account", "debit", "credit", "is_cancelled"],
-		)
-		self.assertGreaterEqual(len(ledger), 2)
-		for account in {row.account for row in ledger}:
-			active = [row for row in ledger if row.account == account and not row.is_cancelled]
-			self.assertEqual(
-				sum(Decimal(str(row.debit)) for row in active),
-				sum(Decimal(str(row.credit)) for row in active),
-			)
-
-	def test_foreign_receipt_posts_with_the_header_rate(self):
+	def test_foreign_receiver_foreign_payer_with_independent_rates(self):
 		currency = self.foreign_currency()
 		receiver = self.generic_account(currency)
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			currency,
-			{
-				"receipt_receiver_kind": "سایر حساب‌ها",
-				"receipt_payer_account": receiver,
-				"receipt_payer_exchange_rate": "1000",
-			},
-			[self.customer_row(customer, receivable, "2.5")],
-		).insert()
-		doc.submit()
-		postings = frappe.get_all(POSTING, filters={"source_document": doc.name, "docstatus": 1}, pluck="name")
-		entries = self.gl_by_account(postings)
-		for account, side in ((receiver, "debit"), (receivable, "credit")):
-			entry = entries[account]
-			self.assertEqual(entry.account_currency, currency)
-			self.assertEqual(Decimal(str(entry[f"{side}_in_account_currency"])), Decimal("2.5"))
-			self.assertEqual(Decimal(str(entry[side])), Decimal("2500"))
+			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1000"},
+			[self.customer_row(customer, receivable, currency, "2.5", rate="1200")],
+		)
+		doc.insert().submit()
+		self.assertLedger(self.postings(doc), [
+			(receiver, currency, "debit", "3", "3000"),
+			(receivable, currency, "credit", "2.5", "3000"),
+		])
 
-	def test_cross_currency_receipt_is_rejected_before_posting(self):
+	def test_base_receiver_foreign_payer(self):
 		currency = self.foreign_currency()
 		bank = self.company_bank_account(self.base)
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			self.base,
 			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
-			[self.customer_row(customer, receivable, "10", receipt_currency=currency)],
+			[self.customer_row(customer, receivable, currency, "2", rate="1600000")],
+		)
+		doc.insert().submit()
+		self.assertLedger(self.postings(doc), [
+			(bank.account, self.base, "debit", "3200000", "3200000"),
+			(receivable, currency, "credit", "2", "3200000"),
+		])
+
+	def test_foreign_receiver_base_payer(self):
+		currency = self.foreign_currency()
+		receiver = self.generic_account(currency)
+		customer, receivable = self.customer_with_account(self.base)
+		doc = self.receipt(
+			currency,
+			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1600000"},
+			[self.customer_row(customer, receivable, self.base, "3200000")],
+		)
+		doc.insert().submit()
+		self.assertLedger(self.postings(doc), [
+			(receiver, currency, "debit", "2", "3200000"),
+			(receivable, self.base, "credit", "3200000", "3200000"),
+		])
+
+	def test_mixed_currency_rows_balance_and_cancel(self):
+		currency = self.foreign_currency()
+		receiver = self.generic_account(currency)
+		base_customer, base_receivable = self.customer_with_account(self.base)
+		foreign_customer, foreign_receivable = self.customer_with_account(currency)
+		doc = self.receipt(
+			currency,
+			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1500000"},
+			[
+				self.customer_row(base_customer, base_receivable, self.base, "1500000"),
+				self.customer_row(foreign_customer, foreign_receivable, currency, "1", rate="1600000"),
+				self.customer_row(base_customer, base_receivable, self.base, "400000"),
+			],
+		)
+		doc.insert().submit()
+		postings = self.postings(doc)
+		self.assertLedger(postings, [
+			(receiver, currency, "debit", "2.33", "3500000"),
+			(base_receivable, self.base, "credit", "1900000", "1900000"),
+			(foreign_receivable, currency, "credit", "1", "1600000"),
+		])
+		self.cancel_and_assert_reversed(doc, postings)
+
+	def test_payer_account_in_another_currency_is_rejected_before_posting(self):
+		currency = self.foreign_currency()
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(currency)
+		doc = self.receipt(
+			self.base,
+			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
+			[self.customer_row(customer, receivable, self.base, "10")],
 		)
 		with self.assertRaises(ReceiptValidationError):
 			doc.insert()
 		self.assertFalse(frappe.db.exists(DOCTYPE, {"general_reference": doc.general_reference}))
+
+	def assertLedger(self, postings, expected):
+		"""Per account: currency, side, account-currency total, company total; and the whole ledger balances."""
+		rows = self.gl_rows(postings)
+		actual = {}
+		for row in rows:
+			side = "debit" if row.debit else "credit"
+			key = (row.account, row.account_currency, side)
+			amount, company = actual.get(key, (Decimal("0"), Decimal("0")))
+			actual[key] = (amount + Decimal(str(row[f"{side}_in_account_currency"])), company + Decimal(str(row[side])))
+		self.assertEqual(
+			actual,
+			{(account, currency, side): (Decimal(amount), Decimal(company)) for account, currency, side, amount, company in expected},
+		)
+		self.assertEqual(sum(Decimal(str(row.debit)) for row in rows), sum(Decimal(str(row.credit)) for row in rows))
+
+	def cancel_and_assert_reversed(self, doc, postings):
+		frappe.get_doc(DOCTYPE, doc.name).cancel()
+		self.assertEqual(set(frappe.get_all(POSTING, filters={"name": ["in", postings]}, pluck="docstatus")), {2})
+		ledger = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": POSTING, "voucher_no": ["in", postings]},
+			fields=["account", "debit", "credit", "debit_in_account_currency", "credit_in_account_currency"],
+		)
+		for account in {row.account for row in ledger}:
+			lines = [row for row in ledger if row.account == account]
+			for debit, credit in (("debit", "credit"), ("debit_in_account_currency", "credit_in_account_currency")):
+				self.assertEqual(
+					sum(Decimal(str(row[debit])) for row in lines),
+					sum(Decimal(str(row[credit])) for row in lines),
+				)
 
 	def receipt(self, currency, header, rows):
 		return frappe.get_doc(
@@ -125,17 +190,21 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 			}
 		)
 
-	def customer_row(self, customer, account, amount, **values):
+	def customer_row(self, customer, account, currency, amount, rate=None):
 		return {
+			"receipt_currency": currency,
+			"credit_exchange_rate": rate,
 			"receipt_recipient_type": "Customer",
 			"receipt_recipient": customer,
 			"credit_account": account,
 			"credit_amount": amount,
-			**values,
 		}
 
-	def gl_by_account(self, postings):
-		rows = frappe.get_all(
+	def postings(self, doc):
+		return frappe.get_all(POSTING, filters={"source_document": doc.name, "docstatus": 1}, pluck="name")
+
+	def gl_rows(self, postings):
+		return frappe.get_all(
 			"GL Entry",
 			filters={"voucher_type": POSTING, "voucher_no": ["in", postings], "is_cancelled": 0},
 			fields=[
@@ -149,8 +218,6 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 				"credit_in_account_currency",
 			],
 		)
-		self.assertEqual(len(rows), 2)
-		return {row.account: row for row in rows}
 
 	def company_bank_account(self, currency):
 		for bank in frappe.get_all(

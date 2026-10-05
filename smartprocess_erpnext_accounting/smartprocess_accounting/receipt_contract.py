@@ -1,23 +1,39 @@
-"""Canonical single-currency Receipt contract.
+"""Canonical two-sided-currency Receipt contract.
 
-One Receipt has one transaction currency, stored in the legacy-named header
-field ``receipt_payer_currency``. The header receiver is debited and every row
-payer is credited in that currency. One header rate, ``receipt_payer_exchange_rate``,
-means 1 transaction-currency unit = rate Company.default_currency units.
+The header receiver is debited in its own account currency and every row payer
+is credited in that row's own account currency. Company.default_currency is the
+base currency; every rate means 1 account-currency unit = rate base units.
+
+Legacy field names keep their stored data:
+
+- ``receipt_payer_currency`` / ``receipt_payer_exchange_rate`` (header) hold the
+  receiver currency and receiver rate.
+- ``receipt_currency`` / ``credit_exchange_rate`` (row) hold the payer currency
+  and payer rate.
+
+The receiver amount is derived: total row base amount / receiver rate. Each
+generated Pair must balance exactly in base currency, so a row's receiver share
+may carry an effective rate that differs from the header rate in its last digits.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from frappe import _
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import ALLOWED_PARTY_TYPES
 
-TRANSACTION_CURRENCY_FIELD = "receipt_payer_currency"
-EXCHANGE_RATE_FIELD = "receipt_payer_exchange_rate"
+RECEIVER_CURRENCY_FIELD = "receipt_payer_currency"
+RECEIVER_RATE_FIELD = "receipt_payer_exchange_rate"
 RECEIVER_ACCOUNT_FIELD = "receipt_payer_account"
+PAYER_CURRENCY_FIELD = "receipt_currency"
+PAYER_RATE_FIELD = "credit_exchange_rate"
+
+# Pair and header rate columns are decimal(21,12).
+RATE_PLACES = 12
+RATE_UNIT = Decimal("1").scaleb(-RATE_PLACES)
 
 ACCOUNT_RECIPIENT = "Account"
 BANK_ACCOUNT_RECIPIENT = "Bank Account"
@@ -59,12 +75,27 @@ class CanonicalReceiver:
 class CanonicalRow:
 	number: int
 	payer_type: str
+	currency: str
 	account: str
 	party_type: str | None
 	party: str | None
 	amount: Decimal
-	company_amount: Decimal
+	exchange_rate: Decimal
+	base_amount: Decimal
 	posting_date: object
+	receiver_amount: Decimal | None = None
+	receiver_rate: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class PayerTotal:
+	currency: str
+	amount: Decimal
+	base_amount: Decimal
+
+	@property
+	def rate(self) -> Decimal:
+		return average_rate(self.base_amount, self.amount)
 
 
 @dataclass
@@ -72,20 +103,35 @@ class CanonicalReceipt:
 	company: str | None
 	company_currency: str | None
 	posting_date: object
-	transaction_currency: str | None
-	exchange_rate: Decimal | None
+	receiver_currency: str | None
+	receiver_rate: Decimal | None
 	receiver: CanonicalReceiver | None
 	rows: list[CanonicalRow] = field(default_factory=list)
 	issues: list[ReceiptIssue] = field(default_factory=list)
+	receiver_amount: Decimal | None = None
 
 	@property
 	def ready(self) -> bool:
-		return not self.issues and self.receiver is not None and bool(self.rows)
+		return not self.issues and self.receiver is not None and bool(self.rows) and self.receiver_amount is not None
 
 	@property
-	def transaction_total(self) -> Decimal:
-		return sum((row.amount for row in self.rows), Decimal("0"))
+	def base_total(self) -> Decimal:
+		return sum((row.base_amount for row in self.rows), Decimal("0"))
 
 	@property
-	def company_total(self) -> Decimal:
-		return sum((row.company_amount for row in self.rows), Decimal("0"))
+	def receiver_effective_rate(self) -> Decimal | None:
+		if not self.receiver_amount:
+			return None
+		return average_rate(self.base_total, self.receiver_amount)
+
+	def payer_totals(self) -> list[PayerTotal]:
+		"""Row totals per payer currency, in first-appearance order."""
+		totals: dict[str, list[Decimal]] = {}
+		for row in self.rows:
+			amount, base = totals.setdefault(row.currency, [Decimal("0"), Decimal("0")])
+			totals[row.currency] = [amount + row.amount, base + row.base_amount]
+		return [PayerTotal(currency, amount, base) for currency, (amount, base) in totals.items()]
+
+
+def average_rate(base_amount: Decimal, amount: Decimal) -> Decimal:
+	return (base_amount / amount).quantize(RATE_UNIT, rounding=ROUND_HALF_UP)

@@ -20,7 +20,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartproces
 	foreign_row,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_api import preview_receipt
-from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import get_receipt_receiver_total
 
 DOCTYPE = "SmartProcess Accounting Document"
 CONTROLLER = Path(__file__).with_name("smartprocess_accounting_document.py")
@@ -50,16 +49,18 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 			"receipt_payer_currency": FOREIGN,
 			"receipt_receiver_kind": "بانک",
 			"receipt_bank_account": "BANK-FOREIGN",
-			"receipt_payer_exchange_rate": "2",
-			"operational_pairs": [dict(foreign_row(credit_amount="5"))],
+			"receipt_payer_exchange_rate": "4",
+			"operational_pairs": [dict(foreign_row(credit_amount="5", rate="2"))],
 		}
 		with patch.object(receipt_module, "ReceiptLookups", FakeLookups):
 			result = preview_receipt(json.dumps(payload))
 		self.assertTrue(result["ready"], result["issues"])
 		self.assertEqual(
-			(result["transaction_total"], result["company_total"], result["exchange_rate"]),
-			("5", "10", "2"),
+			(result["receiver_amount"], result["receiver_rate"], result["receiver_base_amount"], result["total_base_amount"]),
+			("2.5", "4", "10", "10"),
 		)
+		self.assertEqual(result["payer_totals"], [{"currency": FOREIGN, "amount": "5", "rate": "2", "base_amount": "10"}])
+		self.assertEqual(result["rows"], [{"row": 1, "currency": FOREIGN, "amount": "5", "rate": "2", "base_amount": "10"}])
 		self.assertEqual(frappe.local.message_log, [])
 
 	def test_incomplete_preview_returns_issues_without_leaking(self):
@@ -67,10 +68,6 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 		self.assertFalse(result["ready"])
 		fields = {issue["field"] for issue in result["issues"]}
 		self.assertLessEqual({"company", "receipt_payer_currency", "receipt_receiver_kind"}, fields)
-		self.assertEqual(frappe.local.message_log, [])
-
-	def test_receiver_total_is_none_until_ready(self):
-		self.assertIsNone(get_receipt_receiver_total(INCOMPLETE))
 		self.assertEqual(frappe.local.message_log, [])
 
 	def test_validate_has_no_set_value_bypass(self):
