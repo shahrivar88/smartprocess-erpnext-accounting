@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:SP-RCONV-{YYYY}-{#####}",
+ "creation": "2026-10-06 01:30:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": ["source_receipt", "company", "posting_date", "target_currency", "remarks", "legs", "amended_from"],
+ "fields": [
+  {"fieldname":"source_receipt","fieldtype":"Link","in_list_view":1,"in_standard_filter":1,"label":"Source Receipt","options":"SmartProcess Accounting Document","reqd":1,"search_index":1},
+  {"fieldname":"company","fieldtype":"Link","in_standard_filter":1,"label":"Company","options":"Company","reqd":1},
+  {"default":"Today","fieldname":"posting_date","fieldtype":"Date","in_list_view":1,"label":"Posting Date","reqd":1},
+  {"fieldname":"target_currency","fieldtype":"Link","in_list_view":1,"label":"Target Currency","options":"Currency","reqd":1},
+  {"fieldname":"remarks","fieldtype":"Small Text","label":"Remarks"},
+  {"fieldname":"legs","fieldtype":"Table","label":"Conversion Legs","options":"SmartProcess Receipt Conversion Leg","reqd":1},
+  {"fieldname":"amended_from","fieldtype":"Link","label":"Amended From","no_copy":1,"options":"SmartProcess Receipt Conversion","print_hide":1,"read_only":1,"search_index":1}
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-10-06 01:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Receipt Conversion",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"create":1,"delete":1,"read":1,"report":1,"role":"Accounts User","write":1},
+  {"amend":1,"cancel":1,"create":1,"delete":1,"read":1,"report":1,"role":"Accounts Manager","submit":1,"write":1},
+  {"read":1,"report":1,"role":"Auditor"},
+  {"amend":1,"cancel":1,"create":1,"delete":1,"read":1,"report":1,"role":"System Manager","submit":1,"write":1}
+ ],
+ "search_fields": "source_receipt,target_currency",
+ "sort_field": "posting_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "source_receipt",
+ "track_changes": 1
+}

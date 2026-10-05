@@ -49,6 +49,8 @@ class PostingLine:
 	company_amount: Decimal
 	remarks: str | None
 	against: str
+	against_voucher_type: str | None = None
+	against_voucher: str | None = None
 
 
 def validate_document(doc) -> list[PostingLine]:
@@ -277,7 +279,15 @@ def _make_gl_entry(doc, line: PostingLine):
 			"credit_in_transaction_currency": 0 if is_debit else account_amount,
 		}
 	)
+	if line.against_voucher_type or line.against_voucher:
+		entry.update(_against_reference(line))
 	return entry
+
+
+def _against_reference(line: PostingLine) -> dict:
+	if not (line.against_voucher_type and line.against_voucher):
+		frappe.throw(_("Against Voucher Type and Against Voucher must be set together."))
+	return {"against_voucher_type": line.against_voucher_type, "against_voucher": line.against_voucher}
 
 
 def _round_company_amount(amount: Decimal, rate: Decimal, precision: int) -> Decimal:

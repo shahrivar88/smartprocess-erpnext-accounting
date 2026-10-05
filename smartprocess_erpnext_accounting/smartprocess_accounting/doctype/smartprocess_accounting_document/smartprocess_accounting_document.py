@@ -14,6 +14,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	validate_document,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import canonicalize_receipt
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
+	assert_no_active_conversions,
+)
 
 
 SERIES_FIELDS = {
@@ -59,6 +62,7 @@ class SmartProcessAccountingDocument(AccountsController):
 
 	def before_cancel(self):
 		if self.operation_type == "Receipt":
+			assert_no_active_conversions(self.name)
 			self._set_cancel_link_exceptions()
 			cancel_document(self)
 
@@ -79,6 +83,8 @@ class SmartProcessAccountingDocument(AccountsController):
 		)
 
 	def before_update_after_submit(self):
+		if self.operation_type == "Receipt":
+			assert_no_active_conversions(self.name)
 		if self.has_value_changed("correction_reason") and not self.flags.in_correction:
 			frappe.throw(_("Correction Reason can only be set through the Correction action."))
 
