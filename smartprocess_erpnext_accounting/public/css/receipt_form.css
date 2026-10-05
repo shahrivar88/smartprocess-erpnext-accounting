@@ -18,20 +18,12 @@
  * Receipt child-grid column proportions.
  * Frappe's grid gives every column an equal flex-grow once the total colsize
  * exceeds 10, which flattens any intended proportions at wide screens. These
- * rules replace the equal grow with the designed weights (ارز 0.7 /
- * نوع پرداخت‌کننده 1.2 / پرداخت‌کننده 2.4 / معین پرداخت‌کننده 2.0 / مبلغ 1.2 /
- * نرخ ارز 1.2 / مبلغ به ارز پایه 1.4) and proportional pixel minimums, so
- * columns keep their proportions at every width and a horizontal scrollbar
- * only appears when the minimums genuinely cannot fit.
+ * rules replace the equal grow with the designed weights (نوع پرداخت‌کننده 1.2 /
+ * پرداخت‌کننده 2.4 / معین پرداخت‌کننده 2.0 / مبلغ 1.2 / نرخ ارز 1.2 /
+ * مبلغ به ارز پایه 1.4) and proportional pixel minimums, so columns keep their
+ * proportions at every width and a horizontal scrollbar only appears when the
+ * minimums genuinely cannot fit.
  */
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_currency"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_currency"] {
-	flex: 0.7 0 64px;
-	min-width: 0;
-	max-width: none;
-	position: static;
-}
-
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_recipient_type"],
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="receipt_recipient_type"] {
 	flex: 1.2 0 84px;

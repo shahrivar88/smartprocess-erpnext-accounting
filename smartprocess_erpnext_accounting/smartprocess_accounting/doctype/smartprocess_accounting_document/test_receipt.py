@@ -209,6 +209,13 @@ class TestReceiptUX(V2IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "ارز پرداخت‌کننده"):
 			doc.validate()
 
+	def test_row_currency_must_match_the_header_payer_currency(self):
+		doc = self.receipt(
+			[self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10), self.receipt_row(FOREIGN_B_ACCOUNT, FOREIGN_B, 5, 20)]
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز ردیف"):
+			doc.validate()
+
 	def test_forged_or_disabled_payer_currency_is_rejected(self):
 		doc = self.receipt(
 			[self.receipt_row(BASE_BANK, BASE, 100)],
@@ -766,9 +773,12 @@ class TestReceiptUX(V2IntegrationTestCase):
 		payer_account=CUSTOMER_A,
 		payer_rate=10,
 		receiver_kind=None,
+		credit_currency=None,
 	):
 		if payer is None:
 			payer = CUSTOMER_BASE_PARTY if payer_currency == BASE else CUSTOMER_A_PARTY
+		if credit_currency is None and rows:
+			credit_currency = rows[0]["receipt_currency"]
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
@@ -778,6 +788,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 				"receipt_payer_currency": payer_currency,
 				"receipt_payer_account": payer_account,
 				"receipt_payer_exchange_rate": payer_rate,
+				"receipt_credit_currency": credit_currency,
 				"receipt_payer_type": payer_type,
 				"receipt_payer": payer,
 				# The field default «بانک» is injected server-side into any new Receipt

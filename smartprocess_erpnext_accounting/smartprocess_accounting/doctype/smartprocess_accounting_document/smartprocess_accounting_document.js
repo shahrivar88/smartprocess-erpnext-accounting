@@ -2,6 +2,7 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_numbers.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_form.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_header.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_payer_header.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_queries.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_events.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_validation_ui.js" %}
@@ -59,9 +60,14 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 			await spReceiptHeader.companyChanged(frm);
 		}
 	},
-	posting_date: receiptPreviewChanged,
+	posting_date(frm) {
+		return isReceiptForm(frm) && spReceiptPayerHeader.postingDateChanged(frm);
+	},
 	receipt_payer_currency(frm) {
 		return isReceiptForm(frm) && spReceiptHeader.currencyChanged(frm);
+	},
+	receipt_credit_currency(frm) {
+		return isReceiptForm(frm) && spReceiptPayerHeader.currencyChanged(frm);
 	},
 	receipt_receiver_kind(frm) {
 		return isReceiptForm(frm) && spReceiptHeader.receiverKindChanged(frm);
@@ -192,9 +198,6 @@ const pairEvents = {
 		return spReceiptRowEvents.rowAdded(frm, cdt, cdn);
 	},
 	operational_pairs_remove: receiptPreviewChanged,
-	receipt_currency(frm, cdt, cdn) {
-		return spReceiptRowEvents.currencyChanged(frm, cdt, cdn);
-	},
 	receipt_recipient_type(frm, cdt, cdn) {
 		return spReceiptRowEvents.payerTypeChanged(frm, cdt, cdn);
 	},

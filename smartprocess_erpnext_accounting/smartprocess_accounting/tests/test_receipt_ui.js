@@ -11,14 +11,16 @@ const MODULES = {
 	spReceiptNumbers: "receipt_numbers.js",
 	spReceiptForm: "receipt_form.js",
 	spReceiptHeader: "receipt_header.js",
+	spReceiptPayerHeader: "receipt_payer_header.js",
 	spReceiptRowQueries: "receipt_row_queries.js",
 	spReceiptRowEvents: "receipt_row_events.js",
 	spReceiptValidation: "receipt_validation_ui.js",
 	spReceiptSummary: "receipt_summary.js",
 };
 
-const calls = { xcall: [], msgprint: [], setValue: [] };
+const calls = { xcall: [], msgprint: [], setValue: [], confirm: [] };
 let responses = {};
+let confirmAnswer = true;
 const docs = new Map();
 
 globalThis.window = globalThis;
@@ -32,6 +34,10 @@ globalThis.frappe = {
 	},
 	msgprint(options) {
 		calls.msgprint.push(options);
+	},
+	confirm(message, yes, no) {
+		calls.confirm.push(message);
+		(confirmAnswer ? yes : no)();
 	},
 	get_doc(doctype, name) {
 		return docs.get(name);
@@ -72,6 +78,8 @@ function form(values = {}, rows = []) {
 		company: "SP",
 		company_currency: "IRR",
 		receipt_payer_currency: "IRR",
+		receipt_credit_currency: "IRR",
+		posting_date: "2026-10-05",
 		receipt_receiver_kind: "بانک",
 		operational_pairs: rows,
 		...values,
@@ -103,7 +111,9 @@ function reset() {
 	calls.xcall = [];
 	calls.msgprint = [];
 	calls.setValue = [];
+	calls.confirm = [];
 	responses = {};
+	confirmAnswer = true;
 	frappe.validated = true;
 }
 
@@ -116,8 +126,8 @@ const formSource = read(path.join(DOCTYPE_DIR, "smartprocess_accounting_document
 const clientSource = [formSource, ...moduleSources].join("\n");
 const evalDepends = (expression, doc, parent = doc) =>
 	new Function("doc", "parent", `return ${expression.replace(/^eval:/, "")}`)(doc, parent);
-const gridProperty = (fieldname, property) =>
-	spReceiptForm.receiptGridProperties().filter(([field, prop]) => field === fieldname && prop === property).pop()?.[2];
+const gridProperty = (fieldname, property, doc = {}) =>
+	spReceiptForm.receiptGridProperties(doc).filter(([field, prop]) => field === fieldname && prop === property).pop()?.[2];
 const docMeta = JSON.parse(read(path.join(DOCTYPE_DIR, "smartprocess_accounting_document.json")));
 const pairMeta = JSON.parse(read(path.join(DOCTYPE_DIR, "..", "smartprocess_accounting_pair", "smartprocess_accounting_pair.json")));
 const docField = (fieldname) => docMeta.fields.find((field) => field.fieldname === fieldname);
@@ -162,21 +172,21 @@ test("3 Bank receiver lists matching Bank Accounts and fills the linked ledger",
 	assert.equal(frm.doc.receipt_payer_account, "");
 });
 
-test("4 row Party query uses the row currency, not the Receiver currency", () => {
-	const doc = { operation_type: "Receipt", company: "SP", receipt_payer_currency: "EUR" };
-	assert.deepEqual(spReceiptRowQueries.payerQuery(doc, { receipt_recipient_type: "Supplier", receipt_currency: "USD" }).filters, {
+test("4 row Party query uses the header Payer Currency, not the Receiver currency", () => {
+	const doc = { operation_type: "Receipt", company: "SP", receipt_payer_currency: "EUR", receipt_credit_currency: "USD" };
+	assert.deepEqual(spReceiptRowQueries.payerQuery(doc, { receipt_recipient_type: "Supplier", receipt_currency: "IRR" }).filters, {
 		party_type: "Supplier", company: "SP", currency: "USD",
 	});
-	assert.deepEqual(spReceiptRowQueries.payerQuery(doc, { receipt_recipient_type: "Bank Account", receipt_currency: "IRR" }).filters, {
-		company: "SP", currency: "IRR",
+	assert.deepEqual(spReceiptRowQueries.payerQuery(doc, { receipt_recipient_type: "Bank Account" }).filters, {
+		company: "SP", currency: "USD",
 	});
 });
 
-test("5 row Account query uses the row currency", () => {
-	const doc = { company: "SP", receipt_payer_currency: "EUR" };
-	const filters = (type) => spReceiptRowQueries.payerAccountFilters(doc, { receipt_recipient_type: type, receipt_currency: "USD" });
+test("5 row Account query uses the header Payer Currency", () => {
+	const doc = { company: "SP", receipt_payer_currency: "EUR", receipt_credit_currency: "USD" };
+	const filters = (type) => spReceiptRowQueries.payerAccountFilters(doc, { receipt_recipient_type: type, receipt_currency: "IRR" });
 	assert.equal(filters("Customer").account_currency, "USD");
-	assert.equal(spReceiptRowQueries.payerAccountFilters(doc, { receipt_recipient_type: "Customer" }).account_currency, "");
+	assert.equal(spReceiptRowQueries.payerAccountFilters({ company: "SP" }, { receipt_recipient_type: "Customer" }).account_currency, "");
 	assert.equal(filters("Customer").account_type, "Receivable");
 	assert.equal(filters("Employee").account_type, "Payable");
 	assert.equal(filters("Bank Account").account_type, "Bank");
@@ -184,67 +194,140 @@ test("5 row Account query uses the row currency", () => {
 	assert.deepEqual([filters("Account").disabled, filters("Account").is_group], [0, 0]);
 });
 
-test("6 each row has its own visible Payer Currency", async () => {
+test("6 one header Payer Currency; the row Currency is a read-only mirror outside the grid", async () => {
 	reset();
+	const header = docField("receipt_credit_currency");
+	assert.deepEqual([header.fieldtype, header.label], ["Select", "ارز پرداخت‌کننده"]);
+	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("company_currency") + 1);
+	assert.equal(Boolean(evalDepends(docField("company_currency").depends_on, { operation_type: "Receipt" })), false);
 	const currency = pairField("receipt_currency");
-	assert.deepEqual([currency.hidden, currency.read_only, currency.in_list_view, currency.columns], [undefined, undefined, 1, 1]);
-	assert.equal(gridProperty("receipt_currency", "hidden"), 0);
-	assert.equal(gridProperty("receipt_currency", "reqd"), 1);
-	assert.ok(/receipt_currency\(frm, cdt, cdn\)/.test(formSource));
+	assert.deepEqual([currency.hidden, currency.read_only, currency.in_list_view], [undefined, 1, undefined]);
+	assert.deepEqual(
+		["hidden", "read_only", "in_list_view", "reqd"].map((property) => gridProperty("receipt_currency", property)),
+		[0, 1, 0, undefined],
+	);
+	assert.ok(!/receipt_currency\(frm, cdt, cdn\)/.test(formSource));
+	assert.ok(/receipt_credit_currency\(frm\)/.test(formSource));
 	const fresh = row("row-c1", {});
-	const frm = form({ receipt_payer_currency: "USD", company_currency: "IRR" }, [fresh]);
+	const kept = row("row-c2", { receipt_currency: "EUR", credit_amount: 5, credit_exchange_rate: 900000 });
+	const frm = form({ receipt_payer_currency: "USD", receipt_credit_currency: "IRR" }, [fresh, kept]);
 	await spReceiptRowEvents.applyDefaults(frm, fresh);
+	await spReceiptRowEvents.applyDefaults(frm, kept);
 	assert.deepEqual([fresh.receipt_currency, fresh.credit_exchange_rate], ["IRR", 1]);
-	const chosen = row("row-c2", { receipt_currency: "EUR", credit_exchange_rate: 900000 });
-	await spReceiptRowEvents.applyDefaults(form({}, [chosen]), chosen);
-	assert.deepEqual([chosen.receipt_currency, chosen.credit_exchange_rate], ["EUR", 900000]);
+	assert.equal(kept.receipt_currency, "EUR");
 });
 
-test("7 row rate: base is 1 and read-only, foreign is editable and kept", async () => {
+test("7 row rate: base Payer Currency is 1 and hidden from the grid; foreign rates differ per row", async () => {
 	reset();
 	assert.equal(gridProperty("credit_exchange_rate", "hidden"), 0);
 	const readOnly = gridProperty("credit_exchange_rate", "read_only_depends_on");
-	const parent = { company_currency: "IRR" };
-	assert.equal(Boolean(evalDepends(readOnly, { receipt_currency: "IRR" }, parent)), true);
-	assert.equal(Boolean(evalDepends(readOnly, { receipt_currency: "USD" }, parent)), false);
+	assert.equal(Boolean(evalDepends(readOnly, {}, { company_currency: "IRR", receipt_credit_currency: "IRR" })), true);
+	assert.equal(Boolean(evalDepends(readOnly, {}, { company_currency: "IRR", receipt_credit_currency: "USD" })), false);
+	const base = { company_currency: "IRR", receipt_credit_currency: "IRR" };
+	assert.equal(gridProperty("credit_exchange_rate", "in_list_view", base), 0);
+	assert.equal(gridProperty("credit_exchange_rate", "in_list_view", { ...base, receipt_credit_currency: "USD" }), 1);
 	assert.equal(gridProperty("credit_company_amount", "read_only"), 1);
-	const foreign = row("row-r1", { receipt_currency: "USD", credit_exchange_rate: 1600000 });
-	const base = row("row-r2", { receipt_currency: "IRR", credit_exchange_rate: 5 });
-	const frm = form({}, [foreign, base]);
-	await spReceiptRowEvents.rateChanged(frm, foreign.doctype, foreign.name);
-	await spReceiptRowEvents.rateChanged(frm, base.doctype, base.name);
-	assert.deepEqual([foreign.credit_exchange_rate, base.credit_exchange_rate], [1600000, 1]);
-	assert.equal(spReceiptSummary.payload({ operational_pairs: [foreign] }).operational_pairs[0].credit_exchange_rate, 1600000);
+	const first = row("row-r1", { credit_exchange_rate: 1600000 });
+	const second = row("row-r2", { credit_exchange_rate: 1550000 });
+	const foreignForm = form({ receipt_credit_currency: "USD" }, [first, second]);
+	await spReceiptRowEvents.rateChanged(foreignForm, first.doctype, first.name);
+	await spReceiptRowEvents.rateChanged(foreignForm, second.doctype, second.name);
+	assert.deepEqual([first.credit_exchange_rate, second.credit_exchange_rate], [1600000, 1550000]);
+	const baseRow = row("row-r3", { credit_exchange_rate: 5 });
+	await spReceiptRowEvents.rateChanged(form({}, [baseRow]), baseRow.doctype, baseRow.name);
+	assert.equal(baseRow.credit_exchange_rate, 1);
+	const payload = spReceiptSummary.payload({ receipt_credit_currency: "USD", operational_pairs: [first] });
+	assert.deepEqual([payload.receipt_credit_currency, payload.operational_pairs[0].credit_exchange_rate], ["USD", 1600000]);
 });
 
-test("7b row currency change resets that row's payer, ledger and stale rate only", async () => {
+test("7b Payer Currency change asks first, then clears only rows filled in the old currency", async () => {
 	reset();
-	const changed = row("row-x1", { receipt_currency: "EUR", credit_exchange_rate: 1600000, receipt_recipient_type: "Customer", receipt_recipient: "C1", credit_account: "Debtors USD" });
-	const other = row("row-x2", { receipt_currency: "USD", credit_exchange_rate: 1600000, receipt_recipient: "C2", credit_account: "Debtors USD" });
-	const frm = form({ receipt_payer_currency: "IRR" }, [changed, other]);
-	await spReceiptRowEvents.currencyChanged(frm, changed.doctype, changed.name);
-	assert.deepEqual([changed.receipt_recipient, changed.credit_account, changed.credit_exchange_rate], ["", "", null]);
-	assert.deepEqual([other.receipt_recipient, other.credit_account, other.credit_exchange_rate], ["C2", "Debtors USD", 1600000]);
-	changed.receipt_currency = "IRR";
-	await spReceiptRowEvents.currencyChanged(frm, changed.doctype, changed.name);
-	assert.equal(changed.credit_exchange_rate, 1);
+	const filled = () => row("row-x1", {
+		receipt_currency: "USD", credit_exchange_rate: 1600000, receipt_recipient_type: "Customer",
+		receipt_recipient: "C1", credit_account: "Debtors USD", credit_amount: 2, receipt_posting_date: "2026-10-01",
+	});
+	let first = filled();
+	const placeholder = row("row-x2", { receipt_currency: "USD", receipt_recipient_type: "Customer" });
+	let frm = form({ receipt_credit_currency: "EUR" }, [first, placeholder]);
+	spReceiptForm.state(frm).payerCurrency = "USD";
+	confirmAnswer = false;
+	await spReceiptPayerHeader.currencyChanged(frm);
+	assert.equal(calls.confirm.length, 1);
+	assert.ok(calls.confirm[0].includes("USD") && calls.confirm[0].includes("EUR") && calls.confirm[0].includes("1 ردیف"));
+	assert.equal(frm.doc.receipt_credit_currency, "USD");
+	assert.deepEqual([first.receipt_currency, first.receipt_recipient, first.credit_account, first.credit_exchange_rate], ["USD", "C1", "Debtors USD", 1600000]);
+
+	reset();
+	first = filled();
+	frm = form({ receipt_credit_currency: "EUR" }, [first, placeholder]);
+	spReceiptForm.state(frm).payerCurrency = "USD";
+	await spReceiptPayerHeader.currencyChanged(frm);
+	assert.equal(calls.confirm.length, 1);
+	assert.deepEqual([first.receipt_currency, first.receipt_recipient, first.credit_account, first.credit_exchange_rate], ["EUR", "", "", null]);
+	assert.deepEqual([first.receipt_recipient_type, first.credit_amount, first.receipt_posting_date], ["Customer", 2, "2026-10-01"]);
+	assert.equal(placeholder.receipt_currency, "EUR");
+
+	reset();
+	frm.doc.receipt_credit_currency = "IRR";
+	await spReceiptPayerHeader.currencyChanged(frm);
+	assert.equal(calls.confirm.length, 0);
+	assert.deepEqual([first.receipt_currency, first.credit_exchange_rate], ["IRR", 1]);
+	assert.equal(calls.msgprint.length, 0);
 });
 
-test("7c Add Row copies the previous row's currency and rate", async () => {
+test("7c Add Row inherits the Payer Currency and the document date, and copies the rate", async () => {
 	reset();
 	responses.get_receipt_recipient_type_default = "Customer";
 	responses.get_receipt_recipient_type_options = [];
-	const first = row("row-a1", { receipt_currency: "USD", credit_exchange_rate: 1600000, receipt_recipient_type: "Customer" });
+	const first = row("row-a1", { receipt_currency: "USD", credit_exchange_rate: 1600000, receipt_recipient_type: "Customer", receipt_posting_date: "2026-09-01" });
 	const second = row("row-a2", {});
-	const frm = form({}, [first, second]);
+	const frm = form({ receipt_credit_currency: "USD", posting_date: "2026-10-05" }, [first, second]);
 	await spReceiptRowEvents.rowAdded(frm, second.doctype, second.name);
-	assert.deepEqual([second.receipt_currency, second.credit_exchange_rate], ["USD", 1600000]);
+	assert.deepEqual([second.receipt_currency, second.credit_exchange_rate, second.receipt_posting_date], ["USD", 1600000, "2026-10-05"]);
+});
+
+test("7e document date: existing row dates stay, one warning, new rows take the new date", async () => {
+	reset();
+	responses.get_receipt_recipient_type_default = "Customer";
+	responses.get_receipt_recipient_type_options = [];
+	const dated = [1, 2, 3].map((index) => row(`row-d${index}`, { receipt_posting_date: "2026-10-05", credit_amount: index }));
+	const untouched = row("row-d4", { receipt_posting_date: "2026-10-05", receipt_recipient_type: "Customer" });
+	const frm = form({ posting_date: "2026-10-05" }, [...dated, untouched]);
+	frm.doc.posting_date = "2026-10-07";
+	await spReceiptPayerHeader.postingDateChanged(frm);
+	assert.deepEqual(dated.map((candidate) => candidate.receipt_posting_date), Array(3).fill("2026-10-05"));
+	assert.equal(untouched.receipt_posting_date, "2026-10-07");
+	assert.equal(calls.msgprint.length, 1);
+	assert.ok(calls.msgprint[0].message.includes("همگام نمی‌شود"));
+	const added = row("row-d5", {});
+	frm.doc.operational_pairs.push(added);
+	await spReceiptRowEvents.rowAdded(frm, added.doctype, added.name);
+	assert.equal(added.receipt_posting_date, "2026-10-07");
+	reset();
+	const fresh = form({ posting_date: "2026-10-05" }, [row("row-d6", { receipt_recipient_type: "Customer" })]);
+	fresh.doc.posting_date = "2026-10-08";
+	await spReceiptPayerHeader.postingDateChanged(fresh);
+	assert.equal(calls.msgprint.length, 0);
+});
+
+test("7f Payer Currency defaults from Company or from the rows of an older Receipt", async () => {
+	reset();
+	const blank = form({ receipt_credit_currency: "", company_currency: "EUR" });
+	await spReceiptPayerHeader.applyDefault(blank, false);
+	assert.equal(blank.doc.receipt_credit_currency, "EUR");
+	const legacy = form({ receipt_credit_currency: "" }, [row("row-l1", { receipt_currency: "USD", credit_amount: 1 })]);
+	await spReceiptPayerHeader.applyDefault(legacy, false);
+	assert.equal(legacy.doc.receipt_credit_currency, "USD");
+	const filled = form({ receipt_credit_currency: "USD" }, [row("row-l2", { receipt_currency: "USD", credit_amount: 1 })]);
+	await spReceiptPayerHeader.applyDefault(filled, true);
+	assert.equal(filled.doc.receipt_credit_currency, "USD");
+	assert.equal(calls.confirm.length, 0);
 });
 
 test("7d Receiver currency change keeps every row currency and payer", async () => {
 	reset();
 	const first = row("row-h1", { receipt_currency: "USD", credit_exchange_rate: 1600000, receipt_recipient: "C1", credit_account: "Debtors USD" });
-	const frm = form({ receipt_payer_currency: "EUR", receipt_payer_account: "Bank IRR" }, [first]);
+	const frm = form({ receipt_payer_currency: "EUR", receipt_credit_currency: "USD", receipt_payer_account: "Bank IRR" }, [first]);
 	spReceiptForm.state(frm).currency = "IRR";
 	await spReceiptHeader.currencyChanged(frm);
 	assert.deepEqual([first.receipt_currency, first.credit_exchange_rate, first.receipt_recipient, first.credit_account], ["USD", 1600000, "C1", "Debtors USD"]);
@@ -275,21 +358,27 @@ test("10 field changes never show a popup", async () => {
 	responses.get_receipt_party_account_suggestion = null;
 	responses.preview_receipt = { ready: false, issues: [{ row: 1, field: "credit_amount", message: "x" }] };
 	const first = row("row-1", { receipt_currency: "EUR", receipt_recipient_type: "Customer", receipt_recipient: "C1" });
-	const frm = form({ receipt_payer_currency: "USD", receipt_bank_account: "B" }, [first]);
+	const frm = form({ receipt_payer_currency: "USD", receipt_credit_currency: "EUR", receipt_bank_account: "B" }, [first]);
 	spReceiptForm.state(frm).currency = "IRR";
+	spReceiptForm.state(frm).payerCurrency = "";
 	await spReceiptHeader.currencyChanged(frm);
 	await spReceiptHeader.receiverKindChanged(frm);
 	await spReceiptHeader.bankChanged(frm);
 	await spReceiptHeader.partyChanged(frm);
 	await spReceiptHeader.rateChanged(frm);
-	await spReceiptRowEvents.currencyChanged(frm, first.doctype, first.name);
+	await spReceiptPayerHeader.currencyChanged(frm);
+	await spReceiptPayerHeader.postingDateChanged(frm);
 	await spReceiptRowEvents.rateChanged(frm, first.doctype, first.name);
 	await spReceiptRowEvents.payerTypeChanged(frm, first.doctype, first.name);
 	await spReceiptRowEvents.payerChanged(frm, first.doctype, first.name);
 	assert.equal(calls.msgprint.length, 0);
+	assert.equal(calls.confirm.length, 0);
 	assert.ok(!calls.xcall.some((call) => call.method.endsWith("preview_receipt")));
 	assert.deepEqual([first.receipt_recipient, first.receipt_currency], ["", "EUR"]);
-	for (const source of moduleSources.filter((text) => !text.includes("spReceiptValidation = {"))) {
+	const payerHeader = read(path.join(RECEIPT_DIR, MODULES.spReceiptPayerHeader));
+	assert.equal(payerHeader.split("msgprint").length - 1, 1);
+	assert.ok(/warnRowDates\(\) \{\s+frappe\.msgprint\(/.test(payerHeader));
+	for (const source of moduleSources.filter((text) => !text.includes("spReceiptValidation = {") && text !== payerHeader)) {
 		assert.ok(!source.includes("msgprint"));
 	}
 	assert.ok(!formSource.includes("msgprint"));
@@ -348,30 +437,26 @@ test("13 Save with an incomplete Receipt is blocked; a complete one passes", asy
 	assert.ok(!clientSource.includes("frappe.client.set_value"));
 });
 
-test("14 multi-currency summary and Base Amount come from the server preview", async () => {
+test("14 Payer Currency summary and Base Amount come from the server preview", async () => {
 	reset();
 	responses.preview_receipt = {
-		ready: true, issues: [], company_currency: "IRR",
-		receiver_currency: "USD", receiver_rate: "1600000", receiver_amount: "1000",
-		receiver_base_amount: "1600000000", receiver_effective_rate: "1600000", receiver_account: "Bank USD - SP",
-		total_base_amount: "1600000000",
-		payer_totals: [
-			{ currency: "IRR", amount: "100000000", rate: "1", base_amount: "100000000" },
-			{ currency: "EUR", amount: "750", rate: "2000000", base_amount: "1500000000" },
-		],
-		rows: [{ row: 1, currency: "IRR", amount: "100000000", rate: "1", base_amount: "1234" }],
+		ready: true, issues: [], company_currency: "IRR", payer_currency: "EUR",
+		receiver_currency: "USD", receiver_rate: "1600000", receiver_amount: "937.5",
+		receiver_base_amount: "1500000000", receiver_effective_rate: "1600000", receiver_account: "Bank USD - SP",
+		total_base_amount: "1500000000",
+		payer_totals: [{ currency: "EUR", amount: "750", rate: "2000000", base_amount: "1500000000" }],
+		rows: [{ row: 1, currency: "EUR", amount: "750", rate: "2000000", base_amount: "1234" }],
 	};
-	const first = row("row-6", { credit_amount: 1000, credit_company_amount: 0 });
-	const frm = form({ receipt_payer_currency: "USD" }, [first]);
+	const first = row("row-6", { credit_amount: 750, credit_company_amount: 0 });
+	const frm = form({ receipt_payer_currency: "USD", receipt_credit_currency: "EUR" }, [first]);
 	const preview = await spReceiptSummary.refreshNow(frm);
 	assert.equal(spReceiptForm.state(frm).preview, preview);
 	assert.equal(first.credit_company_amount, 1234);
 	const html = spReceiptSummary.html(preview, frm.doc, (value) => `#${value}`, (value) => value);
-	assert.equal((html.match(/sp-receipt-payer-values/g) || []).length, 2);
+	assert.equal((html.match(/sp-receipt-payer-values/g) || []).length, 1);
 	for (const text of [
 		"<td>EUR</td><td>#750</td><td>#2000000</td><td>#1500000000 IRR</td>",
-		"<td>IRR</td><td>#100000000</td><td>#1</td><td>#100000000 IRR</td>",
-		"<td>USD</td><td>#1000</td><td>#1600000</td><td>#1600000000 IRR</td>",
+		"<td>USD</td><td>#937.5</td><td>#1600000</td><td>#1500000000 IRR</td>",
 		"Bank USD - SP", "colspan=\"4\"", "میانگین موزون نرخ", "ارز دریافت‌کننده",
 	]) {
 		assert.ok(html.includes(text), text);

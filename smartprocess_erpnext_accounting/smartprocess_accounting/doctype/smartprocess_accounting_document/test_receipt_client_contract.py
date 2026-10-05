@@ -32,10 +32,15 @@ HEADER_ORDER = (
 	"header_column",
 	"receipt_payer_type",
 	"company_currency",
+	"receipt_credit_currency",
 	"general_description",
 )
-ROW_ORDER = (
-	"receipt_currency",
+# Site Customize Form breaks, if present, must stay where the user placed them.
+CUSTOM_BREAKS = {
+	"custom_section_break_sjvzg": ("receipt_payer_type", "company_currency"),
+	"custom_column_break_6utww": ("general_description", "pairs_section"),
+}
+GRID_COLUMNS = (
 	"receipt_recipient_type",
 	"receipt_recipient",
 	"credit_account",
@@ -59,14 +64,24 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(meta.get_field("receipt_payer_currency").label, "ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_payer_exchange_rate").label, "نرخ ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_receiver_kind").default, "بانک")
+		self.assertEqual(meta.get_field("receipt_credit_currency").label, "ارز پرداخت‌کننده")
+		self.assertEqual(meta.get_field("company_currency").depends_on, "eval:doc.operation_type != 'Receipt'")
 
-	def test_rows_show_their_own_currency_and_rate_in_order(self):
+	def test_site_layout_breaks_keep_their_place(self):
+		order = [field.fieldname for field in frappe.get_meta(DOCTYPE).fields]
+		for fieldname, (before, after) in CUSTOM_BREAKS.items():
+			if fieldname not in order:
+				continue
+			position = order.index(fieldname)
+			self.assertEqual((order[position - 1], order[position + 1]), (before, after), fieldname)
+
+	def test_row_currency_is_a_read_only_mirror_outside_the_grid(self):
 		meta = frappe.get_meta(PAIR)
 		currency = meta.get_field("receipt_currency")
-		self.assertEqual((currency.hidden, currency.read_only, currency.in_list_view, currency.columns), (0, 0, 1, 1))
+		self.assertEqual((currency.hidden, currency.read_only, currency.in_list_view), (0, 1, 0))
 		self.assertFalse(meta.get_field("credit_exchange_rate").hidden)
 		self.assertTrue(meta.get_field("credit_company_amount").read_only)
-		positions = [meta.get_field(fieldname).idx for fieldname in ROW_ORDER]
+		positions = [meta.get_field(fieldname).idx for fieldname in GRID_COLUMNS]
 		self.assertEqual(positions, sorted(positions))
 
 	def test_form_script_includes_every_receipt_module(self):
@@ -77,6 +92,7 @@ class TestReceiptClientContract(unittest.TestCase):
 			"spReceiptNumbers",
 			"spReceiptForm",
 			"spReceiptHeader",
+			"spReceiptPayerHeader",
 			"spReceiptRowQueries",
 			"spReceiptRowEvents",
 			"spReceiptValidation",
@@ -93,5 +109,6 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertIn("overflow-x: auto", css)
 		self.assertIn("max-width: 100%", css)
 		self.assertNotIn("100vw", css)
-		for fieldname in ROW_ORDER:
+		for fieldname in GRID_COLUMNS:
 			self.assertIn(f'data-fieldname="{fieldname}"', css)
+		self.assertNotIn('data-fieldname="receipt_currency"', css)

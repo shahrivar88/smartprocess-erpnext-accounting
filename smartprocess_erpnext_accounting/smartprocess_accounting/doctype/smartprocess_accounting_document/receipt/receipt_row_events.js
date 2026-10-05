@@ -1,10 +1,9 @@
-// Receipt row events = Payer side. Each row has its own Payer Currency and
-// rate: Payer Currency → Payer Type → Payer → Payer Ledger Account → Amount →
-// Rate. Base Amount comes from the server preview.
+// Receipt row events = Payer side. Every row inherits the header Payer
+// Currency and keeps its own rate: Payer Type → Payer → Payer Ledger Account →
+// Amount → Rate. Base Amount comes from the server preview.
 // Field changes never validate or show messages; Add Row / Save do that.
 const SP_RECEIPT_COPIED_FIELDS = [
-	"receipt_posting_date", "receipt_currency", "credit_exchange_rate",
-	"receipt_recipient_type", "receipt_recipient", "credit_account",
+	"credit_exchange_rate", "receipt_recipient_type", "receipt_recipient", "credit_account",
 ];
 
 const spReceiptRowEvents = {
@@ -45,22 +44,27 @@ const spReceiptRowEvents = {
 		state.payerTypeOptions = Array.isArray(options) ? options : [];
 	},
 
-	// A new row starts in Company.default_currency; a chosen currency is kept.
+	// A filled row keeps a stored currency that disagrees with the header, so
+	// the server reports it instead of the form silently rewriting it.
 	async applyDefaults(frm, row) {
 		const defaultType = spReceiptForm.state(frm).payerTypeDefault;
 		if (!row.receipt_recipient_type && defaultType) {
 			await this.setRowValue(row, "receipt_recipient_type", defaultType);
 		}
-		if (!row.receipt_currency && frm.doc.company_currency) {
-			await this.setRowValue(row, "receipt_currency", frm.doc.company_currency);
+		const currency = frm.doc[spReceiptConfig.PAYER_CURRENCY];
+		if (currency && (!row.receipt_currency || !spReceiptValidation.rowHasUserContent(row))) {
+			await this.setRowValue(row, "receipt_currency", currency);
+		}
+		if (!row.receipt_posting_date && !spReceiptValidation.rowHasUserContent(row) && frm.doc.posting_date) {
+			await this.setRowValue(row, "receipt_posting_date", frm.doc.posting_date);
 		}
 		await this.normalizeRate(frm, row, false);
 	},
 
-	// Base currency always uses rate 1. A currency change drops a rate that
-	// belonged to the previous currency; otherwise a manual rate is kept.
+	// A base Payer Currency always uses rate 1. A rate entered for another
+	// currency is dropped; otherwise each row keeps its own manual rate.
 	async normalizeRate(frm, row, reset) {
-		if (spReceiptConfig.isBaseRow(frm.doc, row)) {
+		if (spReceiptConfig.isBasePayer(frm.doc)) {
 			if (Number(row.credit_exchange_rate) !== 1) {
 				await this.setRowValue(row, "credit_exchange_rate", 1);
 			}
@@ -74,24 +78,59 @@ const spReceiptRowEvents = {
 		if (!grid) {
 			return;
 		}
-		const used = this.rows(frm).map((row) => row.receipt_currency);
+		const used = [frm.doc[spReceiptConfig.PAYER_CURRENCY], ...this.rows(frm).map((row) => row.receipt_currency)];
 		const options = [...new Set([...values, ...used].filter(Boolean))].join("\n");
 		spReceiptForm.setGridProperty(frm, grid, "receipt_currency", "options", options);
 	},
 
-	// Rows the user has not filled yet follow the new Company currency.
-	async companyChanged(frm) {
+	// Payers, ledgers and rates belong to one currency; a row that already
+	// carries another currency loses only those values.
+	isIncompatible(row, currency) {
+		return Boolean(row.receipt_currency && row.receipt_currency !== currency);
+	},
+
+	rowsLosingValues(frm, currency) {
+		return this.rows(frm).filter((row) =>
+			this.isIncompatible(row, currency)
+			&& (row.receipt_recipient || row.credit_account || (row.credit_exchange_rate && Number(row.credit_exchange_rate) !== 1)),
+		);
+	},
+
+	async syncPayerCurrency(frm) {
 		if (frm.doc.docstatus !== 0) {
 			return;
 		}
+		const currency = frm.doc[spReceiptConfig.PAYER_CURRENCY] || "";
 		await spReceiptForm.quietly(frm, async () => {
 			for (const row of this.rows(frm)) {
-				if (!spReceiptValidation.rowHasUserContent(row) && frm.doc.company_currency) {
-					await this.setRowValue(row, "receipt_currency", frm.doc.company_currency);
+				const incompatible = this.isIncompatible(row, currency);
+				if (incompatible) {
+					await this.setRowValue(row, "receipt_recipient", "");
+					await this.setRowValue(row, "credit_account", "");
 				}
-				await this.normalizeRate(frm, row, false);
+				await this.setRowValue(row, "receipt_currency", currency);
+				await this.normalizeRate(frm, row, incompatible);
 			}
 		});
+	},
+
+	// Rows created later take the document date; existing rows keep theirs.
+	async postingDateChanged(frm, previous) {
+		const date = frm.doc.posting_date || "";
+		const kept = [];
+		await spReceiptForm.quietly(frm, async () => {
+			for (const row of this.rows(frm)) {
+				if (!row.receipt_posting_date || row.receipt_posting_date === date) {
+					continue;
+				}
+				if (!spReceiptValidation.rowHasUserContent(row) && row.receipt_posting_date === previous) {
+					await this.setRowValue(row, "receipt_posting_date", date);
+				} else {
+					kept.push(row);
+				}
+			}
+		});
+		return kept;
 	},
 
 	async rowAdded(frm, cdt, cdn) {
@@ -109,21 +148,8 @@ const spReceiptRowEvents = {
 					await this.setRowValue(row, fieldname, previous[fieldname]);
 				}
 			}
+			await this.setRowValue(row, "receipt_posting_date", frm.doc.posting_date || null);
 			await this.applyDefaults(frm, row);
-		});
-		spReceiptSummary.schedule(frm);
-	},
-
-	// Payer and ledger lists are filtered by the row currency, so they reset.
-	async currencyChanged(frm, cdt, cdn) {
-		if (!spReceiptConfig.isReceipt(frm.doc) || spReceiptForm.isQuiet(frm)) {
-			return;
-		}
-		const row = frappe.get_doc(cdt, cdn);
-		await spReceiptForm.quietly(frm, async () => {
-			await this.setRowValue(row, "receipt_recipient", "");
-			await this.setRowValue(row, "credit_account", "");
-			await this.normalizeRate(frm, row, true);
 		});
 		spReceiptSummary.schedule(frm);
 	},
@@ -166,7 +192,7 @@ const spReceiptRowEvents = {
 	// existing per-currency suggestion. A ledger in another currency is never used.
 	async payerLedger(doc, row) {
 		const payerType = row.receipt_recipient_type;
-		const currency = row.receipt_currency;
+		const currency = doc[spReceiptConfig.PAYER_CURRENCY];
 		if (!doc.company || !currency) {
 			return "";
 		}

@@ -8,16 +8,16 @@ const SP_RECEIPT_HIDDEN_FIELDS = [
 	"credit_account_category", "credit_suggested_account", "credit_party_type", "credit_party",
 	"credit_account_currency", "credit_rate_direction", "receipt_payer_exchange_rate",
 ];
-// Column sizes only; the column order stays the Pair metadata order.
+// Column sizes only; the column order stays the Pair metadata order. The row
+// Exchange Rate column joins them only for a foreign Payer Currency.
 const SP_RECEIPT_LIST_COLUMNS = [
-	["receipt_currency", 1],
 	["receipt_recipient_type", 2],
 	["receipt_recipient", 4],
 	["credit_account", 3],
 	["credit_amount", 2],
-	["credit_exchange_rate", 2],
 	["credit_company_amount", 2],
 ];
+const SP_RECEIPT_RATE_COLUMNS = 2;
 const SP_RECEIPT_ROW_LABELS = {
 	receipt_currency: "ارز",
 	credit_account: "معین پرداخت‌کننده",
@@ -44,6 +44,8 @@ const spReceiptForm = {
 			frm.__sp_receipt = {
 				docname: frm.docname,
 				currency: frm.doc.receipt_payer_currency || "",
+				payerCurrency: frm.doc.receipt_credit_currency || "",
+				postingDate: frm.doc.posting_date || "",
 				preview: null,
 				previewRequest: 0,
 				previewTimer: null,
@@ -93,6 +95,7 @@ const spReceiptForm = {
 		spReceiptRowQueries.installPayerTypeOrder(frm);
 		await spReceiptHeader.initialize(frm);
 		await spReceiptRowEvents.initializeRows(frm);
+		this.configureGrid(frm, isReceipt);
 		spReceiptSummary.render(frm);
 		spReceiptSummary.schedule(frm, 0);
 	},
@@ -114,7 +117,7 @@ const spReceiptForm = {
 		field.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
 		frm.fields_dict.receipt_summary?.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
 		this.ownColumns(grid);
-		const properties = isReceipt ? this.receiptGridProperties() : this.genericGridProperties();
+		const properties = isReceipt ? this.receiptGridProperties(frm.doc) : this.genericGridProperties();
 		const latest = new Map(properties.map(([fieldname, property, value]) => [`${fieldname}:${property}`, [fieldname, property, value]]));
 		let changed = false;
 		for (const [fieldname, property, value] of latest.values()) {
@@ -125,7 +128,9 @@ const spReceiptForm = {
 		}
 	},
 
-	receiptGridProperties() {
+	// The row Currency mirrors the header Payer Currency: shown read-only in the
+	// row form, never as a grid column.
+	receiptGridProperties(doc = {}) {
 		const properties = [];
 		for (const fieldname of SP_RECEIPT_HIDDEN_FIELDS) {
 			properties.push([fieldname, "hidden", 1]);
@@ -133,7 +138,7 @@ const spReceiptForm = {
 		for (const fieldname of SP_RECEIPT_GRID_FIELDS) {
 			properties.push([fieldname, "hidden", 0]);
 		}
-		for (const fieldname of ["receipt_posting_date", "credit_description"]) {
+		for (const fieldname of ["receipt_posting_date", "receipt_currency", "credit_description"]) {
 			properties.push([fieldname, "in_list_view", 0]);
 		}
 		for (const [fieldname, columns] of SP_RECEIPT_LIST_COLUMNS) {
@@ -142,11 +147,14 @@ const spReceiptForm = {
 		for (const [fieldname, label] of Object.entries(SP_RECEIPT_ROW_LABELS)) {
 			properties.push([fieldname, "label", label]);
 		}
-		for (const fieldname of ["receipt_currency", "receipt_recipient_type", "credit_account", "credit_amount"]) {
+		for (const fieldname of ["receipt_recipient_type", "credit_account", "credit_amount"]) {
 			properties.push([fieldname, "reqd", 1]);
 		}
 		properties.push(
+			["receipt_currency", "read_only", 1],
 			["credit_exchange_rate", "hidden", 0],
+			["credit_exchange_rate", "in_list_view", spReceiptConfig.isForeignPayer(doc) ? 1 : 0],
+			["credit_exchange_rate", "columns", SP_RECEIPT_RATE_COLUMNS],
 			["credit_exchange_rate", "read_only", 0],
 			["credit_exchange_rate", "read_only_depends_on", spReceiptConfig.ROW_BASE_RATE],
 			["credit_company_amount", "hidden", 0],

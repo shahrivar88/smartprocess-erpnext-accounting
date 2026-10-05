@@ -1,5 +1,5 @@
 // Receipt preview and summary. receipt_api.preview_receipt is the only source
-// of financial values: per-currency payer totals, weighted rates, the derived
+// of financial values: the Payer Currency total, its weighted rate, the derived
 // Receiver amount and each row's base amount.
 const SP_RECEIPT_PREVIEW_DELAY = 400;
 
@@ -18,6 +18,7 @@ const spReceiptSummary = {
 			receipt_payer_currency: doc.receipt_payer_currency,
 			receipt_payer_exchange_rate: doc.receipt_payer_exchange_rate,
 			receipt_payer_account: doc.receipt_payer_account,
+			receipt_credit_currency: doc.receipt_credit_currency,
 			operational_pairs: (doc[spReceiptConfig.TABLE] || []).map((row) => ({
 				doctype: row.doctype,
 				name: row.name,

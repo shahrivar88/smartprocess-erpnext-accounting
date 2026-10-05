@@ -50,11 +50,13 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 			"receipt_receiver_kind": "بانک",
 			"receipt_bank_account": "BANK-FOREIGN",
 			"receipt_payer_exchange_rate": "4",
+			"receipt_credit_currency": FOREIGN,
 			"operational_pairs": [dict(foreign_row(credit_amount="5", rate="2"))],
 		}
 		with patch.object(receipt_module, "ReceiptLookups", FakeLookups):
 			result = preview_receipt(json.dumps(payload))
 		self.assertTrue(result["ready"], result["issues"])
+		self.assertEqual(result["payer_currency"], FOREIGN)
 		self.assertEqual(
 			(result["receiver_amount"], result["receiver_rate"], result["receiver_base_amount"], result["total_base_amount"]),
 			("2.5", "4", "10", "10"),
@@ -67,7 +69,7 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 		result = preview_receipt(INCOMPLETE)
 		self.assertFalse(result["ready"])
 		fields = {issue["field"] for issue in result["issues"]}
-		self.assertLessEqual({"company", "receipt_payer_currency", "receipt_receiver_kind"}, fields)
+		self.assertLessEqual({"company", "receipt_payer_currency", "receipt_credit_currency", "receipt_receiver_kind"}, fields)
 		self.assertEqual(frappe.local.message_log, [])
 
 	def test_validate_has_no_set_value_bypass(self):

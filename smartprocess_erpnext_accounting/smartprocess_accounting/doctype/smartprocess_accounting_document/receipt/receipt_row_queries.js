@@ -1,5 +1,5 @@
-// Receipt row queries: every payer and payer ledger is filtered by that row's
-// own Payer Currency, the company and the row Payer Type.
+// Receipt row queries: every payer and payer ledger is filtered by the header
+// Payer Currency, the company and the row Payer Type.
 const spReceiptRowQueries = {
 	setupQueries(frm) {
 		frm.set_query("receipt_recipient_type", spReceiptConfig.TABLE, () => ({
@@ -14,7 +14,7 @@ const spReceiptRowQueries = {
 		if (!spReceiptConfig.isReceipt(doc)) {
 			return {};
 		}
-		const currency = row?.receipt_currency;
+		const currency = doc[spReceiptConfig.PAYER_CURRENCY];
 		const payerType = row?.receipt_recipient_type;
 		if (payerType === spReceiptConfig.BANK_ACCOUNT_PAYER) {
 			return {
@@ -34,7 +34,7 @@ const spReceiptRowQueries = {
 	payerAccountFilters(doc, row) {
 		return spReceiptConfig.accountFilters(
 			doc.company,
-			row?.receipt_currency,
+			doc[spReceiptConfig.PAYER_CURRENCY],
 			spReceiptConfig.payerAccountType(row?.receipt_recipient_type),
 		);
 	},

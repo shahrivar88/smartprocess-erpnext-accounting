@@ -1,5 +1,5 @@
 // Receipt header = Receiver side: Receiver Currency → Type → Receiver → Ledger
-// Account → Rate. The Receiver currency is independent of the row currencies.
+// Account → Rate. The Receiver currency is independent of the Payer Currency.
 // Field changes never validate or show messages; Add Row / Save do that.
 const SP_RECEIPT_SHARED_LABELS = {
 	receipt: {
@@ -95,6 +95,7 @@ const spReceiptHeader = {
 		await this.loadCurrencyOptions(frm);
 		await this.applyDefaultCurrency(frm, false);
 		await this.normalizeRate(frm, false);
+		await spReceiptPayerHeader.applyDefault(frm, false);
 	},
 
 	async ensureReceiverKind(frm) {
@@ -137,9 +138,11 @@ const spReceiptHeader = {
 	},
 
 	applyCurrencyOptions(frm, values) {
-		const options = [...new Set([...values, frm.doc.receipt_payer_currency].filter(Boolean))].join("\n");
-		if (frm.fields_dict.receipt_payer_currency?.df?.options !== options) {
-			frm.set_df_property("receipt_payer_currency", "options", options);
+		for (const fieldname of ["receipt_payer_currency", spReceiptConfig.PAYER_CURRENCY]) {
+			const options = [...new Set([...values, frm.doc[fieldname]].filter(Boolean))].join("\n");
+			if (frm.fields_dict[fieldname]?.df?.options !== options) {
+				frm.set_df_property(fieldname, "options", options);
+			}
 		}
 		spReceiptRowEvents.applyCurrencyOptions(frm, values);
 	},
@@ -185,7 +188,7 @@ const spReceiptHeader = {
 		await this.loadCurrencyOptions(frm);
 		await this.applyDefaultCurrency(frm, true);
 		await this.normalizeRate(frm, false);
-		await spReceiptRowEvents.companyChanged(frm);
+		await spReceiptPayerHeader.companyChanged(frm);
 		spReceiptSummary.schedule(frm);
 	},
 

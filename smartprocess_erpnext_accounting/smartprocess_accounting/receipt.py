@@ -1,7 +1,7 @@
 """Receipt canonicalization into the existing balanced Pair contract.
 
 Header receiver = Debit in the receiver currency; each row payer = Credit in
-that row's own currency. See ``receipt_contract`` for the contract and
+the header Payer Currency at that row's own rate. See ``receipt_contract`` for the contract and
 ``receipt_builder`` for the rules.
 """
 
@@ -59,6 +59,7 @@ def receipt_summary(receipt: CanonicalReceipt) -> dict:
 		"ready": receipt.ready,
 		"issues": [issue.as_dict() for issue in receipt.issues],
 		"company_currency": receipt.company_currency,
+		"payer_currency": receipt.payer_currency,
 		"receiver_currency": receipt.receiver_currency,
 		"receiver_rate": _text(receipt.receiver_rate),
 		"receiver_amount": _text(receipt.receiver_amount),

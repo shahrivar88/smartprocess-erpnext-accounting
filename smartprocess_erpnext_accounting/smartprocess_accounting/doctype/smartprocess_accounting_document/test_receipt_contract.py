@@ -107,7 +107,6 @@ class FakeLookups:
 def receipt_row(number=1, **values):
 	row = {
 		"name": f"row-{number}",
-		"receipt_currency": BASE,
 		"receipt_recipient_type": "Customer",
 		"receipt_recipient": "CUST-BASE",
 		"credit_account": "Receivable Base",
@@ -121,7 +120,6 @@ def foreign_row(number=1, rate="1500.5", **values):
 	return receipt_row(
 		number,
 		**{
-			"receipt_currency": FOREIGN,
 			"credit_exchange_rate": rate,
 			"receipt_recipient": "CUST-FOREIGN",
 			"credit_account": "Receivable Foreign",
@@ -130,12 +128,14 @@ def foreign_row(number=1, rate="1500.5", **values):
 	)
 
 
-def receipt_doc(rows=None, **values):
+def receipt_doc(rows=None, payer=BASE, **values):
+	"""Base-currency receiver; ``payer`` is the header Payer Currency of every row."""
 	doc = {
 		"operation_type": "Receipt",
 		"company": COMPANY,
 		"posting_date": "2026-10-04",
 		"receipt_payer_currency": BASE,
+		"receipt_credit_currency": payer,
 		"receipt_receiver_kind": "بانک",
 		"receipt_bank_account": "BANK-BASE",
 		"receipt_payer_exchange_rate": None,
@@ -145,9 +145,10 @@ def receipt_doc(rows=None, **values):
 	return frappe._dict(doc)
 
 
-def foreign_doc(rows, rate="1500.5"):
+def foreign_doc(rows, rate="1500.5", payer=FOREIGN):
 	return receipt_doc(
 		rows,
+		payer,
 		receipt_payer_currency=FOREIGN,
 		receipt_bank_account="BANK-FOREIGN",
 		receipt_payer_exchange_rate=rate,
@@ -216,7 +217,7 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertPostable(doc)
 
 	def test_base_receiver_foreign_payer(self):
-		doc = receipt_doc([foreign_row(credit_amount="2", rate="1600000")])
+		doc = receipt_doc([foreign_row(credit_amount="2", rate="1600000")], payer=FOREIGN)
 		receipt = self.canonicalize(doc)
 		self.assertEqual(sides(doc.operational_pairs[0]), {
 			"debit": (BASE, "3200000", "1", "3200000"),
@@ -226,7 +227,7 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertPostable(doc)
 
 	def test_foreign_receiver_base_payer(self):
-		doc = foreign_doc([receipt_row(credit_amount="3200000")], rate="1600000")
+		doc = foreign_doc([receipt_row(credit_amount="3200000")], rate="1600000", payer=BASE)
 		receipt = self.canonicalize(doc)
 		self.assertEqual(sides(doc.operational_pairs[0]), {
 			"debit": (FOREIGN, "2", "1600000", "3200000"),
@@ -235,28 +236,34 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertEqual(receipt.receiver_amount, Decimal("2"))
 		self.assertPostable(doc)
 
-	def test_mixed_rows_balance_in_company_currency(self):
-		rows = [
-			receipt_row(1, credit_amount="1000"),
-			foreign_row(2, credit_amount="2", rate="1500"),
-			receipt_row(3, receipt_currency=OTHER, credit_exchange_rate="700", receipt_recipient="CUST-OTHER-FX",
-				credit_account="Receivable Other", credit_amount="5", receipt_posting_date="2026-10-05"),
-		]
-		doc = foreign_doc(rows, rate="3")
-		receipt = self.canonicalize(doc)
-		self.assertEqual([row.credit_company_amount for row in rows], ["1000", "3000", "3500"])
-		self.assertEqual([row.credit_account_currency for row in rows], [BASE, FOREIGN, OTHER])
-		self.assertEqual({row.debit_account_currency for row in rows}, {FOREIGN})
-		self.assertEqual(receipt.base_total, Decimal("7500"))
-		self.assertEqual(receipt.receiver_amount, Decimal("2500"))
-		self.assertEqual(sum(Decimal(row.debit_amount) for row in rows), receipt.receiver_amount)
-		self.assertEqual(sum(Decimal(row.debit_company_amount) for row in rows), receipt.base_total)
-		self.assertEqual(str(rows[2].receipt_posting_date), "2026-10-05")
-		self.assertPostable(doc)
+	def test_foreign_rows_with_different_rates_balance_in_company_currency(self):
+		receivers = {
+			BASE: (receipt_doc, {}, "10050001"),
+			FOREIGN: (foreign_doc, {"rate": "1500000"}, "6.7"),
+		}
+		for receiver_currency, (make_doc, header, receiver_amount) in receivers.items():
+			with self.subTest(receiver=receiver_currency):
+				rows = [
+					foreign_row(1, credit_amount="2", rate="1500000"),
+					foreign_row(2, credit_amount="1.5", rate="1600000"),
+					foreign_row(3, credit_amount="3", rate="1550000.25", receipt_posting_date="2026-10-05"),
+				]
+				doc = make_doc(rows, payer=FOREIGN, **header)
+				receipt = self.canonicalize(doc)
+				self.assertEqual([row.credit_exchange_rate for row in rows], ["1500000", "1600000", "1550000.25"])
+				self.assertEqual([row.credit_company_amount for row in rows], ["3000000", "2400000", "4650001"])
+				self.assertEqual({row.credit_account_currency for row in rows}, {FOREIGN})
+				self.assertEqual({row.debit_account_currency for row in rows}, {receiver_currency})
+				self.assertEqual(receipt.base_total, Decimal("10050001"))
+				self.assertEqual(receipt.receiver_amount, Decimal(receiver_amount))
+				self.assertEqual(sum(Decimal(row.debit_amount) for row in rows), receipt.receiver_amount)
+				self.assertEqual(sum(Decimal(row.debit_company_amount) for row in rows), receipt.base_total)
+				self.assertEqual(str(rows[2].receipt_posting_date), "2026-10-05")
+				self.assertPostable(doc)
 
 	def test_uneven_receiver_split_still_balances_every_pair(self):
 		rows = [receipt_row(1, credit_amount="100"), receipt_row(2, credit_amount="100"), receipt_row(3, credit_amount="100")]
-		doc = foreign_doc(rows, rate="7")
+		doc = foreign_doc(rows, rate="7", payer=BASE)
 		receipt = self.canonicalize(doc)
 		self.assertEqual(receipt.receiver_amount, Decimal("42.86"))
 		self.assertEqual(sum(Decimal(row.debit_amount) for row in rows), Decimal("42.86"))
@@ -264,10 +271,34 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertPostable(doc)
 
 	def test_receiver_amount_is_derived_from_row_base_total(self):
-		rows = [receipt_row(1, credit_amount="300"), foreign_row(2, credit_amount="1", rate="450")]
+		rows = [foreign_row(1, credit_amount="2", rate="300"), foreign_row(2, credit_amount="1", rate="150")]
 		receipt = self.build(foreign_doc(rows, rate="250"))
 		self.assertTrue(receipt.ready, receipt.issues)
 		self.assertEqual((receipt.base_total, receipt.receiver_amount), (Decimal("750"), Decimal("3")))
+
+
+class TestReceiptPayerCurrency(ReceiptContractCase):
+	def test_every_row_inherits_the_header_payer_currency(self):
+		rows = [foreign_row(1), foreign_row(2, rate="1600"), foreign_row(3, receipt_currency=FOREIGN)]
+		doc = receipt_doc(rows, payer=FOREIGN)
+		receipt = self.canonicalize(doc)
+		self.assertEqual(receipt.payer_currency, FOREIGN)
+		self.assertEqual([row.receipt_currency for row in rows], [FOREIGN] * 3)
+		self.assertEqual([row.credit_account_currency for row in rows], [FOREIGN] * 3)
+
+	def test_row_currency_that_differs_from_the_header_is_rejected(self):
+		doc = receipt_doc([receipt_row(), receipt_row(2, receipt_currency=OTHER)])
+		self.assertIssue(doc, "receipt_currency", f"ارز ردیف ({OTHER})", row=2)
+
+	def test_payer_currency_is_required_and_must_be_enabled(self):
+		for currency in (None, "ZZZ"):
+			with self.subTest(currency=currency):
+				self.assertIssue(receipt_doc(payer=currency), "receipt_credit_currency", "ارز پرداخت‌کننده")
+
+	def test_base_payer_rows_use_rate_one(self):
+		doc = foreign_doc([receipt_row(1, credit_exchange_rate="9"), receipt_row(2)], rate="4", payer=BASE)
+		self.canonicalize(doc)
+		self.assertEqual([row.credit_exchange_rate for row in doc.operational_pairs], ["1", "1"])
 
 
 class TestReceiptValidation(ReceiptContractCase):
@@ -282,17 +313,12 @@ class TestReceiptValidation(ReceiptContractCase):
 		self.assertIssue(doc, "receipt_payer", f"ثبت به ارز {FOREIGN} مجاز نیست")
 
 	def test_payer_party_currency_mismatch_is_rejected(self):
-		doc = receipt_doc([foreign_row(receipt_recipient="CUST-BASE")])
+		doc = receipt_doc([foreign_row(receipt_recipient="CUST-BASE")], payer=FOREIGN)
 		self.assertIssue(doc, "receipt_recipient", f"ثبت به ارز {FOREIGN} مجاز نیست", row=1)
 
 	def test_payer_account_currency_mismatch_is_rejected(self):
-		doc = receipt_doc([foreign_row(credit_account="Receivable Base")])
-		self.assertIssue(doc, "credit_account", "ارز ردیف", row=1)
-
-	def test_row_currency_is_required_and_must_be_enabled(self):
-		for currency in (None, "ZZZ"):
-			with self.subTest(currency=currency):
-				self.assertIssue(receipt_doc([receipt_row(receipt_currency=currency)]), "receipt_currency", row=1)
+		doc = receipt_doc([foreign_row(credit_account="Receivable Base")], payer=FOREIGN)
+		self.assertIssue(doc, "credit_account", "ارز پرداخت‌کننده", row=1)
 
 	def test_base_rates_are_forced_to_one(self):
 		doc = receipt_doc([receipt_row(credit_exchange_rate="7")], receipt_payer_exchange_rate="9")
@@ -309,13 +335,16 @@ class TestReceiptValidation(ReceiptContractCase):
 	def test_foreign_row_rate_must_be_positive(self):
 		for rate in (None, 0, "-3", "abc"):
 			with self.subTest(rate=rate):
-				self.assertIssue(receipt_doc([foreign_row(rate=rate)]), "credit_exchange_rate", "نرخ ارز", row=1)
+				doc = receipt_doc([foreign_row(rate=rate)], payer=FOREIGN)
+				self.assertIssue(doc, "credit_exchange_rate", "نرخ ارز", row=1)
 
 	def test_rate_beyond_storage_precision_is_rejected(self):
-		self.assertIssue(receipt_doc([foreign_row(rate="1.0000000000001")]), "credit_exchange_rate", row=1)
+		doc = receipt_doc([foreign_row(rate="1.0000000000001")], payer=FOREIGN)
+		self.assertIssue(doc, "credit_exchange_rate", row=1)
 
 	def test_receiver_share_that_rounds_to_zero_is_rejected(self):
-		doc = foreign_doc([receipt_row(credit_amount="1"), receipt_row(2, credit_amount="999999")], rate="1000000")
+		rows = [receipt_row(credit_amount="1"), receipt_row(2, credit_amount="999999")]
+		doc = foreign_doc(rows, rate="1000000", payer=BASE)
 		self.assertIssue(doc, "credit_amount", row=1)
 
 	def test_zero_and_negative_amounts_are_rejected(self):
@@ -329,7 +358,7 @@ class TestReceiptValidation(ReceiptContractCase):
 	def test_invalid_doc_is_not_touched(self):
 		row = foreign_row(credit_account="Receivable Base")
 		with self.assertRaises(ReceiptValidationError):
-			self.canonicalize(receipt_doc([row]))
+			self.canonicalize(receipt_doc([row], payer=FOREIGN))
 		self.assertIsNone(row.get("debit_account"))
 
 	def test_header_is_debit_and_rows_are_credit(self):
@@ -381,11 +410,11 @@ class TestReceiptValidation(ReceiptContractCase):
 		self.assertIssue(receipt_doc([receipt_row(), blank]), None, row=2)
 
 	def test_incomplete_header_collects_issues(self):
-		doc = receipt_doc(company=None, receipt_payer_currency=None, receipt_receiver_kind=None)
+		doc = receipt_doc(payer=None, company=None, receipt_payer_currency=None, receipt_receiver_kind=None)
 		receipt = self.build(doc)
 		self.assertEqual(
 			{issue.field for issue in receipt.issues if issue.row is None},
-			{"company", "receipt_payer_currency", "receipt_receiver_kind"},
+			{"company", "receipt_payer_currency", "receipt_credit_currency", "receipt_receiver_kind"},
 		)
 
 
@@ -400,29 +429,28 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 		self.assertFalse(summary["ready"])
 		self.assertEqual(summary["issues"][0], {"row": 1, "field": "credit_account", "message": "Account Disabled Base is disabled."})
 
-	def test_summary_groups_payers_by_currency_and_reports_receiver(self):
+	def test_summary_totals_the_payer_currency_and_reports_receiver(self):
 		rows = [
 			foreign_row(1, credit_amount="2", rate="1.5"),
 			foreign_row(2, credit_amount="2", rate="2"),
-			receipt_row(3, credit_amount="3"),
 		]
 		summary = receipt_summary(self.build(foreign_doc(rows, rate="2")))
 		self.assertTrue(summary["ready"], summary["issues"])
 		self.assertEqual(summary["payer_totals"], [
 			{"currency": FOREIGN, "amount": "4", "rate": "1.75", "base_amount": "7"},
-			{"currency": BASE, "amount": "3", "rate": "1", "base_amount": "3"},
 		])
 		self.assertEqual(
-			{key: summary[key] for key in ("company_currency", "receiver_currency", "receiver_rate", "receiver_amount",
-				"receiver_base_amount", "receiver_effective_rate", "total_base_amount")},
+			{key: summary[key] for key in ("company_currency", "payer_currency", "receiver_currency", "receiver_rate",
+				"receiver_amount", "receiver_base_amount", "receiver_effective_rate", "total_base_amount")},
 			{
 				"company_currency": BASE,
+				"payer_currency": FOREIGN,
 				"receiver_currency": FOREIGN,
 				"receiver_rate": "2",
-				"receiver_amount": "5",
-				"receiver_base_amount": "10",
+				"receiver_amount": "3.5",
+				"receiver_base_amount": "7",
 				"receiver_effective_rate": "2",
-				"total_base_amount": "10",
+				"total_base_amount": "7",
 			},
 		)
 		self.assertEqual(summary["rows"][0], {"row": 1, "currency": FOREIGN, "amount": "2", "rate": "1.5", "base_amount": "3"})

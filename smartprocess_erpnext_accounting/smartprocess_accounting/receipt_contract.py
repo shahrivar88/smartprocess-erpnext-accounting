@@ -1,15 +1,17 @@
 """Canonical two-sided-currency Receipt contract.
 
-The header receiver is debited in its own account currency and every row payer
-is credited in that row's own account currency. Company.default_currency is the
-base currency; every rate means 1 account-currency unit = rate base units.
+The header receiver is debited in the Receiver Currency and every row payer is
+credited in the one header Payer Currency; each row keeps its own rate.
+Company.default_currency is the base currency; every rate means 1
+account-currency unit = rate base units.
 
 Legacy field names keep their stored data:
 
 - ``receipt_payer_currency`` / ``receipt_payer_exchange_rate`` (header) hold the
   receiver currency and receiver rate.
-- ``receipt_currency`` / ``credit_exchange_rate`` (row) hold the payer currency
-  and payer rate.
+- ``receipt_credit_currency`` (header) holds the Payer Currency of all rows.
+- ``receipt_currency`` (row) mirrors the header Payer Currency;
+  ``credit_exchange_rate`` (row) holds that row's payer rate.
 
 The receiver amount is derived: total row base amount / receiver rate. Each
 generated Pair must balance exactly in base currency, so a row's receiver share
@@ -28,6 +30,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 RECEIVER_CURRENCY_FIELD = "receipt_payer_currency"
 RECEIVER_RATE_FIELD = "receipt_payer_exchange_rate"
 RECEIVER_ACCOUNT_FIELD = "receipt_payer_account"
+PAYER_HEADER_CURRENCY_FIELD = "receipt_credit_currency"
 PAYER_CURRENCY_FIELD = "receipt_currency"
 PAYER_RATE_FIELD = "credit_exchange_rate"
 
@@ -109,6 +112,7 @@ class CanonicalReceipt:
 	rows: list[CanonicalRow] = field(default_factory=list)
 	issues: list[ReceiptIssue] = field(default_factory=list)
 	receiver_amount: Decimal | None = None
+	payer_currency: str | None = None
 
 	@property
 	def ready(self) -> bool:

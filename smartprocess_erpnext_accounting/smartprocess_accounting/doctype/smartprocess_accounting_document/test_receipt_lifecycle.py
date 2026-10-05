@@ -43,8 +43,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		customer, receivable = self.customer_with_account(self.base)
 		doc = self.receipt(
 			self.base,
+			self.base,
 			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
-			[self.customer_row(customer, receivable, self.base, "125")],
+			[self.customer_row(customer, receivable, "125")],
 		)
 		native_api = posting_module.make_gl_entries
 		with patch.object(posting_module, "make_gl_entries", autospec=True, side_effect=native_api) as native:
@@ -70,8 +71,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			currency,
+			currency,
 			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1000"},
-			[self.customer_row(customer, receivable, currency, "2.5", rate="1200")],
+			[self.customer_row(customer, receivable, "2.5", rate="1200")],
 		)
 		doc.insert().submit()
 		self.assertLedger(self.postings(doc), [
@@ -85,8 +87,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			self.base,
+			currency,
 			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
-			[self.customer_row(customer, receivable, currency, "2", rate="1600000")],
+			[self.customer_row(customer, receivable, "2", rate="1600000")],
 		)
 		doc.insert().submit()
 		self.assertLedger(self.postings(doc), [
@@ -100,8 +103,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		customer, receivable = self.customer_with_account(self.base)
 		doc = self.receipt(
 			currency,
+			self.base,
 			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1600000"},
-			[self.customer_row(customer, receivable, self.base, "3200000")],
+			[self.customer_row(customer, receivable, "3200000")],
 		)
 		doc.insert().submit()
 		self.assertLedger(self.postings(doc), [
@@ -109,26 +113,30 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 			(receivable, self.base, "credit", "3200000", "3200000"),
 		])
 
-	def test_mixed_currency_rows_balance_and_cancel(self):
+	def test_foreign_payer_rows_with_different_rates_balance_and_cancel(self):
 		currency = self.foreign_currency()
 		receiver = self.generic_account(currency)
-		base_customer, base_receivable = self.customer_with_account(self.base)
-		foreign_customer, foreign_receivable = self.customer_with_account(currency)
+		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
+			currency,
 			currency,
 			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1500000"},
 			[
-				self.customer_row(base_customer, base_receivable, self.base, "1500000"),
-				self.customer_row(foreign_customer, foreign_receivable, currency, "1", rate="1600000"),
-				self.customer_row(base_customer, base_receivable, self.base, "400000"),
+				self.customer_row(customer, receivable, "1", rate="1600000"),
+				self.customer_row(customer, receivable, "2", rate="1550000"),
+				self.customer_row(customer, receivable, "0.5", rate="1610000"),
 			],
 		)
 		doc.insert().submit()
+		self.assertEqual([row.receipt_currency for row in doc.operational_pairs], [currency] * 3)
+		self.assertEqual(
+			[Decimal(str(row.credit_exchange_rate)) for row in doc.operational_pairs],
+			[Decimal("1600000"), Decimal("1550000"), Decimal("1610000")],
+		)
 		postings = self.postings(doc)
 		self.assertLedger(postings, [
-			(receiver, currency, "debit", "2.33", "3500000"),
-			(base_receivable, self.base, "credit", "1900000", "1900000"),
-			(foreign_receivable, currency, "credit", "1", "1600000"),
+			(receiver, currency, "debit", "3.67", "5505000"),
+			(receivable, currency, "credit", "3.5", "5505000"),
 		])
 		self.cancel_and_assert_reversed(doc, postings)
 
@@ -138,8 +146,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			self.base,
+			self.base,
 			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
-			[self.customer_row(customer, receivable, self.base, "10")],
+			[self.customer_row(customer, receivable, "10")],
 		)
 		with self.assertRaises(ReceiptValidationError):
 			doc.insert()
@@ -176,7 +185,7 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 					sum(Decimal(str(row[credit])) for row in lines),
 				)
 
-	def receipt(self, currency, header, rows):
+	def receipt(self, receiver_currency, payer_currency, header, rows):
 		return frappe.get_doc(
 			{
 				"doctype": DOCTYPE,
@@ -184,15 +193,15 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 				"company": self.company,
 				"posting_date": nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
-				"receipt_payer_currency": currency,
+				"receipt_payer_currency": receiver_currency,
+				"receipt_credit_currency": payer_currency,
 				**header,
 				"operational_pairs": rows,
 			}
 		)
 
-	def customer_row(self, customer, account, currency, amount, rate=None):
+	def customer_row(self, customer, account, amount, rate=None):
 		return {
-			"receipt_currency": currency,
 			"credit_exchange_rate": rate,
 			"receipt_recipient_type": "Customer",
 			"receipt_recipient": customer,

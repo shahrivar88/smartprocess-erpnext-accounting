@@ -24,8 +24,9 @@ const spReceiptConfig = {
 		Employee: "کارمند",
 	},
 	API: "smartprocess_erpnext_accounting.smartprocess_accounting",
+	PAYER_CURRENCY: "receipt_credit_currency",
 	// Grid rows evaluate this with the row as doc and the Receipt as parent.
-	ROW_BASE_RATE: "eval:doc.receipt_currency && parent.company_currency && doc.receipt_currency == parent.company_currency",
+	ROW_BASE_RATE: "eval:parent.receipt_credit_currency && parent.company_currency && parent.receipt_credit_currency == parent.company_currency",
 
 	method(path) {
 		return `${this.API}.${path}`;
@@ -56,11 +57,16 @@ const spReceiptConfig = {
 		return this.isForeign(doc.receipt_payer_currency, doc.company_currency);
 	},
 
-	isBaseRow(doc, row) {
-		return this.isBase(row?.receipt_currency, doc.company_currency);
+	// Every row uses the one header Payer Currency.
+	isBasePayer(doc) {
+		return this.isBase(doc.receipt_credit_currency, doc.company_currency);
 	},
 
-	// Every ledger is in its own side's currency (Receiver header or Payer row);
+	isForeignPayer(doc) {
+		return this.isForeign(doc.receipt_credit_currency, doc.company_currency);
+	},
+
+	// Every ledger is in its own side's currency (Receiver or Payer);
 	// an empty currency matches nothing instead of widening the list.
 	accountFilters(company, currency, accountType) {
 		const filters = {

@@ -17,6 +17,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract im
 	BANK_RECEIVER,
 	NON_GENERIC_ACCOUNT_TYPES,
 	PAYER_CURRENCY_FIELD,
+	PAYER_HEADER_CURRENCY_FIELD,
 	PAYER_RATE_FIELD,
 	PAYER_TYPES,
 	RATE_PLACES,
@@ -52,6 +53,9 @@ class ReceiptBuilder:
 			self.doc.get(RECEIVER_CURRENCY_FIELD), RECEIVER_CURRENCY_FIELD, _("ارز دریافت‌کننده")
 		)
 		self.receiver_rate = self._rate(self.receiver_currency, self.doc.get(RECEIVER_RATE_FIELD), RECEIVER_RATE_FIELD)
+		self.payer_currency = self._currency(
+			self.doc.get(PAYER_HEADER_CURRENCY_FIELD), PAYER_HEADER_CURRENCY_FIELD, _("ارز پرداخت‌کننده")
+		)
 		self.posting_date = self._date(self.doc.get("posting_date"), "posting_date")
 		self.accounts = self._account_details()
 		self.receiver = self._receiver()
@@ -68,6 +72,7 @@ class ReceiptBuilder:
 			rows=rows,
 			issues=self.issues,
 			receiver_amount=receiver_amount,
+			payer_currency=self.payer_currency,
 		)
 
 	def _company_currency(self):
@@ -166,7 +171,7 @@ class ReceiptBuilder:
 	def _row(self, number: int, row):
 		if not any(row.get(fieldname) for fieldname in ROW_INPUT_FIELDS):
 			return self._issue(_("ردیف خالی است؛ آن را تکمیل یا حذف کنید."), None, number)
-		currency = self._currency(row.get(PAYER_CURRENCY_FIELD), PAYER_CURRENCY_FIELD, _("ارز پرداخت‌کننده"), number)
+		currency = self._row_currency(number, row)
 		rate = self._rate(currency, row.get(PAYER_RATE_FIELD), PAYER_RATE_FIELD, number)
 		payer_type = row.get("receipt_recipient_type")
 		if payer_type not in PAYER_TYPES:
@@ -182,6 +187,17 @@ class ReceiptBuilder:
 		return CanonicalRow(
 			number, payer_type, currency, account, party_type, party, amount, rate, base_amount, posting_date
 		)
+
+	def _row_currency(self, number: int, row):
+		"""Every row inherits the header Payer Currency; a stored row mirror must agree."""
+		stored = row.get(PAYER_CURRENCY_FIELD)
+		if stored and self.payer_currency and stored != self.payer_currency:
+			return self._issue(
+				_("ارز ردیف ({0}) با ارز پرداخت‌کننده ({1}) یکی نیست.").format(stored, self.payer_currency),
+				PAYER_CURRENCY_FIELD,
+				number,
+			)
+		return self.payer_currency
 
 	def _payer(self, number: int, row, payer_type, currency):
 		party_type = party = None
@@ -203,7 +219,9 @@ class ReceiptBuilder:
 		account = self._account(account_name, "credit_account", number)
 		if not account:
 			return None
-		self._require_currency(account, _("حساب معین پرداخت‌کننده"), currency, _("ارز ردیف"), "credit_account", number)
+		self._require_currency(
+			account, _("حساب معین پرداخت‌کننده"), currency, _("ارز پرداخت‌کننده"), "credit_account", number
+		)
 		if payer_type == BANK_ACCOUNT_RECIPIENT and account.account_type != "Bank":
 			self._issue(_("معین متصل به حساب بانکی باید از نوع Bank باشد."), "credit_account", number)
 		elif payer_type == ACCOUNT_RECIPIENT:

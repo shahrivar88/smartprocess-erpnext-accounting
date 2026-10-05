@@ -208,6 +208,7 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 				"receipt_payer_currency": BASE,
 				"receipt_payer_account": "MC Receivable Base - SPV2",
 				"receipt_payer_exchange_rate": 1,
+				"receipt_credit_currency": BASE,
 				"receipt_payer_type": "Customer",
 				"receipt_payer": CUSTOMER_BASE_PARTY,
 				# Server-side defaults inject the JSON default «بانک» into any
