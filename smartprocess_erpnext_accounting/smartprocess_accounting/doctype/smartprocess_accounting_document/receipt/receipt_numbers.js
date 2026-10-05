@@ -54,19 +54,33 @@ const spReceiptNumbers = {
 			return;
 		}
 		spReceiptNumberWrappers.add(wrapper);
-		// Grid cell controls and the row form are built lazily; they are prepared
-		// when they receive focus, before the user can type.
-		wrapper.addEventListener("focusin", (event) => {
+		// Grid cell controls and the row form are built lazily; every numeric control
+		// of the row is prepared when the row is clicked or focused. A read-only cell
+		// (Base Amount) never gets focus itself, and in an editable grid row Frappe
+		// renders it through format_for_input(), not frappe.format(). The grid column
+		// click handler returns false (stops propagation), so the click is caught in
+		// the capture phase and handled after that handler has built the controls.
+		const prepareRow = (target) => {
 			if (!spReceiptConfig.isReceipt(frm.doc)) {
 				return;
 			}
-			for (const fieldname of this.GRID_FIELDS) {
-				const control = this.controlFor(event.target, fieldname);
-				if (control) {
-					this.prepare(frm, control);
-				}
+			for (const control of this.rowControls(target)) {
+				this.prepare(frm, control);
 			}
-		});
+		};
+		wrapper.addEventListener("click", (event) => setTimeout(() => prepareRow(event.target)), true);
+		wrapper.addEventListener("focusin", (event) => prepareRow(event.target));
+	},
+
+	rowControls(target) {
+		const gridRow = $(target).closest(".grid-row").data("grid_row");
+		if (!gridRow) {
+			return [];
+		}
+		return this.GRID_FIELDS.flatMap((fieldname) => [
+			gridRow.on_grid_fields_dict?.[fieldname],
+			gridRow.grid_form?.fields_dict?.[fieldname],
+		]).filter(Boolean);
 	},
 
 	controlFor(target, fieldname) {

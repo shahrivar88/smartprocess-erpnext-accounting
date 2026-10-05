@@ -484,6 +484,33 @@ test("16 the old staged validation mechanism is gone", () => {
 	assert.ok(!fs.existsSync(path.join(APP_DIR, "public", "js", "smartprocess_receipt_stage.js")));
 });
 
+test("17 read-only Base Amount cell drops trailing zeros only when the global setting is on", () => {
+	require(path.join(APP_DIR, "public", "js", "smartprocess_numeric.js"));
+	globalThis.get_number_format = () => "#,###.##";
+	globalThis.get_number_format_info = () => ({ decimal_str: ".", group_sep: "," });
+	const frm = form({}, [row("base-1", { credit_company_amount: 15000 })]);
+	const control = (doc) => ({
+		df: { fieldtype: "Currency", fieldname: "credit_company_amount", read_only: 1, precision: "9" },
+		doc,
+		value: doc.credit_company_amount,
+		format_for_input: (value) => (value === 15000 ? "15,000.000000000" : String(value)),
+	});
+	const doc = docs.get("base-1");
+	try {
+		frappe.boot = { smartprocess_accounting: { hide_insignificant_trailing_zeros: 1 } };
+		const on = control(doc);
+		spReceiptNumbers.prepare(frm, on);
+		assert.equal(on.format_for_input(15000), "15,000");
+		frappe.boot = { smartprocess_accounting: { hide_insignificant_trailing_zeros: 0 } };
+		const off = control(doc);
+		spReceiptNumbers.prepare(frm, off);
+		assert.equal(off.format_for_input(15000), "15,000.000000000");
+		assert.equal(doc.credit_company_amount, 15000, "the stored Base Amount stays the raw number");
+	} finally {
+		delete frappe.boot;
+	}
+});
+
 test("modules stay small and are included by the form", () => {
 	for (const file of Object.values(MODULES)) {
 		const lines = read(path.join(RECEIPT_DIR, file)).split("\n").length;
