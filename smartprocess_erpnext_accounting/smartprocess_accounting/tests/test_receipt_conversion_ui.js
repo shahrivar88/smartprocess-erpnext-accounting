@@ -52,6 +52,7 @@ globalThis.spReceiptConfig = require(path.join(RECEIPT_DIR, "receipt_config.js")
 globalThis.spReceiptConversionStatus = require(path.join(RECEIPT_DIR, "receipt_conversion_status.js"));
 globalThis.spConversionLegs = require(path.join(CONVERSION_DIR, "conversion", "conversion_legs.js"));
 globalThis.spConversionSides = require(path.join(CONVERSION_DIR, "conversion", "conversion_sides.js"));
+globalThis.spCommonRate = require(path.join(CONVERSION_DIR, "conversion", "conversion_rate.js"));
 globalThis.spConversionForm = require(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
 globalThis.spReceiptNumbers = require(path.join(RECEIPT_DIR, "receipt_numbers.js"));
 globalThis.spBalanceForm = require(path.join(CONVERSION_DIR, "conversion", "balance_form.js"));
@@ -112,6 +113,9 @@ function form(values = {}) {
 		},
 		async set_value(fieldname, value) {
 			doc[fieldname] = value;
+			if (fieldname === spCommonRate.FIELD) {
+				return spCommonRate.rateChanged(frm);
+			}
 			await spConversionForm.currencyChanged(frm);
 		},
 	};
@@ -754,6 +758,222 @@ test("typing in the side grids never asks for a confirmation", async () => {
 	await settle();
 	assert.equal(calls.confirm.length, 0);
 	assert.equal(calls.alerts.length, 0);
+});
+
+async function loadedForm(values = {}) {
+	const frm = form({ target_currency: "USD", ...values });
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	return frm;
+}
+
+const rates = (frm) => frm.doc.legs.map((leg) => leg.target_rate);
+
+function withDocfields(run) {
+	const docfields = {};
+	const original = frappe.meta.get_docfield;
+	frappe.meta.get_docfield = (doctype, fieldname, name) => (docfields[`${fieldname}:${name}`] ||= { fieldname });
+	try {
+		return run(docfields);
+	} finally {
+		frappe.meta.get_docfield = original;
+	}
+}
+
+test("the common-rate option and field exist only in Receipt mode", () => {
+	const check = field(conversionMeta, "use_common_rate");
+	const rate = field(conversionMeta, "common_target_rate");
+	assert.deepEqual([check.fieldtype, check.label, check.default], ["Check", "نرخ ارز یکسان", "0"]);
+	assert.deepEqual([rate.fieldtype, rate.label, rate.precision], ["Float", "نرخ ارز مشترک", field(legMeta, "target_rate").precision]);
+	assert.equal(check.depends_on, "eval:doc.conversion_mode!=='Balance'");
+	assert.equal(rate.depends_on, "eval:doc.conversion_mode!=='Balance' && doc.use_common_rate");
+	assert.equal(rate.mandatory_depends_on, rate.depends_on);
+	const order = conversionMeta.field_order;
+	assert.deepEqual(order.slice(order.indexOf("target_currency"), order.indexOf("target_currency") + 3), ["target_currency", "use_common_rate", "common_target_rate"]);
+	assert.equal(spCommonRate.isOn({ conversion_mode: "Receipt", use_common_rate: 1 }), true);
+	assert.equal(spCommonRate.isOn({ conversion_mode: "Balance", use_common_rate: 1 }), false);
+	assert.equal(spCommonRate.isOn({ conversion_mode: "Receipt", use_common_rate: 0 }), false);
+});
+
+test("turning the option on prefills only a rate every filled row already shares", async () => {
+	const same = await loadedForm();
+	same.doc.legs[0].target_rate = 15000;
+	same.doc.use_common_rate = 1;
+	await spCommonRate.toggled(same);
+	assert.equal(same.doc.common_target_rate, 15000);
+	assert.deepEqual(rates(same), [15000, 15000]);
+	const mixed = await loadedForm();
+	Object.assign(mixed.doc.legs[0], { target_rate: 15000 });
+	Object.assign(mixed.doc.legs[1], { target_rate: 16000 });
+	mixed.doc.use_common_rate = 1;
+	await spCommonRate.toggled(mixed);
+	assert.equal(mixed.doc.common_target_rate ?? null, null);
+	assert.deepEqual(rates(mixed), [15000, 16000]);
+	const empty = await loadedForm();
+	empty.doc.use_common_rate = 1;
+	await spCommonRate.toggled(empty);
+	assert.equal(empty.doc.common_target_rate ?? null, null);
+	assert.deepEqual(rates(empty), [undefined, undefined]);
+	assert.equal(calls.confirm.length, 0);
+});
+
+test("a common rate goes to every Receiver and Payer row and refreshes amounts through the server", async () => {
+	const frm = await loadedForm({ use_common_rate: 1 });
+	Object.assign(frm.doc.legs[0], { conversion_amount: 5000000, target_party: "" });
+	Object.assign(frm.doc.legs[1], { conversion_amount: 500000, target_party_type: "Customer", target_party: "CUST-9" });
+	calls.xcall = [];
+	await frm.set_value("common_target_rate", 15000);
+	await settle();
+	assert.deepEqual(rates(frm), [15000, 15000]);
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.conversion_amount), [5000000, 500000]);
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.target_party), ["", "CUST-9"]);
+	const preview = calls.xcall.find((call) => call.method.endsWith("preview_target_amounts"));
+	assert.deepEqual(preview.args.legs.map((leg) => leg.target_rate), [15000, 15000]);
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.target_amount), [1111.11, 1111.11]);
+	await frm.set_value("common_target_rate", 16000);
+	assert.deepEqual(rates(frm), [16000, 16000]);
+	await frm.set_value("common_target_rate", 0);
+	assert.deepEqual(rates(frm), [16000, 16000], "an empty or zero common rate changes no row");
+});
+
+test("row rates are read-only only while the option is on; off keeps every rate", async () => {
+	const frm = await loadedForm({ use_common_rate: 1 });
+	await frm.set_value("common_target_rate", 15000);
+	withDocfields((docfields) => {
+		spCommonRate.lockRows(frm);
+		const names = [frm.docname, ...frm.doc.legs.map((leg) => leg.name)];
+		assert.deepEqual(names.map((name) => docfields[`target_rate:${name}`].read_only), [1, 1, 1]);
+		frm.doc.use_common_rate = 0;
+		spCommonRate.lockRows(frm);
+		assert.deepEqual(names.map((name) => docfields[`target_rate:${name}`].read_only), [0, 0, 0]);
+	});
+	await spCommonRate.toggled(frm);
+	assert.equal(frm.doc.common_target_rate, null);
+	assert.deepEqual(rates(frm), [15000, 15000]);
+	frm.doc.legs[1].target_rate = 17000;
+	spConversionForm.rateChanged(frm, LEG, frm.doc.legs[1].name);
+	await settle();
+	assert.deepEqual(rates(frm), [15000, 17000]);
+});
+
+test("a Balance Conversion never locks or fills row rates", async () => {
+	const frm = balanceForm();
+	frm.doc.use_common_rate = 1;
+	frm.doc.common_target_rate = 15000;
+	withDocfields((docfields) => {
+		spCommonRate.lockRows(frm);
+		assert.ok(!docfields[`target_rate:${frm.docname}`].read_only);
+	});
+	await spCommonRate.apply(frm);
+	assert.ok(!calls.setValue.some((call) => call.fieldname === "target_rate"));
+});
+
+test("a target currency change clears the common rate with the row rates; the first choice keeps it", async () => {
+	const frm = form({ use_common_rate: 1, common_target_rate: 15000 });
+	await selectCurrency(frm, "USD");
+	assert.equal(frm.doc.common_target_rate, 15000);
+	assert.deepEqual(rates(frm), [15000, 15000]);
+	await selectCurrency(frm, "EUR");
+	assert.equal(calls.confirm.length, 1);
+	assert.equal(frm.doc.common_target_rate, null);
+	assert.deepEqual(rates(frm), [undefined, undefined]);
+});
+
+test("a new Receipt keeps a valid common rate and applies it to the new rows", async () => {
+	const frm = await loadedForm({ use_common_rate: 1 });
+	await frm.set_value("common_target_rate", 15000);
+	frm.doc.source_receipt = "SP-REC-2";
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.equal(frm.doc.common_target_rate, 15000);
+	assert.deepEqual(rates(frm), [15000, 15000]);
+});
+
+function liveControl(fieldname, fieldtype = "Float") {
+	const listeners = [];
+	const element = {
+		value: "",
+		selectionStart: null,
+		addEventListener: (type, handler) => listeners.push(handler),
+		setSelectionRange(start) {
+			this.selectionStart = start;
+		},
+	};
+	return {
+		element,
+		type(text) {
+			element.value = text;
+			element.selectionStart = text.length;
+			listeners.forEach((handler) => handler());
+			return element.value;
+		},
+		control: {
+			df: { fieldtype, fieldname, precision: "12" },
+			value: null,
+			format_for_input: (value) => (value === 15000 ? "15,000.000000000000" : String(value ?? "")),
+			parse: (value) => value,
+			set_formatted_input() {},
+			$input: { get: () => element },
+		},
+	};
+}
+
+test("Conversion inputs group thousands live through the shared Receipt helper; raw values stay unchanged", () => {
+	const numeric = require(path.join(__dirname, "..", "..", "public", "js", "smartprocess_numeric.js"));
+	const previous = { app: window.smartprocessAccounting, format: globalThis.get_number_format, info: globalThis.get_number_format_info };
+	window.smartprocessAccounting = { numeric };
+	globalThis.get_number_format = () => "#,###.##";
+	globalThis.get_number_format_info = () => ({ decimal_str: ".", group_sep: "," });
+	try {
+		const frm = form();
+		const state = spConversionForm.state(frm);
+		state.numberSettings = { enabled: 1, separator: ",", decimal_str: ".", group_str: "," };
+		const typed = {};
+		for (const fieldname of spConversionForm.LIVE_FIELDS) {
+			const input = liveControl(fieldname);
+			spReceiptNumbers.prepare(frm, input.control, spConversionForm.numberOptions(frm));
+			typed[fieldname] = [input.type("15000"), input.type("1500000"), input.type("92000"), input.type("1500000.25"), input.type("-1500")];
+			assert.equal(input.control.parse("1,500,000.25"), "1500000.25", "the parsed model value has no separators");
+		}
+		for (const values of Object.values(typed)) {
+			assert.deepEqual(values, ["15,000", "1,500,000", "92,000", "1,500,000.25", "-1,500"]);
+		}
+		const amount = liveControl("target_amount", "Currency");
+		spReceiptNumbers.prepare(frm, amount.control, spConversionForm.numberOptions(frm));
+		assert.equal(amount.type("15000"), "15000", "a calculated field gets no live grouping");
+		frappe.boot = { smartprocess_accounting: { hide_insignificant_trailing_zeros: 1 } };
+		const compact = liveControl("target_rate");
+		spReceiptNumbers.prepare(frm, compact.control, spConversionForm.numberOptions(frm));
+		assert.equal(compact.control.format_for_input(15000), "15,000");
+		frappe.boot = { smartprocess_accounting: { hide_insignificant_trailing_zeros: 0 } };
+		const full = liveControl("target_rate");
+		spReceiptNumbers.prepare(frm, full.control, spConversionForm.numberOptions(frm));
+		assert.equal(full.control.format_for_input(15000), "15,000.000000000000");
+		assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_number_input_settings")), "the Conversion state supplied the settings");
+	} finally {
+		delete frappe.boot;
+		window.smartprocessAccounting = previous.app;
+		globalThis.get_number_format = previous.format;
+		globalThis.get_number_format_info = previous.info;
+	}
+});
+
+test("a reopened Receipt-mode Conversion asks the server for the foreign-side note", async () => {
+	const frm = form({ target_currency: "USD", legs: [{ doctype: LEG, name: "saved-1", ...serverLeg("Receiver") }] });
+	responses.get_company_currency = "IRR";
+	responses.get_foreign_side_count = 1;
+	await spConversionForm.refresh(frm);
+	const call = calls.xcall.find((entry) => entry.method.endsWith("get_foreign_side_count"));
+	assert.deepEqual(call.args, { source_receipt: "SP-REC-1" });
+	assert.equal(frm.tableProperties["source_receipt:description"], spConversionForm.MESSAGES.foreignSides);
+	assert.ok(!calls.xcall.some((entry) => entry.method.endsWith("get_conversion_legs")));
+	responses.get_foreign_side_count = 0;
+	await spConversionForm.refresh(frm);
+	assert.equal(frm.tableProperties["source_receipt:description"], "");
+	assert.deepEqual([calls.confirm.length, calls.alerts.length], [0, 0]);
+	calls.xcall = [];
+	await spConversionForm.refresh(balanceForm());
+	assert.ok(!calls.xcall.some((entry) => entry.method.endsWith("get_foreign_side_count")));
 });
 
 (async () => {

@@ -124,6 +124,8 @@ You do not have permission to read Receipt {0}.,اجازه مشاهده رسید
 Source Receipt is required.,رسید مبدا الزامی است.,
 {0} is not a Receipt.,{0} رسید نیست.,
 Receipt {0} has no Company-currency ({1}) side to convert.,رسید {0} سمتی به ارز پایه شرکت ({1}) برای تبدیل ندارد.,
+Common Exchange Rate,نرخ ارز مشترک,
+Common Exchange Rate must be greater than zero.,نرخ ارز مشترک باید بزرگ‌تر از صفر باشد.,
 Source Side must be Receiver or Payer.,سمت مبدا باید دریافت‌کننده یا پرداخت‌کننده باشد.,
 Source Pair {0} does not belong to Receipt {1}.,ردیف {0} متعلق به رسید {1} نیست.,
 Source posting {0} is not an active posting of Receipt {1}.,سند ثبت {0} سند فعال رسید {1} نیست.,

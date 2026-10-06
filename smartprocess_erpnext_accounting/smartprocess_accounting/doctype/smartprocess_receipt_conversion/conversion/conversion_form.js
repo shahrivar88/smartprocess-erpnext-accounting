@@ -11,6 +11,8 @@ const spConversionForm = {
 		"target_rate",
 		"target_amount",
 	],
+	// Editable inputs that group thousands while typing; header and grid fields alike.
+	LIVE_FIELDS: ["conversion_amount", "target_rate", "common_target_rate"],
 	PARTY_QUERY: "v2_api.party_currency_query",
 	MESSAGES: {
 		currencyChange:
@@ -33,6 +35,8 @@ const spConversionForm = {
 				timer: null,
 				loadRequest: 0,
 				previewRequest: 0,
+				noteRequest: 0,
+				numberSettings: null,
 			};
 		}
 		return frm.__sp_conversion;
@@ -66,6 +70,7 @@ const spConversionForm = {
 			frm.refresh_field(spConversionLegs.TABLE);
 		}
 		this.installNumbers(frm);
+		spReceiptNumbers.prepare(frm, frm.fields_dict[spCommonRate.FIELD], this.numberOptions(frm));
 		await this.loadCompanyCurrency(frm, state);
 		if (frm.doc.__islocal) {
 			this.prepareNewDoc(frm, state);
@@ -73,6 +78,28 @@ const spConversionForm = {
 		spConversionSides.refresh(frm);
 		if (this.canLoad(frm) && !this.rows(frm).length) {
 			await this.loadLegs(frm);
+		} else if (this.rows(frm).length) {
+			await this.loadReceiptNote(frm);
+		}
+	},
+
+	numberOptions(frm) {
+		return { live: this.LIVE_FIELDS, state: this.state(frm) };
+	},
+
+	// A reopened Conversion asks the server again whether its Receipt has foreign sides.
+	async loadReceiptNote(frm) {
+		const state = this.state(frm);
+		const receipt = frm.doc.source_receipt;
+		if (!spConversionSides.isReceiptMode(frm.doc) || !receipt) {
+			return;
+		}
+		const request = ++state.noteRequest;
+		const count = await frappe.xcall(spConversionLegs.method("receipt_conversion_api.get_foreign_side_count"), {
+			source_receipt: receipt,
+		});
+		if (request === state.noteRequest && state.doc === frm.doc && frm.doc.source_receipt === receipt) {
+			this.showReceiptNote(frm, count > 0 ? this.MESSAGES.foreignSides : "");
 		}
 	},
 
@@ -139,8 +166,12 @@ const spConversionForm = {
 				return this.revertCurrency(frm, state);
 			}
 		}
+		const previous = state.currency;
 		state.currency = next;
 		state.touched.clear();
+		if (previous) {
+			spCommonRate.clear(frm);
+		}
 		if (next && this.canLoad(frm)) {
 			return this.loadLegs(frm);
 		}
@@ -182,6 +213,7 @@ const spConversionForm = {
 		if (!rows.length && !response?.error) {
 			frappe.show_alert({ message: this.MESSAGES.noLegs, indicator: "orange" });
 		}
+		await spCommonRate.apply(frm);
 		this.schedulePreview(frm);
 	},
 
@@ -393,7 +425,7 @@ const spConversionForm = {
 			for (const fieldname of this.NUMBER_FIELDS) {
 				for (const control of [gridRow?.on_grid_fields_dict?.[fieldname], gridRow?.grid_form?.fields_dict?.[fieldname]]) {
 					if (control) {
-						spReceiptNumbers.prepare(frm, control);
+						spReceiptNumbers.prepare(frm, control, this.numberOptions(frm));
 					}
 				}
 			}

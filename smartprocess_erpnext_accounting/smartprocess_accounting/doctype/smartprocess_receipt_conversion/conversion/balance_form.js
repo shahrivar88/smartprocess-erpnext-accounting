@@ -55,7 +55,7 @@ const spBalanceForm = {
 		frm.set_df_property(spConversionLegs.TABLE, "label", this.MESSAGES.legsLabel);
 		frm.set_df_property(spConversionLegs.TABLE, "read_only", 1);
 		for (const fieldname of this.NUMBER_FIELDS) {
-			spReceiptNumbers.prepare(frm, frm.fields_dict[fieldname]);
+			spReceiptNumbers.prepare(frm, frm.fields_dict[fieldname], spConversionForm.numberOptions(frm));
 		}
 		this.showDifference(frm);
 		if (frm.doc.docstatus === 0) {

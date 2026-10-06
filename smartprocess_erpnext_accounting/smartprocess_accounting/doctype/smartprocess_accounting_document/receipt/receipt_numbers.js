@@ -35,8 +35,8 @@ const spReceiptNumbers = {
 		return spReceiptNumbers.compact(formatted, standard, doc);
 	},
 
-	settings(frm) {
-		const state = spReceiptForm.state(frm);
+	// `state` is the caller's per-document state; another form passes its own.
+	settings(frm, state = spReceiptForm.state(frm)) {
 		if (!state.numberSettings) {
 			state.numberSettings = { enabled: 0, separator: ",", decimal_str: ".", group_str: "," };
 			frappe
@@ -96,7 +96,9 @@ const spReceiptNumbers = {
 		return gridRow?.on_grid_fields_dict?.[fieldname] || gridRow?.grid_form?.fields_dict?.[fieldname] || null;
 	},
 
-	prepare(frm, control) {
+	// The Receipt form uses the defaults; the Conversion form passes its own live
+	// fieldnames and per-document state.
+	prepare(frm, control, { live = this.LIVE_FIELDS, state } = {}) {
 		if (!control?.format_for_input || !["Currency", "Float"].includes(control.df?.fieldtype)) {
 			return;
 		}
@@ -110,8 +112,8 @@ const spReceiptNumbers = {
 				control.set_formatted_input(control.value);
 			}
 		}
-		if (this.LIVE_FIELDS.includes(control.df.fieldname)) {
-			const config = this.settings(frm);
+		if (live.includes(control.df.fieldname)) {
+			const config = this.settings(frm, state);
 			window.smartprocessAccounting?.numeric?.liveNumberSeparator?.attach(control, () => config);
 		}
 	},

@@ -142,6 +142,14 @@ class TestBalanceConversion(ConversionFixtures):
 			self.assertEqual({D(str(leg.target_rate)) for leg in stored.legs}, {D(rate)})
 		self.assertNotEqual(D(str(second.legs[0].posting_exchange_rate)), D("92000"))
 
+	def test_common_rate_option_does_not_apply_to_balance_mode(self):
+		self.credit_receipt(HUNDRED_M)
+		conversion = self.balance("45000000", use_common_rate=1, common_target_rate="92000")
+		stored = frappe.get_doc(CONVERSION, conversion.name)
+		self.assertEqual((stored.use_common_rate, bool(stored.common_target_rate)), (0, False))
+		self.assertEqual((D(str(stored.target_rate)), D(str(stored.target_amount))), (D("90000"), D("500")))
+		self.assertEqual({D(str(leg.target_rate)) for leg in stored.legs}, {D("90000")})
+
 	def test_target_total_is_split_without_losing_a_cent(self):
 		self.credit_receipt("50000000")
 		self.credit_receipt("50000000")

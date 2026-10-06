@@ -154,6 +154,65 @@ class TestReceiptConversion(ConversionFixtures):
 		self.assertEqual(Decimal(str(payer.posting_exchange_rate)), Decimal("90000"))
 		self.assertEqual(Decimal(str(payer.target_amount)), Decimal("500"))
 
+	def test_common_rate_is_every_leg_business_rate_while_posting_rates_stay_per_leg(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, receiver=HUNDRED_M, payer="45000000", receiver_rate="1", payer_rate="92000")
+		doc.update({"use_common_rate": 1, "common_target_rate": "90000"})
+		doc.insert().submit()
+		conversion = frappe.get_doc(CONVERSION, doc.name)
+		receiver, payer = self.legs(conversion)
+		self.assertEqual(Decimal(str(conversion.common_target_rate)), Decimal("90000"))
+		self.assertEqual({Decimal(str(leg.target_rate)) for leg in (receiver, payer)}, {Decimal("90000")})
+		self.assertEqual(Decimal(str(receiver.posting_exchange_rate)), Decimal("90000.09000009"))
+		self.assertEqual(Decimal(str(payer.posting_exchange_rate)), Decimal("90000"))
+		self.assertEqual((Decimal(str(receiver.conversion_amount)), Decimal(str(payer.conversion_amount))), (HUNDRED_M, Decimal("45000000")))
+		self.assertEqual((receiver.target_account, payer.target_account), (self.target_receiver, self.target_receivable))
+		self.assertEqual((payer.target_party_type, payer.target_party), ("Customer", self.target_customer))
+		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertPair(conversion, payer, (self.receivable, "debit", "45000000"), (self.target_receivable, "credit", "500"))
+		conversion.cancel()
+		self.assertEqual(self.gl(conversion), [])
+		self.assertEqual(self.remaining(receipt), {"Receiver": HUNDRED_M, "Payer": HUNDRED_M})
+
+	def test_common_rate_replaces_a_tampered_row_rate_at_submit(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, receiver=HUNDRED_M, payer="50000000")
+		doc.update({"use_common_rate": 1, "common_target_rate": "90000"})
+		doc.insert()
+		draft = frappe.get_doc(CONVERSION, doc.name)
+		self.legs(draft)[1].target_rate = 1
+		draft.submit()
+		payer = self.legs(frappe.get_doc(CONVERSION, doc.name))[1]
+		self.assertEqual((Decimal(str(payer.target_rate)), Decimal(str(payer.target_amount))), (Decimal("90000"), Decimal("555.56")))
+
+	def test_common_rate_must_be_positive(self):
+		receipt = self.submitted_receipt()
+		for rate in (None, 0, "-1"):
+			with self.subTest(rate=rate):
+				doc = self.draft(receipt, receiver=HUNDRED_M)
+				doc.update({"use_common_rate": 1, "common_target_rate": rate})
+				with self.assertRaisesRegex(frappe.ValidationError, "Common Exchange Rate"):
+					doc.insert()
+		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+
+	def test_common_rate_off_keeps_independent_row_rates(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, receiver=HUNDRED_M, payer="50000000", payer_rate="92000")
+		doc.update({"use_common_rate": 0, "common_target_rate": "70000"})
+		doc.insert()
+		stored = frappe.get_doc(CONVERSION, doc.name)
+		self.assertFalse(stored.common_target_rate)
+		self.assertEqual([Decimal(str(leg.target_rate)) for leg in self.legs(stored)], [Decimal("90000"), Decimal("92000")])
+
+	def test_foreign_side_count_reads_the_saved_source_receipt(self):
+		mixed = self.submitted_receipt(payer=(self.target_customer, self.target_receivable, "2", "1600000"))
+		normal = self.submitted_receipt()
+		self.assertEqual(receipt_conversion_api.get_foreign_side_count(mixed.name), 1)
+		self.assertEqual(receipt_conversion_api.get_foreign_side_count(normal.name), 0)
+		frappe.get_doc(RECEIPT, normal.name).cancel()
+		self.assertEqual(receipt_conversion_api.get_foreign_side_count(normal.name), 0)
+		self.assertEqual(receipt_conversion_api.get_foreign_side_count("SP-REC-MISSING"), 0)
+
 	def test_cancel_reverses_posted_ledger_and_restores_remaining(self):
 		receipt = self.submitted_receipt()
 		posting = self.source_posting(receipt)

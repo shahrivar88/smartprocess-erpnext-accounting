@@ -83,6 +83,7 @@ const spConversionSides = {
 			return;
 		}
 		this.prepareColumns(frm);
+		spCommonRate.lockRows(frm);
 		for (const side of Object.keys(this.SIDES)) {
 			const entry = this.ensureGrid(frm, side);
 			if (!entry) {

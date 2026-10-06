@@ -114,6 +114,23 @@ def get_conversion_legs(source_receipt: str, target_currency: str | None = None)
 
 
 @frappe.whitelist()
+def get_foreign_side_count(source_receipt: str) -> int:
+	"""Receipt sides left out of Receipt Conversion because they are not in the Company currency.
+
+	Read-only, for the form note on any saved Conversion. A Receipt that can no
+	longer be read as a source (for example, cancelled later) counts zero.
+	"""
+	try:
+		receipt = load_source_receipt(source_receipt)
+		company_currency = get_company_currency(receipt.company)
+		sides = [load_source_leg(receipt.name, pair, side) for pair in receipt_pair_names(receipt.name) for side in (RECEIVER, PAYER)]
+	except frappe.ValidationError:
+		frappe.clear_messages()
+		return 0
+	return sum(1 for source in sides if source.account_currency != company_currency)
+
+
+@frappe.whitelist()
 def preview_target_amounts(company: str, target_currency: str, legs: str | list) -> dict:
 	"""Target Amount per leg name with the submit rounding rule; ``None`` where a leg cannot post yet."""
 	company_currency = get_company_currency(company)

@@ -1,6 +1,7 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_numbers.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_receipt_conversion/conversion/conversion_legs.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_receipt_conversion/conversion/conversion_sides.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_receipt_conversion/conversion/conversion_rate.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_receipt_conversion/conversion/conversion_form.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_receipt_conversion/conversion/balance_form.js" %}
 
@@ -29,6 +30,12 @@ frappe.ui.form.on("SmartProcess Receipt Conversion", {
 	},
 	source_receipt(frm) {
 		return spConversionForm.receiptChanged(frm);
+	},
+	use_common_rate(frm) {
+		return spCommonRate.toggled(frm);
+	},
+	common_target_rate(frm) {
+		return spCommonRate.rateChanged(frm);
 	},
 	company(frm) {
 		spBalanceForm.scheduleSummary(frm);

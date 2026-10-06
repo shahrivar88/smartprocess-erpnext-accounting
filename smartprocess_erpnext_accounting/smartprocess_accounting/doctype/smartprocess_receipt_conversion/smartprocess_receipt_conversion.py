@@ -18,6 +18,10 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 
 class SmartProcessReceiptConversion(AccountsController):
 	def validate(self):
+		if self.conversion_mode == BALANCE_MODE:
+			# Balance mode has one header rate; the common-rate option is Receipt-only.
+			self.use_common_rate = 0
+			self.common_target_rate = None
 		self._service().validate()
 
 	def before_submit(self):

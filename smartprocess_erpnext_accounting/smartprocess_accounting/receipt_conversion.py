@@ -17,7 +17,7 @@ from decimal import Decimal
 
 import frappe
 from frappe import _
-from frappe.utils import getdate
+from frappe.utils import cint, getdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text, to_decimal
@@ -116,6 +116,7 @@ class ReceiptConversionService:
 			lock_source_receipt(receipt.name)
 		self._validate_header(receipt)
 		self._validate_unique_legs()
+		self._apply_common_rate()
 		party_entries = []
 		self.postings = []
 		for leg in self.doc.legs:
@@ -157,6 +158,18 @@ class ReceiptConversionService:
 			if key in seen:
 				_leg_error(leg, _("This Receipt row side already appears in another leg."))
 			seen.add(key)
+
+	def _apply_common_rate(self) -> None:
+		"""Copy the header business rate onto every leg; the posting rate stays per leg."""
+		doc = self.doc
+		if not cint(doc.get("use_common_rate")):
+			doc.common_target_rate = None
+			return
+		rate = doc.get("common_target_rate")
+		if to_decimal(rate, _("Common Exchange Rate")) <= 0:
+			frappe.throw(_("Common Exchange Rate must be greater than zero."))
+		for leg in doc.legs:
+			leg.target_rate = rate
 
 	def _apply_source(self, leg, source: SourceLeg, *, lock: bool) -> Decimal:
 		doc = self.doc
