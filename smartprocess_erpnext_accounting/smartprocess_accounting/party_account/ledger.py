@@ -1,158 +1,174 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Party ledger from native GL Entry. Does not load source documents."""
+"""Page 2: detailed GL ledger of one Company + Party Type + Party + Account.
+
+Totals come from independent SUMs, rows from keyset pages on
+(posting_date, creation, name), so every page has a correct opening."""
+
+from functools import cached_property
 
 import frappe
 from frappe import _
-from frappe.query_builder.functions import Sum
-from frappe.utils import flt, getdate
+from frappe.utils import cint, flt
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.labels import (
-	apply_running_balance,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.mapping import (
-	assert_gl_read,
-)
+from .access import GL, PARTY_NAME_FIELD, GLScope, assert_report_access
+from .gl_period import Period, balance_columns, balance_values
+from .labels import balance_nature
+from .voucher_links import decorate_lines
 
-GL_FIELDS = [
-	"name",
-	"posting_date",
-	"voucher_type",
-	"voucher_no",
-	"against_voucher_type",
-	"against_voucher",
-	"account",
-	"against",
-	"debit",
-	"credit",
-	"debit_in_account_currency",
-	"credit_in_account_currency",
-	"account_currency",
-	"remarks",
-]
+PAGE_LENGTH = 100
+MAX_PAGE_LENGTH = 500
+ROW_FIELDS = ", ".join(
+	f"{GL}.{field}"
+	for field in (
+		"name",
+		"posting_date",
+		"voucher_type",
+		"voucher_no",
+		"voucher_detail_no",
+		"against_voucher_type",
+		"against_voucher",
+		"debit",
+		"credit",
+		"debit_in_account_currency",
+		"credit_in_account_currency",
+		"remarks",
+	)
+)
+ORDER = f"order by {GL}.posting_date, {GL}.creation, {GL}.name"
+KEY = f"({GL}.posting_date, {GL}.creation, {GL}.name)"
+CURSOR = "(%(cursor_date)s, %(cursor_creation)s, %(cursor_name)s)"
 
 
 @frappe.whitelist()
-def get_party_ledger(company, party_type, party, account=None, from_date=None, to_date=None):
-	assert_gl_read()
-	_validate_filters(company, party_type, party)
-	use_account_currency = bool(account)
-	debit_key = "debit_in_account_currency" if use_account_currency else "debit"
-	credit_key = "credit_in_account_currency" if use_account_currency else "credit"
-
-	base_filters = {
-		"company": company,
-		"party_type": party_type,
-		"party": party,
-		"is_cancelled": 0,
-	}
-	if account:
-		base_filters["account"] = account
-
-	opening = _sum_balance(base_filters, debit_key, credit_key, before=from_date)
-	rows = _list_entries(base_filters, from_date=from_date, to_date=to_date)
-	opening, transactions = apply_running_balance(opening, rows, debit_key, credit_key)
-	period_debit = sum(row["debit"] for row in transactions)
-	period_credit = sum(row["credit"] for row in transactions)
-	closing = transactions[-1]["running_balance"] if transactions else opening
-	for row in transactions:
-		row["description"] = _row_description(row)
-	currency = None
-	if account:
-		currency = frappe.get_cached_value("Account", account, "account_currency")
-	else:
-		currency = frappe.get_cached_value("Company", company, "default_currency")
-
-	return {
-		"opening_balance": opening,
-		"period_debit": period_debit,
-		"period_credit": period_credit,
-		"closing_balance": closing,
-		"currency": currency,
-		"account": account,
-		"transactions": transactions,
-	}
+def get_account_ledger(
+	company,
+	party_type,
+	party,
+	account,
+	from_date=None,
+	to_date=None,
+	after=None,
+	page_length=PAGE_LENGTH,
+	show_items=1,
+):
+	ledger = AccountLedger(company, party_type, party, account, from_date, to_date)
+	page = ledger.page(after, min(max(cint(page_length), 1), MAX_PAGE_LENGTH))
+	decorate_lines(page["rows"], include_items=cint(show_items))
+	return {"context": ledger.context, "summary": ledger.summary, **page}
 
 
-@frappe.whitelist()
-def get_party_accounts(company, party_type, party=None):
-	if not company or not party_type:
-		return []
-	account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
-	filters = {"company": company, "is_group": 0, "disabled": 0}
-	if account_type:
-		filters["account_type"] = account_type
-	return frappe.get_list(
-		"Account",
-		filters=filters,
-		fields=["name", "account_currency", "account_type"],
-		order_by="name",
-		limit_page_length=200,
-	)
+class AccountLedger:
+	def __init__(self, company, party_type, party, account, from_date=None, to_date=None):
+		if not party or not account:
+			frappe.throw(_("طرف حساب و حساب الزامی است."))
+		assert_report_access(company, party_type, party, account)
+		self.period = Period(from_date, to_date)
+		self.scope = GLScope(company, party_type, party=party, account=account)
+		self.currency = frappe.get_cached_value("Account", account, "account_currency")
+		self.company_currency = frappe.get_cached_value("Company", company, "default_currency")
+		self.context = {
+			"company": company,
+			"party_type": party_type,
+			"party": party,
+			"party_name": party_display_name(party_type, party),
+			"account": account,
+			"currency": self.currency,
+			"company_currency": self.company_currency,
+			"is_foreign": self.currency != self.company_currency,
+			**self.period.as_dict(),
+		}
+
+	@cached_property
+	def summary(self):
+		row = self.scope.query(balance_columns(), self.period.until, **self.period.params)[0]
+		return balance_values(row)
+
+	def page(self, after=None, page_length=PAGE_LENGTH):
+		params = {**self.period.params, "limit": page_length + 1}
+		extra = self.period.inside
+		opening, opening_base = self.summary["opening"], self.summary["opening_base"]
+		if after:
+			params.update(self.cursor(after))
+			moved = self.scope.query(
+				f"sum({GL}.debit_in_account_currency - {GL}.credit_in_account_currency) as amount, "
+				f"sum({GL}.debit - {GL}.credit) as base",
+				f"{extra} and {KEY} <= {CURSOR}",
+				**params,
+			)[0]
+			opening = flt(opening + flt(moved.amount), 9)
+			opening_base = flt(opening_base + flt(moved.base), 9)
+			extra += f" and {KEY} > {CURSOR}"
+		rows = self.scope.query(ROW_FIELDS, extra, f"{ORDER} limit %(limit)s", **params)
+		has_more = len(rows) > page_length
+		rows = rows[:page_length]
+		return {
+			"opening": opening,
+			"opening_base": opening_base,
+			"opening_nature": balance_nature(opening),
+			"rows": running_lines(rows, opening, opening_base, self.context["is_foreign"]),
+			"has_more": has_more,
+			"next_cursor": rows[-1].name if has_more else None,
+		}
+
+	def cursor(self, after):
+		rows = self.scope.query(
+			f"{GL}.posting_date, {GL}.creation, {GL}.name",
+			f"{self.period.inside} and {GL}.name = %(cursor_gl)s",
+			cursor_gl=after,
+			**self.period.params,
+		)
+		if not rows:
+			frappe.throw(_("نشانگر صفحه به این حساب تعلق ندارد."))
+		return {"cursor_date": rows[0].posting_date, "cursor_creation": rows[0].creation, "cursor_name": rows[0].name}
+
+	def iter_lines(self, chunk=1000):
+		after = None
+		while True:
+			page = self.page(after, chunk)
+			yield page
+			if not page["has_more"]:
+				return
+			after = page["next_cursor"]
 
 
-def _validate_filters(company, party_type, party):
-	if not company:
-		frappe.throw(_("شرکت الزامی است."))
-	if not party_type:
-		frappe.throw(_("نوع طرف حساب الزامی است."))
-	if not party:
-		frappe.throw(_("طرف حساب الزامی است."))
-	if not frappe.db.exists(party_type, party):
-		frappe.throw(_("طرف حساب معتبر نیست."))
+def running_lines(rows, opening, opening_base, is_foreign):
+	balance, balance_base = flt(opening), flt(opening_base)
+	lines = []
+	for row in rows:
+		debit = flt(row.debit_in_account_currency)
+		credit = flt(row.credit_in_account_currency)
+		balance = flt(balance + debit - credit, 9)
+		balance_base = flt(balance_base + flt(row.debit) - flt(row.credit), 9)
+		lines.append(
+			{
+				"gl_entry": row.name,
+				"posting_date": row.posting_date,
+				"voucher_type": row.voucher_type,
+				"voucher_no": row.voucher_no,
+				"voucher_detail_no": row.voucher_detail_no,
+				"against_voucher_type": row.against_voucher_type,
+				"against_voucher": row.against_voucher,
+				"remarks": row.remarks,
+				"debit": debit,
+				"credit": credit,
+				"debit_base": flt(row.debit),
+				"credit_base": flt(row.credit),
+				"rate": posting_rate(row) if is_foreign else None,
+				"balance": balance,
+				"balance_base": balance_base,
+				"nature": balance_nature(balance),
+			}
+		)
+	return lines
 
 
-def _sum_sides(base_filters, debit_key, credit_key, before=None, until=None):
-	gl = frappe.qb.DocType("GL Entry")
-	query = (
-		frappe.qb.from_(gl)
-		.select(Sum(getattr(gl, debit_key)).as_("debit"), Sum(getattr(gl, credit_key)).as_("credit"))
-		.where(gl.company == base_filters["company"])
-		.where(gl.party_type == base_filters["party_type"])
-		.where(gl.party == base_filters["party"])
-		.where(gl.is_cancelled == 0)
-	)
-	if before:
-		query = query.where(gl.posting_date < getdate(before))
-	if until:
-		query = query.where(gl.posting_date <= getdate(until))
-	if base_filters.get("account"):
-		query = query.where(gl.account == base_filters["account"])
-	if base_filters.get("account_currency"):
-		query = query.where(gl.account_currency == base_filters["account_currency"])
-	row = query.run(as_dict=True)
-	if not row:
-		return 0.0, 0.0
-	return flt(row[0].debit), flt(row[0].credit)
+def posting_rate(row):
+	amount = flt(row.debit_in_account_currency) or flt(row.credit_in_account_currency)
+	base = flt(row.debit) or flt(row.credit)
+	return flt(base / amount, 9) if amount else None
 
 
-def _sum_balance(base_filters, debit_key, credit_key, before=None):
-	if not before:
-		return 0.0
-	debit, credit = _sum_sides(base_filters, debit_key, credit_key, before=before)
-	return debit - credit
-
-
-def _list_entries(base_filters, from_date=None, to_date=None):
-	filters = dict(base_filters)
-	if from_date and to_date:
-		filters["posting_date"] = ["between", [getdate(from_date), getdate(to_date)]]
-	elif from_date:
-		filters["posting_date"] = (">=", getdate(from_date))
-	elif to_date:
-		filters["posting_date"] = ("<=", getdate(to_date))
-	return frappe.get_list(
-		"GL Entry",
-		filters=filters,
-		fields=GL_FIELDS,
-		order_by="posting_date asc, creation asc, name asc",
-		limit_page_length=5000,
-	)
-
-
-def _row_description(row):
-	remarks = (row.get("remarks") or "").strip()
-	if remarks:
-		return remarks
-	return (row.get("against") or "").strip()
+def party_display_name(party_type, party):
+	return frappe.db.get_value(party_type, party, PARTY_NAME_FIELD[party_type]) or party

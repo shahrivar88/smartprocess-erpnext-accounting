@@ -1,103 +1,111 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""On-demand source-document details. Never used by the ledger list query."""
+"""On-demand drill-down of one ledger line.
+
+The client sends only the GL Entry name and the account context. The GL line
+must belong to that Company + Party Type + Party + Account and to the caller's
+permission scope; the source document is resolved from that GL line."""
 
 import frappe
 from frappe import _
-from frappe.exceptions import DoesNotExistError, PermissionError as FrappePermissionError
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.linked_documents import (
-	INVOICE_TYPES,
-	collect_linked_keys,
-	keep_linked_types,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import (
-	RESOLVERS,
-	resolve_generic,
+from .access import GL, GLScope, assert_report_access, can_read, deny
+from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, RECEIPT_CONVERSION, voucher_label
+from .resolvers import RESOLVERS, resolve_generic
+
+LINKABLE_TYPES = {
+	"Sales Invoice",
+	"Purchase Invoice",
+	"Delivery Note",
+	"Purchase Receipt",
+	"Stock Entry",
+	"Journal Entry",
+	"Payment Entry",
+	ACCOUNTING_DOCUMENT,
+	ACCOUNTING_POSTING,
+	RECEIPT_CONVERSION,
+}
+GL_FIELDS = ", ".join(
+	f"{GL}.{field}"
+	for field in (
+		"name",
+		"posting_date",
+		"voucher_type",
+		"voucher_no",
+		"voucher_detail_no",
+		"against_voucher_type",
+		"against_voucher",
+		"account",
+		"party_type",
+		"party",
+		"account_currency",
+		"debit",
+		"credit",
+		"debit_in_account_currency",
+		"credit_in_account_currency",
+		"remarks",
+	)
 )
 
 
 @frappe.whitelist()
-def get_document_detail(
-	voucher_type,
-	voucher_no,
-	party_type=None,
-	party=None,
-	account=None,
-	against_voucher_type=None,
-	against_voucher=None,
-	posting_date=None,
-	debit=None,
-	credit=None,
-	against=None,
-	remarks=None,
-):
-	context = {
-		"voucher_type": voucher_type,
-		"voucher_no": voucher_no,
-		"party_type": party_type,
-		"party": party,
-		"account": account,
-		"against_voucher_type": against_voucher_type,
-		"against_voucher": against_voucher,
-		"posting_date": posting_date,
-		"debit": debit,
-		"credit": credit,
-		"against": against,
-		"remarks": remarks,
-	}
-	if not voucher_type or not voucher_no:
-		payload = resolve_generic(None, context)
-		payload["linked_documents"] = load_linked_documents(payload, context)
-		return payload
-
-	if not frappe.db.exists("DocType", voucher_type) or not frappe.db.exists(voucher_type, voucher_no):
-		payload = resolve_generic(None, context)
-		payload["linked_documents"] = load_linked_documents(payload, context)
-		return payload
-
+def get_document_detail(gl_entry, company, party_type, party, account):
+	assert_report_access(company, party_type, party, account)
+	gl = verified_gl_line(gl_entry, company, party_type, party, account)
+	context = {"company": company, "party_type": party_type, "party": party, "account": account}
+	resolver = RESOLVERS.get(gl.voucher_type, resolve_generic)
 	try:
-		doc = frappe.get_doc(voucher_type, voucher_no)
-	except FrappePermissionError:
-		frappe.throw(_("اجازه مشاهده این سند را ندارید."))
-	except DoesNotExistError:
-		payload = resolve_generic(None, context)
-		payload["linked_documents"] = load_linked_documents(payload, context)
-		return payload
-
-	resolver = RESOLVERS.get(voucher_type, resolve_generic)
-	try:
-		payload = resolver(doc, context)
-	except FrappePermissionError:
-		frappe.throw(_("اجازه مشاهده این سند را ندارید."))
+		detail = resolver(gl, context)
+	except frappe.PermissionError:
+		raise
 	except Exception:
-		payload = resolve_generic(doc, context)
-	payload["against_voucher_type"] = against_voucher_type
-	payload["against_voucher"] = against_voucher
-	payload["linked_documents"] = load_linked_documents(payload, context, doc)
-	return payload
+		if resolver is resolve_generic:
+			raise
+		frappe.log_error(title=f"Party Account Explorer: {gl.voucher_type} drill-down failed")
+		detail = resolve_generic(gl, context)
+	return secure_links(detail, gl)
 
 
-def load_linked_documents(payload, context, source_doc=None):
-	extra = {}
-	if source_doc and source_doc.doctype in INVOICE_TYPES and source_doc.get("return_against"):
-		extra["return_against_type"] = source_doc.doctype
-		extra["return_against"] = source_doc.return_against
-	keys = keep_linked_types(collect_linked_keys(payload, context, extra))
-	linked = []
-	for doctype, name in keys:
-		if not frappe.db.exists("DocType", doctype) or not frappe.db.exists(doctype, name):
+def verified_gl_line(gl_entry, company, party_type, party, account):
+	if not gl_entry:
+		frappe.throw(_("ردیف دفتر کل مشخص نیست."))
+	scope = GLScope(company, party_type, party=party, account=account)
+	rows = scope.query(GL_FIELDS, f" and {GL}.name = %(gl_entry)s", gl_entry=gl_entry)
+	if not rows:
+		deny(_("این ردیف دفتر کل به حساب انتخاب‌شده تعلق ندارد یا اجازه مشاهده آن را ندارید."))
+	return rows[0]
+
+
+def secure_links(detail, gl):
+	"""Keep only openable links to whitelisted types the user may read."""
+	primary = detail.get("document") or {}
+	seen = {(primary.get("doctype"), primary.get("name"))}
+	related = []
+	for entry in detail.get("related") or []:
+		if not entry:
 			continue
-		try:
-			linked_doc = frappe.get_doc(doctype, name)
-		except FrappePermissionError:
+		key = (entry["doctype"], entry["name"])
+		if key in seen or not openable(*key):
 			continue
-		except DoesNotExistError:
-			continue
-		resolver = RESOLVERS.get(doctype, resolve_generic)
-		try:
-			linked.append(resolver(linked_doc, context))
-		except Exception:
-			linked.append(resolve_generic(linked_doc, context))
-	return linked
+		seen.add(key)
+		related.append({**entry, "label": voucher_label(entry["doctype"]) or _(entry["doctype"])})
+	detail["related"] = related
+	for group in ("summary", "focus", "technical"):
+		for entry in detail.get(group) or []:
+			if entry.get("kind") == "link" and not openable(entry.get("doctype"), entry.get("value")):
+				entry.update(kind="text", doctype=None)
+	for section in detail.get("sections") or []:
+		for column in section["columns"]:
+			if column.get("kind") != "link":
+				continue
+			key = column["key"]
+			for row in section["rows"]:
+				if not openable(row.get(f"{key}_doctype"), row.get(key)):
+					row[f"{key}_doctype"] = None
+	detail["gl_entry"] = gl.name
+	return detail
+
+
+def openable(doctype, name):
+	return doctype in LINKABLE_TYPES and can_read(doctype, name)

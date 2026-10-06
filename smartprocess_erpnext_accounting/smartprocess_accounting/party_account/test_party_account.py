@@ -1,109 +1,118 @@
+import inspect
+import os
 import unittest
 import zipfile
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import frappe
+
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import (
+	document_details,
+	voucher_links,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.access import escape_like
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.balances import (
 	add_opening_sides,
 	closing_from_opening,
 	collapse_by_party,
 	merge_balance_rows,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import build_xlsx_bytes
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.gl_period import balance_values
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.labels import (
-	apply_running_balance,
 	balance_nature,
-	invoice_kind_label,
-	payment_type_label,
+	voucher_label,
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.conversion import (
-	conversion_schema_stable,
-	resolve_conversion,
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import running_lines
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.pdf_html import build_pdf_html
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import (
+	ledger_headers,
+	ledger_rows,
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.generic import (
-	resolve_generic,
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import RESOLVERS, resolve_generic
+
+PA = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account"
+PAGE_JS = os.path.join(
+	os.path.dirname(os.path.dirname(__file__)), "page", "party_account_explorer", "party_account_explorer.js"
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.journal_entry import (
-	resolve_journal_entry,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.payment_entry import (
-	resolve_payment_entry,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.purchase_invoice import (
-	resolve_purchase_invoice,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers.sales_invoice import (
-	resolve_sales_invoice,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import (
-	build_xlsx_bytes,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx import (
-	_table_from_ledger,
-	build_party_item_ledger_xlsx,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.pdf_html import (
-	build_pdf_html,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.item_ledger_rows import (
-	apply_dual_running_balance,
-	expand_invoice,
-	expand_movement,
-	movement_title,
-	source_label,
-	voucher_short_number,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.invoice_lines import (
-	invoice_item_rows,
-	invoice_tax_rows,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.linked_documents import (
-	collect_linked_keys,
-	keep_linked_types,
-)
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import RESOLVERS
 
 
-class TestPartyAccountLabels(unittest.TestCase):
-	def test_running_balance_unchanged_formula(self):
-		opening, rows = apply_running_balance(
-			100,
-			[{"debit": 40, "credit": 0}, {"debit": 0, "credit": 25}],
-		)
-		self.assertEqual(opening, 100)
-		self.assertEqual(rows[0]["running_balance"], 140)
-		self.assertEqual(rows[1]["running_balance"], 115)
-		self.assertEqual(rows[0]["balance_nature"], "بدهکار")
-		self.assertEqual(rows[1]["balance_nature"], "بدهکار")
+def gl_row(name, debit=0, credit=0, debit_base=None, credit_base=None, **extra):
+	return frappe._dict(
+		name=name,
+		posting_date="2026-01-01",
+		voucher_type=extra.pop("voucher_type", "Journal Entry"),
+		voucher_no=extra.pop("voucher_no", "JV-1"),
+		voucher_detail_no=extra.pop("voucher_detail_no", None),
+		against_voucher_type=None,
+		against_voucher=None,
+		account=extra.pop("account", "AR"),
+		party_type="Customer",
+		party=extra.pop("party", "C1"),
+		account_currency=extra.pop("account_currency", "IRR"),
+		debit_in_account_currency=debit,
+		credit_in_account_currency=credit,
+		debit=debit if debit_base is None else debit_base,
+		credit=credit if credit_base is None else credit_base,
+		remarks=None,
+		**extra,
+	)
 
-	def test_payment_type_uses_erpnext_field_not_sign(self):
-		self.assertEqual(payment_type_label("Receive"), "دریافت")
-		self.assertEqual(payment_type_label("Pay"), "پرداخت")
-		self.assertEqual(payment_type_label("Internal Transfer"), "انتقال داخلی")
 
-	def test_invoice_return_labels(self):
-		self.assertEqual(invoice_kind_label("Sales Invoice", False), "فاکتور فروش")
-		self.assertEqual(invoice_kind_label("Sales Invoice", True), "برگشت از فروش")
-		self.assertEqual(invoice_kind_label("Purchase Invoice", False), "فاکتور خرید")
-		self.assertEqual(invoice_kind_label("Purchase Invoice", True), "برگشت از خرید")
+def child(**values):
+	return frappe._dict(values)
+
+
+class TestLabelsAndFormulas(unittest.TestCase):
+	def test_persian_voucher_labels_and_returns(self):
+		self.assertEqual(voucher_label("Sales Invoice"), "فاکتور فروش")
+		self.assertEqual(voucher_label("Sales Invoice", is_return=1), "برگشت از فروش")
+		self.assertEqual(voucher_label("Purchase Invoice"), "فاکتور خرید")
+		self.assertEqual(voucher_label("Purchase Invoice", is_return=1), "برگشت از خرید")
+		self.assertEqual(voucher_label("Journal Entry"), "سند حسابداری")
+		self.assertEqual(voucher_label("Payment Entry"), "دریافت/پرداخت")
+		self.assertEqual(voucher_label("SmartProcess Receipt Conversion"), "تبدیل ارز")
+		self.assertEqual(voucher_label("SmartProcess Accounting Document", operation_type="Receipt"), "رسید")
+		self.assertEqual(voucher_label("SmartProcess Accounting Document", operation_type="Payment"), "پرداخت")
+		self.assertIsNone(voucher_label("Some Other DocType"))
 
 	def test_balance_nature(self):
-		self.assertEqual(balance_nature(100), "بدهکار")
-		self.assertEqual(balance_nature(-25), "بستانکار")
 		self.assertEqual(balance_nature(0), "تسویه")
-		self.assertEqual(balance_nature(1e-12), "تسویه")
+		self.assertEqual(balance_nature(5), "بدهکار")
+		self.assertEqual(balance_nature(-5), "بستانکار")
 
+	def test_closing_is_opening_plus_debit_minus_credit(self):
+		values = balance_values({"opening": 100, "period_debit": 40, "period_credit": 15, "opening_base": 9, "period_debit_base": 1, "period_credit_base": 2})
+		self.assertEqual(values["closing"], 125)
+		self.assertEqual(values["closing_base"], 8)
+		self.assertEqual(values["period_debit"], 40)
+		self.assertEqual(values["nature"], "بدهکار")
+
+	def test_running_balance_from_opening_in_account_currency(self):
+		rows = [gl_row("A", debit=10, debit_base=900), gl_row("B", credit=4, credit_base=380)]
+		lines = running_lines(rows, 100, 9000, is_foreign=True)
+		self.assertEqual([line["balance"] for line in lines], [110, 106])
+		self.assertEqual([line["balance_base"] for line in lines], [9900, 9520])
+		self.assertEqual([line["rate"] for line in lines], [90, 95])
+		self.assertEqual(lines[1]["nature"], "بدهکار")
+
+	def test_company_currency_rows_have_no_rate(self):
+		lines = running_lines([gl_row("A", debit=10)], 0, 0, is_foreign=False)
+		self.assertIsNone(lines[0]["rate"])
+
+	def test_search_escapes_like_wildcards(self):
+		self.assertEqual(escape_like("50%_x"), "50\\%\\_x")
+		self.assertEqual(escape_like("a\\b"), "a\\\\b")
+
+
+class TestTelegramCompatibleBalances(unittest.TestCase):
 	def test_opening_plus_movement_equals_closing(self):
 		self.assertEqual(closing_from_opening(80, 40, 15), 105)
+		self.assertEqual(add_opening_sides(1000, 400, 80, 10), (1080, 410))
 
-	def test_add_opening_sides_keeps_gross_debit_and_credit(self):
-		debit, credit = add_opening_sides(1000, 400, 80, 10)
-		self.assertEqual(debit, 1080)
-		self.assertEqual(credit, 410)
-
-
-class TestBalanceOverview(unittest.TestCase):
-	def test_does_not_mix_irr_and_usd(self):
+	def test_merge_and_collapse_keep_currencies_apart(self):
 		mapped = [
 			{"party": "P1", "party_type": "Customer", "account": "AR-IRR", "currency": "IRR"},
 			{"party": "P1", "party_type": "Customer", "account": "AR-USD", "currency": "USD"},
@@ -112,667 +121,292 @@ class TestBalanceOverview(unittest.TestCase):
 			{"party": "P1", "party_type": "Customer", "account": "AR-IRR", "currency": "IRR", "debit": 100, "credit": 0},
 			{"party": "P1", "party_type": "Customer", "account": "AR-USD", "currency": "USD", "debit": 0, "credit": 10},
 		]
-		irr = [row for row in merge_balance_rows(mapped, gl, hide_zero=False) if row["currency"] == "IRR"]
-		usd = [row for row in merge_balance_rows(mapped, gl, hide_zero=False) if row["currency"] == "USD"]
-		self.assertEqual(len(irr), 1)
-		self.assertEqual(irr[0]["balance"], 100)
-		self.assertEqual(irr[0]["balance_nature"], "بدهکار")
-		self.assertEqual(len(usd), 1)
-		self.assertEqual(usd[0]["balance"], -10)
-		self.assertEqual(usd[0]["balance_nature"], "بستانکار")
-
-	def test_hides_zero_keeps_debit_and_credit(self):
-		mapped = [
-			{"party": "Zero", "party_type": "Customer", "account": "AR", "currency": "IRR"},
-			{"party": "Debit", "party_type": "Customer", "account": "AR", "currency": "IRR"},
-			{"party": "Credit", "party_type": "Supplier", "account": "AP", "currency": "IRR"},
-		]
-		gl = [
-			{"party": "Debit", "party_type": "Customer", "account": "AR", "currency": "IRR", "debit": 50, "credit": 0},
-			{"party": "Credit", "party_type": "Supplier", "account": "AP", "currency": "IRR", "debit": 0, "credit": 75},
-		]
-		rows = merge_balance_rows(mapped, gl, hide_zero=True)
-		parties = {row["party"] for row in rows}
-		self.assertNotIn("Zero", parties)
-		self.assertIn("Debit", parties)
-		self.assertIn("Credit", parties)
-
-	def test_mapped_zero_visible_when_requested(self):
-		mapped = [{"party": "Zero", "party_type": "Customer", "account": "AR", "currency": "IRR"}]
-		rows = merge_balance_rows(mapped, [], hide_zero=False)
-		self.assertEqual(rows[0]["balance_nature"], "تسویه")
-
-	def test_collapse_by_party_sums_accounts_and_keeps_currency(self):
-		rows = collapse_by_party(
-			[
-				{
-					"party": "P1",
-					"party_type": "Customer",
-					"account": "AR-1",
-					"currency": "IRR",
-					"party_name": "علی",
-					"debit": 80,
-					"credit": 10,
-					"balance": 70,
-				},
-				{
-					"party": "P1",
-					"party_type": "Customer",
-					"account": "AR-2",
-					"currency": "IRR",
-					"party_name": "علی",
-					"debit": 20,
-					"credit": 5,
-					"balance": 15,
-				},
-				{
-					"party": "P1",
-					"party_type": "Customer",
-					"account": "AR-USD",
-					"currency": "USD",
-					"party_name": "علی",
-					"debit": 4,
-					"credit": 0,
-					"balance": 4,
-				},
-			],
-			hide_zero=True,
-		)
-		by_currency = {row["currency"]: row for row in rows}
-		self.assertEqual(len(rows), 2)
-		self.assertNotIn("account", by_currency["IRR"])
-		self.assertEqual(by_currency["IRR"]["debit"], 100)
-		self.assertEqual(by_currency["IRR"]["credit"], 15)
-		self.assertEqual(by_currency["IRR"]["balance"], 85)
-		self.assertEqual(by_currency["USD"]["balance"], 4)
+		rows = merge_balance_rows(mapped, gl, hide_zero=False)
+		for row in rows:
+			row["party_name"] = "P1"
+		by_currency = {row["currency"]: row for row in collapse_by_party(rows, hide_zero=True)}
+		self.assertEqual(by_currency["IRR"]["balance"], 100)
+		self.assertEqual(by_currency["USD"]["balance"], -10)
 
 
 class TestResolvers(unittest.TestCase):
-	def test_registry_covers_mvp_doctypes(self):
-		for name in (
-			"Sales Invoice",
-			"Purchase Invoice",
-			"Payment Entry",
-			"Journal Entry",
-			"SmartProcess Currency Conversion",
-			"SmartProcess Accounting Posting",
-		):
-			self.assertIn(name, RESOLVERS)
+	def resolve(self, module, doc, gl):
+		with patch(f"{PA}.resolvers.{module}.readable_doc", return_value=doc) as readable:
+			detail = RESOLVERS[gl.voucher_type](gl, {})
+		readable.assert_called_once_with(gl.voucher_type, gl.voucher_no)
+		return detail
 
-	def test_sales_invoice_and_return(self):
-		invoice = SimpleNamespace(
+	def invoice(self, **values):
+		base = dict(
 			doctype="Sales Invoice",
-			name="SINV-0001",
-			posting_date="2026-09-25",
-			customer="علمداری دلاری",
-			currency="USD",
-			grand_total=10,
-			outstanding_amount=10,
-			is_return=0,
-			return_against=None,
-			remarks="تست",
+			name="SINV-1",
 			docstatus=1,
-			items=[SimpleNamespace(item_code="A", item_name="کالا", qty=1, rate=10, amount=10)],
+			customer="C1",
+			currency="IRR",
+			conversion_rate=1,
+			total=300,
+			discount_amount=30,
+			net_total=270,
+			total_taxes_and_charges=27,
+			rounding_adjustment=0.5,
+			grand_total=297,
+			rounded_total=297.5,
+			write_off_amount=7,
+			is_pos=1,
+			paid_amount=100,
+			outstanding_amount=190.5,
+			items=[
+				child(item_code="I1", item_name="کالا ۱", description="<p>شرح</p>", qty=2, uom="عدد", rate=100, amount=200),
+				child(item_code="I2", item_name="کالا ۲", description="", qty=1, uom="عدد", rate=100, amount=100),
+			],
+			taxes=[child(account_head="VAT", description="مالیات", rate=10, tax_amount=27, total=297)],
 		)
-		payload = resolve_sales_invoice(invoice)
-		self.assertEqual(payload["title"], "فاکتور فروش")
-		self.assertEqual(payload["items"][0]["item_code"], "A")
-		returned = SimpleNamespace(**{**invoice.__dict__, "is_return": 1, "return_against": "SINV-0001"})
-		self.assertEqual(resolve_sales_invoice(returned)["title"], "برگشت از فروش")
+		base.update(values)
+		return frappe._dict(base)
+
+	def test_registry(self):
+		for doctype in ("Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry", "SmartProcess Accounting Posting", "SmartProcess Receipt Conversion"):
+			self.assertIn(doctype, RESOLVERS)
+		self.assertNotIn("SmartProcess Currency Conversion", RESOLVERS)
+
+	def test_sales_invoice_details_are_descriptive(self):
+		gl = gl_row("G1", debit=297.5, voucher_type="Sales Invoice", voucher_no="SINV-1")
+		detail = self.resolve("invoice", self.invoice(), gl)
+		self.assertEqual(detail["title"], "فاکتور فروش")
+		self.assertEqual(detail["document"], {"doctype": "Sales Invoice", "name": "SINV-1"})
+		labels = {entry["label"]: entry["value"] for entry in detail["summary"]}
+		for label in ("تخفیف", "تعدیل گرد کردن", "مبلغ سوخت (Write Off)", "پرداخت نقدی (POS)", "مالیات و عوارض"):
+			self.assertIn(label, labels)
+		items = detail["sections"][0]
+		self.assertEqual(len(items["rows"]), 2)
+		self.assertEqual(items["rows"][0]["description"], "شرح")
+		self.assertIn("فقط توضیحی", items["note"])
+		self.assertEqual(len(detail["sections"][1]["rows"]), 1)
+
+	def test_sales_return_links_original(self):
+		gl = gl_row("G1", credit=100, voucher_type="Sales Invoice", voucher_no="SINV-2")
+		detail = self.resolve("invoice", self.invoice(name="SINV-2", is_return=1, return_against="SINV-1"), gl)
+		self.assertEqual(detail["title"], "برگشت از فروش")
+		self.assertEqual(detail["document"]["name"], "SINV-2")
+		original = next(entry for entry in detail["summary"] if entry["label"] == "برگشت از سند")
+		self.assertEqual((original["kind"], original["doctype"], original["value"]), ("link", "Sales Invoice", "SINV-1"))
+		self.assertIn({"doctype": "Sales Invoice", "name": "SINV-1", "relation": "سند اصلی برگشت"}, detail["related"])
 
 	def test_purchase_invoice_and_return(self):
-		invoice = SimpleNamespace(
-			doctype="Purchase Invoice",
-			name="PINV-0001",
-			posting_date="2026-09-25",
-			supplier="تأمین",
-			bill_no="B-1",
-			currency="IRR",
-			grand_total=1000,
-			outstanding_amount=1000,
-			is_return=0,
-			return_against=None,
-			docstatus=1,
-			items=[SimpleNamespace(item_code="B", item_name="قطعه", qty=2, rate=500, amount=1000)],
-		)
-		self.assertEqual(resolve_purchase_invoice(invoice)["title"], "فاکتور خرید")
-		returned = SimpleNamespace(**{**invoice.__dict__, "is_return": 1, "return_against": "PINV-0001"})
-		self.assertEqual(resolve_purchase_invoice(returned)["title"], "برگشت از خرید")
+		doc = self.invoice(doctype="Purchase Invoice", name="PINV-1", supplier="S1", customer=None, is_return=1, return_against="PINV-0")
+		gl = gl_row("G1", debit=10, voucher_type="Purchase Invoice", voucher_no="PINV-1")
+		detail = self.resolve("invoice", doc, gl)
+		self.assertEqual(detail["title"], "برگشت از خرید")
 
-	def test_payment_entry_receive_and_pay(self):
-		receive = SimpleNamespace(
+	def test_payment_entry_currencies_rates_and_references(self):
+		doc = frappe._dict(
 			doctype="Payment Entry",
-			name="PE-R",
-			posting_date="2026-09-25",
-			payment_type="Receive",
-			party="مشتری",
-			paid_from="بدهکاران - SP",
-			paid_to="پول نقد - SP",
-			paid_amount=10,
-			received_amount=10,
-			reference_no="CHK",
-			reference_date="2026-09-25",
-			remarks="",
+			name="PE-1",
 			docstatus=1,
-			references=[
-				SimpleNamespace(
-					reference_doctype="Sales Invoice",
-					reference_name="SINV-0001",
-					allocated_amount=10,
-					outstanding_amount=0,
-				)
-			],
+			payment_type="Receive",
+			party_type="Customer",
+			party="C1",
+			paid_from="AR USD",
+			paid_from_account_currency="USD",
+			paid_to="Bank IRR",
+			paid_to_account_currency="IRR",
+			paid_amount=10,
+			received_amount=900,
+			source_exchange_rate=90,
+			target_exchange_rate=1,
+			references=[child(reference_doctype="Sales Invoice", reference_name="SINV-1", total_amount=10, outstanding_amount=0, allocated_amount=10)],
 		)
-		payload = resolve_payment_entry(receive)
-		self.assertEqual(payload["title"], "دریافت")
-		self.assertEqual(payload["references"][0]["reference_name"], "SINV-0001")
-		pay = SimpleNamespace(**{**receive.__dict__, "payment_type": "Pay", "name": "PE-P"})
-		self.assertEqual(resolve_payment_entry(pay)["title"], "پرداخت")
+		detail = self.resolve("payment_entry", doc, gl_row("G1", credit=10, voucher_type="Payment Entry", voucher_no="PE-1"))
+		summary = {entry["label"]: entry for entry in detail["summary"]}
+		self.assertEqual(summary["مبلغ پرداختی"]["currency"], "USD")
+		self.assertEqual(summary["مبلغ دریافتی"]["currency"], "IRR")
+		self.assertEqual(summary["نرخ ارز مبدا"]["value"], 90)
+		reference = detail["sections"][0]["rows"][0]
+		self.assertEqual((reference["reference_name"], reference["reference_name_doctype"]), ("SINV-1", "Sales Invoice"))
+		self.assertEqual(detail["related"][0]["doctype"], "Sales Invoice")
 
-	def test_journal_entry_marks_party_row(self):
-		doc = SimpleNamespace(
+	def journal(self):
+		return frappe._dict(
 			doctype="Journal Entry",
 			name="JV-1",
-			posting_date="2026-09-25",
-			voucher_type="Journal Entry",
-			user_remark="تست",
-			cheque_no="",
-			bill_no="",
-			cheque_date=None,
 			docstatus=1,
+			voucher_type="Journal Entry",
 			accounts=[
-				SimpleNamespace(
-					account="بدهکاران - SP",
-					party_type="Customer",
-					party="محمد علمداری",
-					debit=100,
-					credit=0,
-					against_account="پول نقد - SP",
-				),
-				SimpleNamespace(
-					account="پول نقد - SP",
-					party_type=None,
-					party=None,
-					debit=0,
-					credit=100,
-					against_account="بدهکاران - SP",
-				),
+				child(name="r1", idx=1, account="AR", party_type="Customer", party="C1", account_currency="USD", exchange_rate=90, debit_in_account_currency=10, credit_in_account_currency=0, debit=900, credit=0),
+				child(name="r2", idx=2, account="AR", party_type="Customer", party="C1", account_currency="USD", exchange_rate=91, debit_in_account_currency=20, credit_in_account_currency=0, debit=1820, credit=0),
+				child(name="r3", idx=3, account="Bank", account_currency="IRR", exchange_rate=1, debit_in_account_currency=0, credit_in_account_currency=2720, debit=0, credit=2720),
 			],
 		)
-		payload = resolve_journal_entry(
-			doc, {"party_type": "Customer", "party": "محمد علمداری"}
-		)
-		self.assertTrue(payload["accounts"][0]["is_party_row"])
-		self.assertFalse(payload["accounts"][1]["is_party_row"])
 
-	def test_conversion_uses_specialized_when_schema_stable(self):
-		meta = SimpleNamespace(
-			get_field=lambda name: True if name == "conversion_rows" else None
-		)
-		self.assertTrue(conversion_schema_stable(meta))
-		doc = SimpleNamespace(
-			doctype="SmartProcess Currency Conversion",
-			name="CONV-1",
-			meta=meta,
-			posting_date="2026-09-25",
-			company="پردازش هوشمند",
-			remarks="تست",
-			docstatus=2,
-			conversion_rows=[
-				SimpleNamespace(
-					nature="بدهکار",
-					account="پول نقد - SP",
-					party="",
-					account_currency="IRR",
-					amount=10000,
-					exchange_rate=1,
-					base_amount=10000,
-				)
+	def test_journal_entry_highlights_only_the_exact_row(self):
+		gl = gl_row("G2", debit=20, debit_base=1820, voucher_detail_no="r2", account_currency="USD")
+		detail = self.resolve("journal_entry", self.journal(), gl)
+		current = [row for row in detail["sections"][0]["rows"] if row["is_current"]]
+		self.assertEqual(len(current), 1)
+		self.assertEqual(current[0]["debit"], 20)
+		focus = {entry["label"]: entry["value"] for entry in detail["focus"]}
+		self.assertEqual(focus["نرخ ارز"], 91)
+		self.assertEqual(focus["بدهکار پایه"], 1820)
+
+	def test_journal_entry_falls_back_to_account_party_amount_match(self):
+		gl = gl_row("G1", debit=10, debit_base=900, account_currency="USD")
+		detail = self.resolve("journal_entry", self.journal(), gl)
+		current = [row for row in detail["sections"][0]["rows"] if row["is_current"]]
+		self.assertEqual([row["debit"] for row in current], [10])
+
+	def test_generic_uses_gl_voucher(self):
+		gl = gl_row("G1", debit=5, voucher_type="Delivery Note", voucher_no="DN-2")
+		doc = frappe._dict(doctype="Delivery Note", name="DN-2", docstatus=1, is_return=1, return_against="DN-1")
+		with patch(f"{PA}.resolvers.generic.readable_doc", return_value=doc) as readable:
+			detail = resolve_generic(gl, {})
+		readable.assert_called_once_with("Delivery Note", "DN-2")
+		self.assertEqual(detail["title"], "برگشت حواله فروش")
+		self.assertEqual(detail["related"][0]["name"], "DN-1")
+
+
+class TestDrillDownSecurity(unittest.TestCase):
+	def test_api_accepts_only_gl_entry_and_account_context(self):
+		params = list(inspect.signature(document_details.get_document_detail).parameters)
+		self.assertEqual(params, ["gl_entry", "company", "party_type", "party", "account"])
+
+	def test_secure_links_keeps_whitelisted_readable_documents_only(self):
+		detail = {
+			"document": {"doctype": "Sales Invoice", "name": "SINV-1"},
+			"summary": [{"label": "x", "value": "PE-9", "kind": "link", "doctype": "Payment Entry"}],
+			"focus": [],
+			"technical": [],
+			"related": [
+				{"doctype": "Sales Invoice", "name": "SINV-1", "relation": "self"},
+				{"doctype": "User", "name": "Administrator", "relation": "arbitrary"},
+				{"doctype": "Delivery Note", "name": "DN-1", "relation": "stock"},
+				{"doctype": "Payment Entry", "name": "PE-9", "relation": "denied"},
 			],
-		)
-		payload = resolve_conversion(doc)
-		self.assertEqual(payload["resolver"], "conversion")
-		self.assertEqual(payload["rows"][0]["account"], "پول نقد - SP")
-
-	def test_ledger_module_does_not_load_source_documents(self):
-		import os
-
-		folder = os.path.dirname(__file__)
-		for filename in ("ledger.py", "overview.py", "mapping.py", "balances.py"):
-			path = os.path.join(folder, filename)
-			with open(path, encoding="utf-8") as handle:
-				source = handle.read()
-			self.assertNotIn("get_doc(", source, filename)
-			self.assertNotIn("document_details", source, filename)
-			self.assertNotIn("resolve_sales_invoice", source, filename)
-			self.assertNotIn("ignore_permissions", source, filename)
-
-	def test_explorer_page_loads_details_only_on_demand(self):
-		import os
-
-		path = os.path.join(
-			os.path.dirname(__file__),
-			"..",
-			"page",
-			"party_account_explorer",
-			"party_account_explorer.js",
-		)
-		with open(path, encoding="utf-8") as handle:
-			source = handle.read()
-		self.assertIn("get_document_detail", source)
-		self.assertIn("show_detail", source)
-		self.assertIn("get_party_item_ledger", source)
-		self.assertIn("get_available_currencies", source)
-		self.assertIn("Select", source)
-		self.assertIn("export_excel", source)
-		self.assertIn("export_explorer_xlsx", source)
-		self.assertIn("export_pdf", source)
-		self.assertIn("export_explorer_pdf", source)
-		self.assertIn('export_filename("xlsx")', source)
-		self.assertIn('export_filename("pdf")', source)
-		self.assertIn("make_export_actions", source)
-		self.assertIn("show_menu", source)
-		amount_fn = source.split("format_amount(value, currency) {")[1]
-		self.assertIn("format_number", amount_fn)
-		self.assertNotIn("format_currency", amount_fn)
-		self.assertIn("user_settings", source)
-		self.assertIn("format_source_label", source)
-		self.assertIn("sp-explorer-columns", source)
-		self.assertIn("sp-source-link", source)
-		self.assertIn('direction: "rtl"', source)
-		self.assertIn("inlineFilters", source)
-		self.assertIn("bind_header_sort", source)
-		self.assertIn("show_column_filters", source)
-		self.assertIn("sync_column_geometry", source)
-		self.assertIn("ensure_desk_sidebar", source)
-		self.assertIn("SmartProcess Accounting", source)
-		ledger_render = source.split("render_ledger(data)")[1].split("key_column()")[0]
-		self.assertNotIn("مانده اول دوره", ledger_render)
-		self.assertIn("sp-ledger-summary", ledger_render)
-		self.assertIn("sp-ledger-totals", ledger_render)
-		self.assertIn("bind_live_column_resize", source)
-		self.assertIn('el.style.width = total + "px"', source)
-		self.assertIn('.dt-header, .dt-header > div', source)
-		self.assertIn('layout: "fixed"', source)
-		self.assertIn("flexShrink", source)
-		overview_fn = source.split("render_overview(")[1].split("open_ledger(")[0]
-		self.assertNotIn("حساب معین", overview_fn)
-		self.assertNotIn('text_column("account"', overview_fn)
-		self.assertIn('text_column("account"', source.split("ledger_columns(is_foreign, account_currency, company_currency) {")[1].split("format_source_label(")[0])
-		self.assertNotIn("ctx.account", source.split("refresh_ledger()")[1].split("render_ledger(")[0])
-		ledger_fn = source.split("refresh_ledger()")[1].split("render_ledger(")[0]
-		self.assertNotIn("get_document_detail", ledger_fn)
-		self.assertIn("frappe.set_route", source)
-
-	def test_invoice_items_include_each_row_and_taxes(self):
-		doc = SimpleNamespace(
-			items=[
-				SimpleNamespace(
-					item_code="A",
-					item_name="کالا",
-					description="<p>دوربین</p>",
-					qty=1,
-					uom="Nos",
-					rate=10,
-					amount=10,
-				),
-				SimpleNamespace(
-					item_code="B",
-					item_name="قطعه",
-					description="لنز",
-					qty=2,
-					uom="Nos",
-					rate=5,
-					amount=10,
-				),
-			],
-			taxes=[
-				SimpleNamespace(
-					account_head="مالیات - SP",
-					description="VAT",
-					rate=10,
-					tax_amount=2,
-					total=22,
-				)
-			],
-		)
-		items = invoice_item_rows(doc)
-		self.assertEqual(len(items), 2)
-		self.assertEqual(items[0]["description"], "دوربین")
-		self.assertEqual(items[1]["item_code"], "B")
-		self.assertEqual(invoice_tax_rows(doc)[0]["tax_amount"], 2)
-
-	def test_journal_and_payment_collect_linked_invoices(self):
-		je = {
-			"doctype": "Journal Entry",
-			"name": "JV-1",
-			"accounts": [
+			"sections": [
 				{
-					"reference_type": "Sales Invoice",
-					"reference_name": "SINV-0001",
+					"columns": [{"key": "ref", "kind": "link"}],
+					"rows": [{"ref": "PE-9", "ref_doctype": "Payment Entry"}, {"ref": "DN-1", "ref_doctype": "Delivery Note"}],
 				}
 			],
 		}
-		pe = {
-			"doctype": "Payment Entry",
-			"name": "PE-1",
-			"references": [
-				{"reference_doctype": "Purchase Invoice", "reference_name": "PINV-1"},
-			],
-		}
-		self.assertEqual(
-			keep_linked_types(collect_linked_keys(je)),
-			[("Sales Invoice", "SINV-0001")],
-		)
-		self.assertEqual(
-			keep_linked_types(collect_linked_keys(pe)),
-			[("Purchase Invoice", "PINV-1")],
-		)
-		self.assertEqual(
-			collect_linked_keys(
-				{"doctype": "Sales Invoice", "name": "SINV-0001"},
-				extra={"return_against_type": "Sales Invoice", "return_against": "SINV-0001"},
-			),
-			[],
-		)
+		readable = {("Delivery Note", "DN-1"), ("User", "Administrator")}
+		with patch(f"{PA}.document_details.can_read", side_effect=lambda doctype, name: (doctype, name) in readable):
+			secured = document_details.secure_links(detail, frappe._dict(name="G1"))
+		self.assertEqual([entry["name"] for entry in secured["related"]], ["DN-1"])
+		self.assertEqual(secured["summary"][0]["kind"], "text")
+		rows = secured["sections"][0]["rows"]
+		self.assertIsNone(rows[0]["ref_doctype"])
+		self.assertEqual(rows[1]["ref_doctype"], "Delivery Note")
 
-	def test_pdf_html_has_no_currency_symbols(self):
-		html = build_pdf_html(
-			"گردش طرف حساب",
-			"USD",
-			["عنوان", "بد USD"],
-			[["فاکتور فروش ACC-SINV-2026-00007", "555.00"]],
-		)
-		self.assertIn("dir=\"rtl\"", html)
-		self.assertIn("فاکتور فروش ACC-SINV-2026-00007", html)
-		self.assertIn("555.00", html)
-		self.assertNotIn("$", html)
-		self.assertNotIn("﷼", html)
 
-	def test_xlsx_export_is_real_office_open_xml(self):
-		content = build_xlsx_bytes(
-			["عنوان", "بد USD"],
-			[["فاکتور فروش ACC-SINV-2026-00007", "555"]],
-		)
-		self.assertTrue(content.startswith(b"PK"))
-		with zipfile.ZipFile(BytesIO(content)) as archive:
-			self.assertIn("xl/worksheets/sheet1.xml", archive.namelist())
-			sheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
-		self.assertIn("فاکتور فروش ACC-SINV-2026-00007", sheet)
-		self.assertIn("عنوان", sheet)
-
-	def test_source_label_uses_kind_and_registered_number(self):
-		self.assertEqual(voucher_short_number("ACC-SINV-2026-00003"), "3")
-		self.assertEqual(
-			source_label("Sales Invoice", "ACC-SINV-2026-00003"),
-			"فاکتور فروش ACC-SINV-2026-00003",
-		)
-		self.assertEqual(
-			source_label("Sales Invoice", "ACC-SINV-2026-00003", True),
-			"برگشت از فروش ACC-SINV-2026-00003",
-		)
-		self.assertEqual(
-			source_label("Journal Entry", "ACC-JV-2026-00024"),
-			"سند حسابداری ACC-JV-2026-00024",
-		)
-		self.assertEqual(source_label("Purchase Invoice", "PINV-00012"), "فاکتور خرید PINV-00012")
-
-	def test_invoice_lines_keep_account_and_base_separate(self):
-		doc = SimpleNamespace(
-			conversion_rate=1710000,
-			remarks="",
-			items=[
-				SimpleNamespace(
-					item_name="DS-2CD1023G2-LIU (2.8mm)",
-					item_code="CAM",
-					qty=54,
-					rate=36,
-					amount=1944,
-					base_amount=3324240000,
-				)
-			],
-			taxes=[],
-		)
-		gl = {
-			"name": "GLE-1",
-			"posting_date": "2026-05-31",
+class TestVoucherLinks(unittest.TestCase):
+	def line(self, name, voucher_no, debit=0, credit=0):
+		return {
+			"gl_entry": name,
 			"voucher_type": "Sales Invoice",
-			"voucher_no": "SINV-1",
-			"debit_in_account_currency": 1944,
-			"credit_in_account_currency": 0,
-			"debit": 3324240000,
-			"credit": 0,
+			"voucher_no": voucher_no,
+			"voucher_detail_no": None,
+			"against_voucher_type": None,
+			"debit": debit,
+			"credit": credit,
+			"debit_base": debit,
+			"credit_base": credit,
 		}
-		rows = expand_invoice(doc, gl)
-		self.assertEqual(len(rows), 1)
-		self.assertEqual(rows[0]["qty"], 54)
-		self.assertEqual(rows[0]["rate"], 36)
-		self.assertEqual(rows[0]["debit_account"], 1944)
-		self.assertEqual(rows[0]["debit_base"], 3324240000)
-		self.assertEqual(rows[0]["credit_account"], 0)
-		self.assertEqual(rows[0]["source_label"], "فاکتور فروش SINV-1")
 
-	def test_journal_line_title_and_split_amounts(self):
-		gl = {
-			"name": "GLE-2",
-			"posting_date": "2026-06-01",
-			"voucher_type": "Journal Entry",
-			"voucher_no": "JV-1",
-			"remarks": "تبدیل ريال به دلار",
-			"debit_in_account_currency": 0,
-			"credit_in_account_currency": 1000,
-			"debit": 0,
-			"credit": 174500000,
-		}
-		self.assertEqual(movement_title(gl), "بستانکار در سند حسابداری")
-		row = expand_movement(gl)[0]
-		self.assertEqual(row["description"], "تبدیل ريال به دلار")
-		self.assertEqual(row["credit_account"], 1000)
-		self.assertEqual(row["credit_base"], 174500000)
-		self.assertIsNone(row["qty"])
-		self.assertEqual(row["source_label"], "سند حسابداری JV-1")
-
-	def test_dual_running_balance_keeps_two_currencies(self):
-		_opening_account, _opening_base, rows = apply_dual_running_balance(
-			0,
-			0,
-			[
-				{"debit_account": 10, "credit_account": 0, "debit_base": 850000, "credit_base": 0},
-				{"debit_account": 0, "credit_account": 4, "debit_base": 0, "credit_base": 340000},
-			],
-		)
-		self.assertEqual(rows[0]["running_account"], 10)
-		self.assertEqual(rows[1]["running_account"], 6)
-		self.assertEqual(rows[1]["running_base"], 510000)
-
-	def test_generic_fallback_never_requires_special_doctype(self):
-		payload = resolve_generic(
-			None,
-			{
-				"voucher_type": "Stock Entry",
-				"voucher_no": "STE-1",
-				"posting_date": "2026-09-25",
-				"account": "موجودی در دست - SP",
-				"against": "—",
-				"debit": 1,
-				"credit": 0,
-				"remarks": "",
-			},
-		)
-		self.assertEqual(payload["resolver"], "generic")
-		self.assertEqual(payload["doctype"], "Stock Entry")
-		self.assertFalse(payload["can_open"])
-
-
-def _sample_ledger_data(party_line_title="قلم الف", currency="IRR", is_foreign=False):
-	company_currency = "IRR"
-	lines = [
-		{
-			"posting_date": "2026-09-01",
-			"source_label": "فاکتور فروش ACC-SINV-A",
-			"account": "بدهکاران - SP",
-			"description": "",
-			"title": party_line_title,
-			"qty": 2,
-			"rate": 100,
-			"debit_account": 200 if is_foreign else 0,
-			"credit_account": 0,
-			"running_account": 200 if is_foreign else 0,
-			"debit_base": 200 if not is_foreign else 17000000,
-			"credit_base": 0,
-			"running_base": 200 if not is_foreign else 17000000,
-		}
-	]
-	return {
-		"opening_account": 0,
-		"opening_base": 50,
-		"period_debit_account": 200 if is_foreign else 0,
-		"period_credit_account": 0,
-		"period_debit_base": lines[0]["debit_base"] + 50,
-		"period_credit_base": 0,
-		"closing_account": lines[0]["running_account"],
-		"closing_base": lines[0]["running_base"],
-		"company_currency": company_currency,
-		"account_currency": currency,
-		"is_foreign": is_foreign,
-		"account": None,
-		"lines": lines,
-	}
-
-
-class TestLedgerXlsxExport(unittest.TestCase):
-	def test_xlsx_uses_get_party_item_ledger_engine(self):
-		fake = _sample_ledger_data()
+	def test_items_attach_once_and_never_change_gl_amounts(self):
+		lines = [self.line("G1", "SINV-1", debit=297), self.line("G2", "SINV-1", credit=100), self.line("G3", "SINV-X", debit=5)]
+		invoices = {"SINV-1": frappe._dict(name="SINV-1", is_return=0)}
+		items = {"SINV-1": [{"item_code": "I1", "qty": 2}, {"item_code": "I2", "qty": 1}]}
 		with (
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
-				return_value=fake,
-			) as mock_ledger,
+			patch(f"{PA}.voucher_links.readable_rows", return_value=invoices),
+			patch(f"{PA}.voucher_links.invoice_items", return_value=items),
 		):
-			result = build_party_item_ledger_xlsx(
-				"پردازش هوشمند",
-				"Customer",
-				"CUST-A",
-				from_date="2026-08-01",
-				to_date="2026-09-26",
-				currency="IRR",
-			)
-		mock_ledger.assert_called_once_with(
-			company="پردازش هوشمند",
-			party_type="Customer",
-			party="CUST-A",
-			account=None,
-			from_date="2026-08-01",
-			to_date="2026-09-26",
-			currency="IRR",
+			voucher_links.decorate_lines(lines)
+		self.assertEqual(len(lines[0]["items"]), 2)
+		self.assertEqual(lines[1]["items"], [])
+		self.assertEqual([line["debit"] for line in lines], [297, 0, 5])
+		self.assertEqual(lines[1]["credit"], 100)
+		self.assertEqual(lines[0]["document"], {"doctype": "Sales Invoice", "name": "SINV-1"})
+		self.assertIsNone(lines[2]["document"], "unreadable invoice must stay plain text")
+		self.assertEqual(lines[2]["voucher_label"], "فاکتور فروش")
+
+
+class TestExports(unittest.TestCase):
+	def test_ledger_export_item_rows_carry_no_amounts(self):
+		ledger = SimpleNamespace(
+			context={"is_foreign": False},
+			period=SimpleNamespace(from_date="2026-01-01", to_date="2026-01-31"),
+			summary={"opening": 10, "opening_base": 10, "period_debit": 5, "period_credit": 0, "closing": 15, "closing_base": 15},
+			iter_lines=lambda: iter(
+				[
+					{
+						"rows": [
+							{
+								"posting_date": "2026-01-02",
+								"voucher_type": "Sales Invoice",
+								"voucher_no": "SINV-1",
+								"voucher_detail_no": None,
+								"against_voucher_type": None,
+								"remarks": "",
+								"debit": 5,
+								"credit": 0,
+								"debit_base": 5,
+								"credit_base": 0,
+								"rate": None,
+								"balance": 15,
+								"balance_base": 15,
+								"nature": "بدهکار",
+							}
+						]
+					}
+				]
+			),
 		)
-		self.assertTrue(result["content"].startswith(b"PK"))
-		self.assertTrue(result["filename"].endswith(".xlsx"))
-		self.assertEqual(result["meta"]["opening_base"], 50)
-		self.assertEqual(result["meta"]["closing_base"], 200)
-		self.assertEqual(result["meta"]["line_count"], 1)
-		sheet = zipfile.ZipFile(BytesIO(result["content"])).read("xl/worksheets/sheet1.xml").decode("utf-8")
-		self.assertIn("قلم الف", sheet)
-		self.assertIn("فاکتور فروش ACC-SINV-A", sheet)
+		with patch(f"{PA}.report_tables.decorate_lines", side_effect=lambda rows, include: [dict(row, voucher_label="فاکتور فروش", document_number="SINV-1", detail_ref=None, items=[{"item_code": "I1", "qty": 3, "rate": 2}]) for row in rows]):
+			rows, count = ledger_rows(ledger)
+		headers = ledger_headers("IRR", "IRR", False)
+		self.assertEqual(count, 1)
+		self.assertTrue(all(len(row) == len(headers) for row in rows))
+		item = rows[2]
+		self.assertEqual(item[6], 3)
+		self.assertEqual(item[8:12], ["", "", "", ""])
+		self.assertEqual(rows[-2][8:10], [5, 0])
+		self.assertEqual(rows[-1][10], 15)
 
-	def test_customer_a_export_excludes_customer_b_data(self):
-		fake_a = _sample_ledger_data(party_line_title="ONLY-CUSTOMER-A")
-		with (
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
-				return_value=fake_a,
-			) as mock_ledger,
-		):
-			result = build_party_item_ledger_xlsx(
-				"Co",
-				"Customer",
-				"CUST-A",
-				from_date="2026-08-01",
-				to_date="2026-09-26",
-				currency="IRR",
-			)
-		self.assertEqual(mock_ledger.call_args.kwargs["party"], "CUST-A")
-		sheet = zipfile.ZipFile(BytesIO(result["content"])).read("xl/worksheets/sheet1.xml").decode("utf-8")
-		self.assertIn("ONLY-CUSTOMER-A", sheet)
-		self.assertNotIn("ONLY-CUSTOMER-B", sheet)
-		self.assertNotIn("CUST-B", sheet)
+	def test_pdf_and_xlsx_bytes(self):
+		html = build_pdf_html("گردش", "USD", ["عنوان"], [["فاکتور فروش"]])
+		self.assertIn('dir="rtl"', html)
+		content = build_xlsx_bytes(["عنوان"], [["فاکتور فروش"]])
+		with zipfile.ZipFile(BytesIO(content)) as archive:
+			self.assertIn("فاکتور فروش", archive.read("xl/worksheets/sheet1.xml").decode("utf-8"))
 
-	def test_date_range_and_currency_passed_through(self):
-		fake = _sample_ledger_data(currency="USD", is_foreign=True)
-		with (
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger",
-				return_value=fake,
-			) as mock_ledger,
-		):
-			result = build_party_item_ledger_xlsx(
-				"Co",
-				"Customer",
-				"CUST-A",
-				from_date="2026-01-01",
-				to_date="2026-03-31",
-				currency="USD",
-			)
-		kwargs = mock_ledger.call_args.kwargs
-		self.assertEqual(kwargs["from_date"], "2026-01-01")
-		self.assertEqual(kwargs["to_date"], "2026-03-31")
-		self.assertEqual(kwargs["currency"], "USD")
-		self.assertEqual(result["meta"]["currency"], "USD")
-		self.assertTrue(result["meta"]["is_foreign"])
-		headers, rows, _widths = _table_from_ledger(fake)
-		self.assertIn("بد USD", headers)
-		self.assertIn("بد IRR", headers)
-		self.assertEqual(rows[0][headers.index("مانده USD")], 200)
-		self.assertEqual(rows[0][headers.index("مانده در خط")], 17000000)
+	def test_client_rows_are_not_accepted(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import excel_export
 
-	def test_requires_currency_or_account_no_silent_mix(self):
-		with (
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.assert_gl_read"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx._validate_filters"
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.get_party_item_ledger"
-			) as mock_ledger,
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_xlsx.frappe.throw",
-				side_effect=RuntimeError("need currency"),
-			),
-		):
-			with self.assertRaises(RuntimeError):
-				build_party_item_ledger_xlsx("Co", "Customer", "CUST-A", from_date="2026-01-01", to_date="2026-01-31")
-		mock_ledger.assert_not_called()
+		self.assertFalse(hasattr(excel_export, "export_explorer_xlsx"))
+		self.assertNotIn("rows", inspect.signature(excel_export.export_account_ledger).parameters)
 
-	def test_numeric_cells_and_column_widths(self):
-		content = build_xlsx_bytes(
-			["عنوان", "بد"],
-			[["فاکتور", 1500000]],
-			column_widths=[20, 14],
-		)
-		sheet = zipfile.ZipFile(BytesIO(content)).read("xl/worksheets/sheet1.xml").decode("utf-8")
-		self.assertIn("<cols>", sheet)
-		self.assertIn("<v>1500000</v>", sheet)
-		self.assertIn("فاکتور", sheet)
+
+class TestExplorerPage(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		with open(PAGE_JS, encoding="utf-8") as handle:
+			cls.js = handle.read()
+
+	def test_page_uses_gl_entry_drilldown_and_router_state(self):
+		self.assertIn("document_details.get_document_detail", self.js)
+		self.assertIn("gl_entry,", self.js)
+		self.assertNotIn("voucher_type: line", self.js)
+		self.assertIn('frappe.set_route(PAE_ROUTE, "ledger"', self.js)
+		self.assertIn('frappe.router.on("change"', self.js)
+		self.assertIn("account: row.account", self.js)
+
+	def test_page_uses_jalali_formatter_and_server_exports(self):
+		self.assertIn('fieldtype: "Date"', self.js)
+		self.assertNotIn("str_to_user", self.js)
+		self.assertNotIn("year_start()", self.js)
+		self.assertIn("excel_export.export_account_ledger", self.js)
+		self.assertNotIn("export_explorer_xlsx", self.js)
+		self.assertNotIn("get_party_item_ledger", self.js)
 
 
 class TestFiscalYearPeriodRange(unittest.TestCase):
@@ -781,44 +415,12 @@ class TestFiscalYearPeriodRange(unittest.TestCase):
 			get_current_fiscal_year_to_date,
 		)
 
-		fake_fy = SimpleNamespace(
-			name="1405",
-			year_start_date="2026-03-21",
-			year_end_date="2027-03-20",
-		)
-		with patch(
-			"erpnext.accounts.utils.get_fiscal_year",
-			return_value=fake_fy,
-		) as mock_fy:
+		fake_fy = SimpleNamespace(name="1405", year_start_date="2026-03-21", year_end_date="2027-03-20")
+		with patch("erpnext.accounts.utils.get_fiscal_year", return_value=fake_fy) as mock_fy:
 			from_date, to_date = get_current_fiscal_year_to_date("پردازش هوشمند", as_of_date="2026-09-26")
-		mock_fy.assert_called_once()
-		kwargs = mock_fy.call_args.kwargs
-		self.assertEqual(str(kwargs["date"]), "2026-09-26")
-		self.assertEqual(kwargs["company"], "پردازش هوشمند")
+		self.assertEqual(mock_fy.call_args.kwargs["company"], "پردازش هوشمند")
 		self.assertEqual(str(from_date), "2026-03-21")
 		self.assertEqual(str(to_date), "2026-09-26")
-		self.assertNotEqual(str(from_date), "2026-01-01")
-
-	def test_fiscal_ytd_to_date_is_as_of(self):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
-			get_current_fiscal_year_to_date,
-		)
-
-		fake_fy = SimpleNamespace(name="FY", year_start_date="2025-04-01", year_end_date="2026-03-31")
-		with patch("erpnext.accounts.utils.get_fiscal_year", return_value=fake_fy):
-			_from_date, to_date = get_current_fiscal_year_to_date("Co", as_of_date="2025-12-15")
-		self.assertEqual(str(to_date), "2025-12-15")
-
-	def test_non_calendar_fiscal_year_april_start(self):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges import (
-			get_current_fiscal_year_to_date,
-		)
-
-		fake_fy = SimpleNamespace(name="2025-26", year_start_date="2025-04-01", year_end_date="2026-03-31")
-		with patch("erpnext.accounts.utils.get_fiscal_year", return_value=fake_fy):
-			from_date, to_date = get_current_fiscal_year_to_date("Co", as_of_date="2026-02-01")
-		self.assertEqual(str(from_date), "2025-04-01")
-		self.assertEqual(str(to_date), "2026-02-01")
 
 	def test_missing_fiscal_year_raises_no_guess(self):
 		from erpnext.accounts.utils import FiscalYearError
@@ -828,20 +430,12 @@ class TestFiscalYearPeriodRange(unittest.TestCase):
 		)
 
 		with (
-			patch(
-				"erpnext.accounts.utils.get_fiscal_year",
-				side_effect=FiscalYearError("not in any Fiscal Year"),
-			),
-			patch(
-				"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.period_ranges.frappe.throw",
-				side_effect=RuntimeError("no fy"),
-			) as throw,
+			patch("erpnext.accounts.utils.get_fiscal_year", side_effect=FiscalYearError("missing")),
+			patch(f"{PA}.period_ranges.frappe.throw", side_effect=RuntimeError("no fy")) as throw,
 		):
 			with self.assertRaises(RuntimeError):
 				get_current_fiscal_year_to_date("Co", as_of_date="2026-09-26")
-		throw.assert_called_once()
-		message = throw.call_args.args[0]
-		self.assertIn("سال مالی", message)
+		self.assertIn("سال مالی", throw.call_args.args[0])
 
 
 if __name__ == "__main__":

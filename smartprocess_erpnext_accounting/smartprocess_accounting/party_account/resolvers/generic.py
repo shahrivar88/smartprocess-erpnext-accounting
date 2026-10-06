@@ -1,45 +1,34 @@
 # Copyright (c) 2026, Smart Process and contributors
+# For license information, please see license.txt
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.labels import (
-	docstatus_label,
-)
+"""Fallback drill-down. Only reached with a GL line already verified for the
+requested account, so the voucher comes from GL — never from the client."""
+
+from frappe import _
+
+from ..labels import docstatus_label, voucher_label
+from .common import document, item, line_side, link, payload, readable_doc
+
+RETURN_TYPES = ("Delivery Note", "Purchase Receipt")
 
 
-def resolve_generic(doc=None, context=None):
-	context = context or {}
-	if doc is not None:
-		return {
-			"resolver": "generic",
-			"title": doc.doctype,
-			"doctype": doc.doctype,
-			"name": doc.name,
-			"can_open": True,
-			"summary": [
-				{"label": "نوع سند", "value": doc.doctype},
-				{"label": "شماره سند", "value": doc.name},
-				{"label": "تاریخ ثبت", "value": str(doc.get("posting_date") or "")},
-				{"label": "وضعیت", "value": docstatus_label(doc.get("docstatus"))},
-				{"label": "حساب", "value": context.get("account") or ""},
-				{"label": "در مقابل", "value": context.get("against") or ""},
-				{"label": "بدهکار", "value": context.get("debit")},
-				{"label": "بستانکار", "value": context.get("credit")},
-				{"label": "شرح", "value": doc.get("remarks") or doc.get("remark") or context.get("remarks") or ""},
-			],
-		}
-	return {
-		"resolver": "generic",
-		"title": context.get("voucher_type") or "سند",
-		"doctype": context.get("voucher_type"),
-		"name": context.get("voucher_no"),
-		"can_open": False,
-		"summary": [
-			{"label": "نوع سند", "value": context.get("voucher_type")},
-			{"label": "شماره سند", "value": context.get("voucher_no")},
-			{"label": "تاریخ ثبت", "value": context.get("posting_date")},
-			{"label": "حساب", "value": context.get("account")},
-			{"label": "در مقابل", "value": context.get("against")},
-			{"label": "بدهکار", "value": context.get("debit")},
-			{"label": "بستانکار", "value": context.get("credit")},
-			{"label": "شرح", "value": context.get("remarks")},
+def resolve_generic(gl, context):
+	doc = readable_doc(gl.voucher_type, gl.voucher_no)
+	label = voucher_label(gl.voucher_type, doc.get("is_return")) or _(gl.voucher_type)
+	side = line_side(gl)
+	return payload(
+		"generic",
+		label,
+		document(gl.voucher_type, doc.name),
+		summary=[
+			item("نوع سند", label),
+			item("شماره سند", doc.name, "link", gl.voucher_type),
+			item("تاریخ ثبت", doc.get("posting_date") or gl.posting_date, "date"),
+			item("وضعیت سند", docstatus_label(doc.get("docstatus"))),
+			item("حساب", gl.account),
+			item("بدهکار" if side == "debit" else "بستانکار", gl[f"{side}_in_account_currency"], "amount", currency=gl.account_currency),
+			item("شرح", gl.remarks),
 		],
-	}
+		related=[link(gl.voucher_type, doc.get("return_against"), "سند اصلی برگشت")] if gl.voucher_type in RETURN_TYPES else [],
+		technical=[item("ردیف دفتر کل", gl.name)],
+	)
