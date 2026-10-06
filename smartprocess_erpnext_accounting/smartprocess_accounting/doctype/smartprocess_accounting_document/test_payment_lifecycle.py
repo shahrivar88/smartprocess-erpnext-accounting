@@ -17,6 +17,7 @@ from frappe.utils import add_days, getdate, nowdate
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.document_details import get_document_detail
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment import PaymentValidationError
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment_api import preview_payment
+from smartprocess_erpnext_accounting.smartprocess_accounting.posting import validate_document
 
 from . import test_receipt_lifecycle
 from .v2_test_support import AccountingFixtureTestCase
@@ -65,19 +66,30 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 			frappe.get_doc(POSTING, postings[0]).cancel()
 		self.cancel_and_assert_reversed(doc, postings)
 
-	def test_foreign_payer_foreign_recipient_with_independent_rates(self):
+	def test_foreign_payer_foreign_recipient_conserves_the_currency_amount(self):
 		currency = self.foreign_currency()
 		payer = self.generic_account(currency)
 		customer, receivable = self.customer_with_account(currency)
-		doc = self.payment(currency, currency, self.account_header(payer, "1000"), [self.customer_row(customer, receivable, "2.5", "1200")])
+		doc = self.payment(currency, currency, self.account_header(payer, "1200"), [self.customer_row(customer, receivable, "2.5", "1200")])
 		doc.insert().submit()
 		self.assertLedger(self.postings(doc), [
 			(receivable, currency, "debit", "2.5", "3000"),
-			(payer, currency, "credit", "3", "3000"),
+			(payer, currency, "credit", "2.5", "3000"),
 		])
+		spread = self.payment(currency, currency, self.account_header(payer, "1000"), [self.customer_row(customer, receivable, "2.5", "1200")])
+		with self.assertRaisesRegex(PaymentValidationError, "تبدیل ارز"):
+			spread.insert()
+
+	def test_posting_engine_rejects_a_same_currency_pair_that_changes_the_amount(self):
+		currency = self.foreign_currency()
+		payer = self.generic_account(currency)
+		customer, receivable = self.customer_with_account(currency)
+		doc = self.payment(currency, currency, self.account_header(payer, "1200"), [self.customer_row(customer, receivable, "2.5", "1200")])
+		doc.insert()
 		row = doc.operational_pairs[0]
-		self.assertEqual(Decimal(str(row.debit_exchange_rate)), Decimal("1200"))
-		self.assertEqual(Decimal(str(doc.receipt_payer_exchange_rate)), Decimal("1000"))
+		row.credit_amount, row.credit_exchange_rate = "3", "1000"
+		with self.assertRaisesRegex(frappe.ValidationError, "same currency"):
+			validate_document(doc)
 
 	def test_base_payer_foreign_recipient(self):
 		currency = self.foreign_currency()
@@ -101,23 +113,37 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 			(payer, currency, "credit", "2", "3200000"),
 		])
 
+	def test_base_payer_foreign_rows_with_different_rates(self):
+		currency = self.foreign_currency()
+		payer = self.generic_account(self.base)
+		customer, receivable = self.customer_with_account(currency)
+		rows = [("1", "1600000"), ("2", "1550000"), ("0.5", "1610000")]
+		doc = self.payment(
+			self.base, currency, self.account_header(payer, None), [self.customer_row(customer, receivable, a, r) for a, r in rows]
+		)
+		doc.insert().submit()
+		self.assertEqual([Decimal(str(row.debit_exchange_rate)) for row in doc.operational_pairs], [Decimal(rate) for _, rate in rows])
+		self.assertLedger(self.postings(doc), [
+			(receivable, currency, "debit", "3.5", "5505000"),
+			(payer, self.base, "credit", "5505000", "5505000"),
+		])
+
 	def test_three_rows_post_three_independent_pairs_without_aggregating_the_payer(self):
 		currency = self.foreign_currency()
 		payer = self.generic_account(currency)
 		customer, receivable = self.customer_with_account(currency)
-		rows = [("1", "1600000"), ("2", "1550000"), ("0.5", "1610000")]
+		rows = [("1", "1600000"), ("2", "1600000"), ("0.5", "1600000")]
 		doc = self.payment(
 			currency,
 			currency,
-			self.account_header(payer, "1500000"),
+			self.account_header(payer, "1600000"),
 			[self.customer_row(customer, receivable, amount, rate) for amount, rate in rows],
 		)
 		doc.insert().submit()
-		self.assertEqual([Decimal(str(row.debit_exchange_rate)) for row in doc.operational_pairs], [Decimal(rate) for _, rate in rows])
 		postings = self.postings(doc)
 		self.assertLedger(postings, [
-			(receivable, currency, "debit", "3.5", "5505000"),
-			(payer, currency, "credit", "3.67", "5505000"),
+			(receivable, currency, "debit", "3.5", "5600000"),
+			(payer, currency, "credit", "3.5", "5600000"),
 		])
 		entries = self.gl(postings)
 		self.assertEqual(len(entries), 6, "one Debit and one Credit per row; no FX, fee or merged line")
@@ -133,7 +159,10 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 			self.assertEqual((len(debit), len(credit)), (1, 1), pair.idx)
 			self.assertEqual((debit[0].account, credit[0].account), (receivable, payer))
 			self.assertEqual(Decimal(str(debit[0].debit)), Decimal(str(credit[0].credit)), pair.idx)
-			self.assertEqual(Decimal(str(credit[0].credit_in_account_currency)), Decimal(str(pair.credit_amount)))
+			self.assertEqual(
+				Decimal(str(debit[0].debit_in_account_currency)), Decimal(str(credit[0].credit_in_account_currency)), pair.idx
+			)
+			self.assertEqual(Decimal(str(credit[0].credit_in_account_currency)), Decimal(str(pair.debit_amount)))
 		self.assert_drill_down(doc, postings, customer, receivable, payer, [rate for _, rate in rows])
 		self.cancel_and_assert_reversed(doc, postings)
 
@@ -252,15 +281,15 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 
 	def test_preview_reports_the_header_share_and_never_writes(self):
 		currency = self.foreign_currency()
-		payer = self.generic_account(currency)
+		payer = self.generic_account(self.base)
 		customer, receivable = self.customer_with_account(currency)
-		doc = self.payment(currency, currency, self.account_header(payer, "1000"), [self.customer_row(customer, receivable, "2.5", "1200")])
+		doc = self.payment(self.base, currency, self.account_header(payer, None), [self.customer_row(customer, receivable, "2.5", "1200")])
 		counts = {doctype: frappe.db.count(doctype) for doctype in (DOCTYPE, POSTING, "GL Entry")}
 		summary = preview_payment(doc.as_dict())
 		self.assertTrue(summary["ready"], summary["issues"])
 		self.assertEqual(
 			(summary["receiver_account"], summary["receiver_amount"], summary["receiver_rate"], summary["total_base_amount"]),
-			(payer, "3", "1000", "3000"),
+			(payer, "3000", "1", "3000"),
 		)
 		self.assertEqual(summary["rows"][0]["rate"], "1200", "the business rate is never replaced")
 		self.assertEqual({doctype: frappe.db.count(doctype) for doctype in counts}, counts)
@@ -322,6 +351,7 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 				"party",
 				"debit",
 				"credit",
+				"debit_in_account_currency",
 				"credit_in_account_currency",
 			],
 		)

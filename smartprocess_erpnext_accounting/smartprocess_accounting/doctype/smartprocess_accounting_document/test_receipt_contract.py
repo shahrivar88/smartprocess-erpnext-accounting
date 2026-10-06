@@ -11,6 +11,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import frappe
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.payment import build_canonical_payment, canonicalize_payment
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import (
 	ReceiptValidationError,
 	build_canonical_receipt,
@@ -184,13 +185,17 @@ class ReceiptContractCase(unittest.TestCase):
 		return receipt
 
 	def assertPostable(self, doc):
-		"""Every Pair balances the way posting.py recomputes it, and so does the document."""
+		"""Every Pair balances the way posting.py recomputes it, and a same-currency
+		Pair carries the same amount at the same rate on both sides."""
 		for row in doc.operational_pairs:
 			debit = posted_company_amount(row.debit_amount, row.debit_exchange_rate)
 			credit = posted_company_amount(row.credit_amount, row.credit_exchange_rate)
 			self.assertEqual(debit, credit, row)
-			self.assertEqual(debit, Decimal(row.credit_company_amount))
+			self.assertEqual(debit, Decimal(row.debit_company_amount))
 			self.assertEqual(row.debit_company_amount, row.credit_company_amount)
+			if row.debit_account_currency == row.credit_account_currency:
+				self.assertEqual(Decimal(row.debit_amount), Decimal(row.credit_amount), row)
+				self.assertEqual(Decimal(row.debit_exchange_rate), Decimal(row.credit_exchange_rate), row)
 
 
 class TestReceiptCurrencyCases(ReceiptContractCase):
@@ -237,29 +242,23 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertPostable(doc)
 
 	def test_foreign_rows_with_different_rates_balance_in_company_currency(self):
-		receivers = {
-			BASE: (receipt_doc, {}, "10050001"),
-			FOREIGN: (foreign_doc, {"rate": "1500000"}, "6.7"),
-		}
-		for receiver_currency, (make_doc, header, receiver_amount) in receivers.items():
-			with self.subTest(receiver=receiver_currency):
-				rows = [
-					foreign_row(1, credit_amount="2", rate="1500000"),
-					foreign_row(2, credit_amount="1.5", rate="1600000"),
-					foreign_row(3, credit_amount="3", rate="1550000.25", receipt_posting_date="2026-10-05"),
-				]
-				doc = make_doc(rows, payer=FOREIGN, **header)
-				receipt = self.canonicalize(doc)
-				self.assertEqual([row.credit_exchange_rate for row in rows], ["1500000", "1600000", "1550000.25"])
-				self.assertEqual([row.credit_company_amount for row in rows], ["3000000", "2400000", "4650001"])
-				self.assertEqual({row.credit_account_currency for row in rows}, {FOREIGN})
-				self.assertEqual({row.debit_account_currency for row in rows}, {receiver_currency})
-				self.assertEqual(receipt.base_total, Decimal("10050001"))
-				self.assertEqual(receipt.receiver_amount, Decimal(receiver_amount))
-				self.assertEqual(sum(Decimal(row.debit_amount) for row in rows), receipt.receiver_amount)
-				self.assertEqual(sum(Decimal(row.debit_company_amount) for row in rows), receipt.base_total)
-				self.assertEqual(str(rows[2].receipt_posting_date), "2026-10-05")
-				self.assertPostable(doc)
+		rows = [
+			foreign_row(1, credit_amount="2", rate="1500000"),
+			foreign_row(2, credit_amount="1.5", rate="1600000"),
+			foreign_row(3, credit_amount="3", rate="1550000.25", receipt_posting_date="2026-10-05"),
+		]
+		doc = receipt_doc(rows, payer=FOREIGN)
+		receipt = self.canonicalize(doc)
+		self.assertEqual([row.credit_exchange_rate for row in rows], ["1500000", "1600000", "1550000.25"])
+		self.assertEqual([row.credit_company_amount for row in rows], ["3000000", "2400000", "4650001"])
+		self.assertEqual({row.credit_account_currency for row in rows}, {FOREIGN})
+		self.assertEqual({row.debit_account_currency for row in rows}, {BASE})
+		self.assertEqual(receipt.base_total, Decimal("10050001"))
+		self.assertEqual(receipt.receiver_amount, Decimal("10050001"))
+		self.assertEqual(sum(Decimal(row.debit_amount) for row in rows), receipt.receiver_amount)
+		self.assertEqual(sum(Decimal(row.debit_company_amount) for row in rows), receipt.base_total)
+		self.assertEqual(str(rows[2].receipt_posting_date), "2026-10-05")
+		self.assertPostable(doc)
 
 	def test_uneven_receiver_split_still_balances_every_pair(self):
 		rows = [receipt_row(1, credit_amount="100"), receipt_row(2, credit_amount="100"), receipt_row(3, credit_amount="100")]
@@ -271,8 +270,8 @@ class TestReceiptCurrencyCases(ReceiptContractCase):
 		self.assertPostable(doc)
 
 	def test_receiver_amount_is_derived_from_row_base_total(self):
-		rows = [foreign_row(1, credit_amount="2", rate="300"), foreign_row(2, credit_amount="1", rate="150")]
-		receipt = self.build(foreign_doc(rows, rate="250"))
+		rows = [receipt_row(1, credit_amount="450"), receipt_row(2, credit_amount="300")]
+		receipt = self.build(foreign_doc(rows, rate="250", payer=BASE))
 		self.assertTrue(receipt.ready, receipt.issues)
 		self.assertEqual((receipt.base_total, receipt.receiver_amount), (Decimal("750"), Decimal("3")))
 
@@ -434,7 +433,7 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 			foreign_row(1, credit_amount="2", rate="1.5"),
 			foreign_row(2, credit_amount="2", rate="2"),
 		]
-		summary = receipt_summary(self.build(foreign_doc(rows, rate="2")))
+		summary = receipt_summary(self.build(receipt_doc(rows, payer=FOREIGN)))
 		self.assertTrue(summary["ready"], summary["issues"])
 		self.assertEqual(summary["payer_totals"], [
 			{"currency": FOREIGN, "amount": "4", "rate": "1.75", "base_amount": "7"},
@@ -445,11 +444,11 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 			{
 				"company_currency": BASE,
 				"payer_currency": FOREIGN,
-				"receiver_currency": FOREIGN,
-				"receiver_rate": "2",
-				"receiver_amount": "3.5",
+				"receiver_currency": BASE,
+				"receiver_rate": "1",
+				"receiver_amount": "7",
 				"receiver_base_amount": "7",
-				"receiver_effective_rate": "2",
+				"receiver_effective_rate": "1",
 				"total_base_amount": "7",
 			},
 		)
@@ -471,3 +470,88 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 
 	def test_non_receipt_documents_are_ignored(self):
 		self.assertIsNone(self.canonicalize(receipt_doc(operation_type="Transfer")))
+
+
+def as_payment(doc):
+	"""The same document as a Payment: rows fill the debit side, the header the credit side."""
+	doc.operation_type = "Payment"
+	for row in doc.operational_pairs:
+		for name in ("account", "amount", "exchange_rate"):
+			if f"credit_{name}" in row:
+				row[f"debit_{name}"] = row.pop(f"credit_{name}")
+	return doc
+
+
+class TestSameCurrencyConservation(ReceiptContractCase):
+	"""Same currency on both sides: identical amount, identical rate, identical base."""
+
+	FLOWS = {
+		"Receipt": (lambda doc: doc, canonicalize_receipt, build_canonical_receipt, "credit"),
+		"Payment": (as_payment, canonicalize_payment, build_canonical_payment, "debit"),
+	}
+
+	def each_flow(self):
+		return [
+			(convert, lambda doc, f=canonicalize: f(doc, FakeLookups()), lambda doc, f=build: f(doc, FakeLookups()), row_side)
+			for convert, canonicalize, build, row_side in self.FLOWS.values()
+		]
+
+	def pair(self, row, row_side):
+		header_side = "debit" if row_side == "credit" else "credit"
+		take = lambda side: (row[f"{side}_account_currency"], row[f"{side}_amount"], row[f"{side}_exchange_rate"], row[f"{side}_company_amount"])
+		return take(header_side), take(row_side)
+
+	def test_base_to_base_keeps_the_same_amount(self):
+		for convert, canonicalize, _, side in self.each_flow():
+			doc = convert(receipt_doc([receipt_row(credit_amount="100")]))
+			canonicalize(doc)
+			self.assertEqual(self.pair(doc.operational_pairs[0], side), ((BASE, "100", "1", "100"), (BASE, "100", "1", "100")))
+			self.assertPostable(doc)
+
+	def test_foreign_to_same_foreign_keeps_the_currency_and_base_amount(self):
+		for convert, canonicalize, _, side in self.each_flow():
+			doc = convert(foreign_doc([foreign_row(credit_amount="2.5", rate="1200")], rate="1200"))
+			receipt = canonicalize(doc)
+			self.assertEqual(receipt.receiver_amount, Decimal("2.5"))
+			self.assertEqual(
+				self.pair(doc.operational_pairs[0], side),
+				((FOREIGN, "2.5", "1200", "3000"), (FOREIGN, "2.5", "1200", "3000")),
+			)
+			self.assertPostable(doc)
+
+	def test_a_different_rate_in_the_same_currency_is_rejected(self):
+		for convert, _, build, side in self.each_flow():
+			receipt = build(convert(foreign_doc([foreign_row(credit_amount="2.5", rate="1200")], rate="1000")))
+			self.assertFalse(receipt.ready)
+			issues = [issue for issue in receipt.issues if issue.field == f"{side}_exchange_rate" and issue.row == 1]
+			self.assertTrue(issues and "تبدیل ارز" in issues[0].message, receipt.issues)
+
+	def test_base_to_foreign_and_foreign_to_base_may_differ_in_amount(self):
+		for convert, canonicalize, _, side in self.each_flow():
+			to_foreign = convert(receipt_doc([foreign_row(credit_amount="2", rate="1600000")], payer=FOREIGN))
+			canonicalize(to_foreign)
+			self.assertEqual(
+				self.pair(to_foreign.operational_pairs[0], side),
+				((BASE, "3200000", "1", "3200000"), (FOREIGN, "2", "1600000", "3200000")),
+			)
+			to_base = convert(foreign_doc([receipt_row(credit_amount="3200000")], rate="1600000", payer=BASE))
+			canonicalize(to_base)
+			self.assertEqual(
+				self.pair(to_base.operational_pairs[0], side),
+				((FOREIGN, "2", "1600000", "3200000"), (BASE, "3200000", "1", "3200000")),
+			)
+			self.assertPostable(to_foreign)
+			self.assertPostable(to_base)
+
+	def test_every_same_currency_row_conserves_its_own_amount(self):
+		for convert, canonicalize, build, side in self.each_flow():
+			rows = [foreign_row(1, credit_amount="1"), foreign_row(2, credit_amount="2.33"), foreign_row(3, credit_amount="0.5")]
+			doc = convert(foreign_doc(rows))
+			receipt = canonicalize(doc)
+			self.assertEqual(receipt.receiver_amount, Decimal("3.83"))
+			for row in doc.operational_pairs:
+				header, own = self.pair(row, side)
+				self.assertEqual(header, own)
+			self.assertPostable(doc)
+			mixed = convert(foreign_doc([foreign_row(1), foreign_row(2, rate="1600")]))
+			self.assertEqual([issue.row for issue in build(mixed).issues], [2])

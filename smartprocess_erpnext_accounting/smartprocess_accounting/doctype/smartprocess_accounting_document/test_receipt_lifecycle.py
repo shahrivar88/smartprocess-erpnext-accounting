@@ -65,21 +65,22 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 			frappe.get_doc(POSTING, postings[0]).cancel()
 		self.cancel_and_assert_reversed(doc, postings)
 
-	def test_foreign_receiver_foreign_payer_with_independent_rates(self):
+	def test_foreign_receiver_foreign_payer_conserves_the_currency_amount(self):
 		currency = self.foreign_currency()
 		receiver = self.generic_account(currency)
 		customer, receivable = self.customer_with_account(currency)
-		doc = self.receipt(
-			currency,
-			currency,
-			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1000"},
-			[self.customer_row(customer, receivable, "2.5", rate="1200")],
-		)
+		header = {"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1200"}
+		doc = self.receipt(currency, currency, header, [self.customer_row(customer, receivable, "2.5", rate="1200")])
 		doc.insert().submit()
 		self.assertLedger(self.postings(doc), [
-			(receiver, currency, "debit", "3", "3000"),
+			(receiver, currency, "debit", "2.5", "3000"),
 			(receivable, currency, "credit", "2.5", "3000"),
 		])
+		spread = self.receipt(
+			currency, currency, {**header, "receipt_payer_exchange_rate": "1000"}, [self.customer_row(customer, receivable, "2.5", rate="1200")]
+		)
+		with self.assertRaisesRegex(ReceiptValidationError, "تبدیل ارز"):
+			spread.insert()
 
 	def test_base_receiver_foreign_payer(self):
 		currency = self.foreign_currency()
@@ -113,14 +114,35 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 			(receivable, self.base, "credit", "3200000", "3200000"),
 		])
 
-	def test_foreign_payer_rows_with_different_rates_balance_and_cancel(self):
+	def test_same_currency_rows_each_conserve_their_amount(self):
 		currency = self.foreign_currency()
 		receiver = self.generic_account(currency)
 		customer, receivable = self.customer_with_account(currency)
 		doc = self.receipt(
 			currency,
 			currency,
-			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1500000"},
+			{"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": receiver, "receipt_payer_exchange_rate": "1600000"},
+			[self.customer_row(customer, receivable, amount, rate="1600000") for amount in ("1", "2", "0.5")],
+		)
+		doc.insert().submit()
+		postings = self.postings(doc)
+		self.assertLedger(postings, [
+			(receiver, currency, "debit", "3.5", "5600000"),
+			(receivable, currency, "credit", "3.5", "5600000"),
+		])
+		for row in doc.operational_pairs:
+			self.assertEqual(Decimal(str(row.debit_amount)), Decimal(str(row.credit_amount)), row.idx)
+			self.assertEqual(Decimal(str(row.debit_company_amount)), Decimal(str(row.credit_company_amount)), row.idx)
+		self.cancel_and_assert_reversed(doc, postings)
+
+	def test_foreign_payer_rows_with_different_rates_balance_and_cancel(self):
+		currency = self.foreign_currency()
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(currency)
+		doc = self.receipt(
+			self.base,
+			currency,
+			{"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name},
 			[
 				self.customer_row(customer, receivable, "1", rate="1600000"),
 				self.customer_row(customer, receivable, "2", rate="1550000"),
@@ -135,7 +157,7 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		)
 		postings = self.postings(doc)
 		self.assertLedger(postings, [
-			(receiver, currency, "debit", "3.67", "5505000"),
+			(bank.account, self.base, "debit", "5505000", "5505000"),
 			(receivable, currency, "credit", "3.5", "5505000"),
 		])
 		self.cancel_and_assert_reversed(doc, postings)

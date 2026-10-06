@@ -51,7 +51,7 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 			"receipt_bank_account": "BANK-FOREIGN",
 			"receipt_payer_exchange_rate": "4",
 			"receipt_credit_currency": FOREIGN,
-			"operational_pairs": [dict(foreign_row(credit_amount="5", rate="2"))],
+			"operational_pairs": [dict(foreign_row(credit_amount="5", rate="4"))],
 		}
 		with patch.object(receipt_module, "ReceiptLookups", FakeLookups):
 			result = preview_receipt(json.dumps(payload))
@@ -59,10 +59,10 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 		self.assertEqual(result["payer_currency"], FOREIGN)
 		self.assertEqual(
 			(result["receiver_amount"], result["receiver_rate"], result["receiver_base_amount"], result["total_base_amount"]),
-			("2.5", "4", "10", "10"),
+			("5", "4", "20", "20"),
 		)
-		self.assertEqual(result["payer_totals"], [{"currency": FOREIGN, "amount": "5", "rate": "2", "base_amount": "10"}])
-		self.assertEqual(result["rows"], [{"row": 1, "currency": FOREIGN, "amount": "5", "rate": "2", "base_amount": "10"}])
+		self.assertEqual(result["payer_totals"], [{"currency": FOREIGN, "amount": "5", "rate": "4", "base_amount": "20"}])
+		self.assertEqual(result["rows"], [{"row": 1, "currency": FOREIGN, "amount": "5", "rate": "4", "base_amount": "20"}])
 		self.assertEqual(frappe.local.message_log, [])
 
 	def test_incomplete_preview_returns_issues_without_leaking(self):

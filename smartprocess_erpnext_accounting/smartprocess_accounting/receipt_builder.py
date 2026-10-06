@@ -278,6 +278,8 @@ class ReceiptBuilder:
 		"""Derive the header amount and give every row its balanced header share."""
 		if self.receiver_rate is None or not rows:
 			return None, rows
+		if self.receiver_currency == self.payer_currency:
+			return self._conserve(rows)
 		allocation = ReceiverAllocation(
 			self.receiver_rate,
 			self.lookups.amount_precision(self.receiver_currency),
@@ -294,6 +296,16 @@ class ReceiptBuilder:
 				self._issue(self.text("share_unbalanced").format(self.receiver_currency), self.row_amount, row.number)
 			allocated.append(replace(row, receiver_amount=share.amount, receiver_rate=share.rate))
 		return receiver_amount, allocated
+
+	def _conserve(self, rows: list[CanonicalRow]):
+		"""Same currency on both sides: each header share is its row amount at the
+		one header rate, so no currency quantity appears or disappears. A different
+		commercial rate belongs to Currency Conversion."""
+		for row in rows:
+			if row.exchange_rate != self.receiver_rate:
+				self._issue(self.text("same_currency_rate").format(self.receiver_rate), self.row_rate, row.number)
+		allocated = [replace(row, receiver_amount=row.amount, receiver_rate=row.exchange_rate) for row in rows]
+		return sum((row.amount for row in rows), Decimal("0")), allocated
 
 	def _bank_ledger(self, bank_account, fieldname: str, row: int | None = None):
 		if not bank_account:

@@ -85,6 +85,13 @@ def validate_document(doc) -> list[PostingLine]:
 				_("Company Currency Amount"),
 				_("Debit and Credit must balance exactly after Company-currency rounding."),
 			)
+		if doc.operation_type in FLOW_OPERATIONS and not _conserves_currency(debit, credit):
+			_pair_error(
+				number,
+				_("Pair"),
+				_("Account Currency"),
+				_("Both sides in the same currency must carry the same amount at the same rate."),
+			)
 		lines.extend((debit, credit))
 		total_debit += debit.company_amount
 		total_credit += credit.company_amount
@@ -93,6 +100,12 @@ def validate_document(doc) -> list[PostingLine]:
 	if total_debit != total_credit:
 		frappe.throw(_("The complete document must balance in Company Currency."))
 	return lines
+
+
+def _conserves_currency(debit: PostingLine, credit: PostingLine) -> bool:
+	if debit.account_currency != credit.account_currency:
+		return True
+	return debit.amount == credit.amount and debit.exchange_rate == credit.exchange_rate
 
 
 def require_posting_enabled() -> None:

@@ -61,15 +61,22 @@ const spReceiptRowEvents = {
 	},
 
 	// A base Payer Currency always uses rate 1. A rate entered for another
-	// currency is dropped; otherwise each row keeps its own manual rate.
+	// currency is dropped; otherwise each row keeps its own manual rate. An
+	// empty row in the header currency starts from the header rate.
 	async normalizeRate(frm, row, reset) {
 		const rate = spReceiptConfig.rowField(frm.doc, "exchange_rate");
 		if (spReceiptConfig.isBasePayer(frm.doc)) {
 			if (Number(row[rate]) !== 1) {
 				await this.setRowValue(row, rate, 1);
 			}
-		} else if (reset && row[rate]) {
+			return;
+		}
+		if (reset && row[rate]) {
 			await this.setRowValue(row, rate, null);
+		}
+		const headerRate = frm.doc.receipt_payer_exchange_rate;
+		if (!row[rate] && headerRate && spReceiptConfig.isSameCurrency(frm.doc)) {
+			await this.setRowValue(row, rate, headerRate);
 		}
 	},
 

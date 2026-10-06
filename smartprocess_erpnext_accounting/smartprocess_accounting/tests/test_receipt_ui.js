@@ -588,6 +588,23 @@ test("22 a Payment submitted before Payment V1 keeps the generic two-sided grid"
 	assert.equal(spReceiptConfig.isFlow({ operation_type: "Receipt", docstatus: 1 }), true);
 });
 
+test("23 a same-currency row starts from the header rate and keeps a typed rate", async () => {
+	reset();
+	const empty = row("same-1", {});
+	const typed = row("same-2", { credit_exchange_rate: 1300 });
+	const values = { receipt_payer_currency: "USD", receipt_credit_currency: "USD", receipt_payer_exchange_rate: 1200 };
+	const frm = form(values, [empty, typed]);
+	await spReceiptRowEvents.normalizeRate(frm, empty, false);
+	await spReceiptRowEvents.normalizeRate(frm, typed, false);
+	assert.deepEqual([empty.credit_exchange_rate, typed.credit_exchange_rate], [1200, 1300]);
+	const cross = row("cross-1", {});
+	await spReceiptRowEvents.normalizeRate(form({ ...values, receipt_payer_currency: "IRR" }, [cross]), cross, false);
+	assert.equal(cross.credit_exchange_rate, undefined);
+	const payment = row("same-p", {});
+	await spReceiptRowEvents.normalizeRate(form({ ...values, operation_type: "Payment" }, [payment]), payment, false);
+	assert.equal(payment.debit_exchange_rate, 1200);
+});
+
 test("modules stay small and are included by the form", () => {
 	for (const file of Object.values(MODULES)) {
 		const lines = read(path.join(RECEIPT_DIR, file)).split("\n").length;

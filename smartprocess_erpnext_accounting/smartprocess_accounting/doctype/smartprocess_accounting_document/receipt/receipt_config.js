@@ -91,6 +91,11 @@ const spReceiptConfig = {
 		return this.isForeign(doc.receipt_credit_currency, doc.company_currency);
 	},
 
+	// Same header and row currency: every Pair uses the one header rate.
+	isSameCurrency(doc) {
+		return Boolean(doc.receipt_payer_currency && doc.receipt_payer_currency === doc.receipt_credit_currency);
+	},
+
 	// Every ledger is in its own side's currency (Receiver or Payer);
 	// an empty currency matches nothing instead of widening the list.
 	accountFilters(company, currency, accountType) {
