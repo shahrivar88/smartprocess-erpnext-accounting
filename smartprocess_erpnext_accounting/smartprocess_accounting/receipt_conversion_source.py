@@ -18,6 +18,8 @@ PAIR_DOCTYPE = "SmartProcess Accounting Pair"
 POSTING_DOCTYPE = "SmartProcess Accounting Posting"
 CONVERSION_DOCTYPE = "SmartProcess Receipt Conversion"
 LEG_DOCTYPE = "SmartProcess Receipt Conversion Leg"
+RECEIPT_MODE = "Receipt"
+BALANCE_MODE = "Balance"
 
 RECEIVER = "Receiver"
 PAYER = "Payer"

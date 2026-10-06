@@ -69,7 +69,7 @@ def get_receipt_conversion_status(source_receipt: str) -> dict:
 	]
 	return {
 		"status": conversion_status(balances),
-		**_linked_conversion_counts(receipt.name),
+		**related_conversions(receipt.name),
 	}
 
 
@@ -160,14 +160,31 @@ def _company_currency_sources(receipt: str, company_currency: str):
 				yield source
 
 
-def _linked_conversion_counts(receipt: str) -> dict:
-	"""Counts only the Conversions the user may read."""
+def related_conversions(receipt: str) -> dict:
+	"""Readable Conversions of any state that name this Receipt or consume one of its rows.
+
+	Receipt mode links through the header; Balance mode only through Legs whose
+	source row belongs to the Receipt. ``names`` lets the form open one list of both.
+	"""
 	if not frappe.has_permission(CONVERSION_DOCTYPE, "read"):
-		return {"linked_count": 0, "active_count": 0}
-	docstatuses = frappe.get_list(
-		CONVERSION_DOCTYPE, filters={"source_receipt": receipt}, pluck="docstatus", limit_page_length=0
-	)
-	return {"linked_count": len(docstatuses), "active_count": docstatuses.count(1)}
+		return {"linked_count": 0, "active_count": 0, "names": []}
+	fields = ["name", "docstatus"]
+	rows = frappe.get_list(CONVERSION_DOCTYPE, filters={"source_receipt": receipt}, fields=fields, limit_page_length=0)
+	pairs = receipt_pair_names(receipt)
+	if pairs:
+		rows += frappe.get_list(
+			CONVERSION_DOCTYPE,
+			filters=[[LEG_DOCTYPE, "source_pair", "in", pairs]],
+			fields=fields,
+			distinct=True,
+			limit_page_length=0,
+		)
+	docstatus = {row.name: row.docstatus for row in rows}
+	return {
+		"linked_count": len(docstatus),
+		"active_count": sum(1 for state in docstatus.values() if state == 1),
+		"names": sorted(docstatus),
+	}
 
 
 def _draft_leg(source, company_currency: str, target_currency: str | None) -> dict:

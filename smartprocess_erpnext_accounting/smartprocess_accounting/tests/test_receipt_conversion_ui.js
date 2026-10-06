@@ -40,6 +40,7 @@ globalThis.frappe = {
 		},
 	},
 	meta: { docfield_map: {}, get_docfield: () => null },
+	listview_settings: {},
 	utils: {
 		escape_html: (value) => String(value).replace(/</g, "&lt;"),
 		add_link_title: (doctype, name, title) => (linkTitles[`${doctype}::${name}`] = title),
@@ -396,15 +397,16 @@ test("Receipt status indicator uses the server status and Persian labels", async
 	assert.deepEqual(calls.xcall.at(-1).args, { source_receipt: "SP-REC-1" });
 });
 
-test("linked Conversions button shows the active count and opens a list of this Receipt only", async () => {
+test("related Conversions button shows the active count and lists Receipt- and Balance-mode history", async () => {
 	const { frm, shown } = receiptForm();
 	const routes = [];
 	frappe.set_route = (...args) => routes.push(args);
-	responses.get_receipt_conversion_status = { status: "Partially Converted", linked_count: 3, active_count: 2 };
+	const names = ["SP-RCONV-1", "SP-RCONV-2", "SP-RCONV-3"];
+	responses.get_receipt_conversion_status = { status: "Partially Converted", linked_count: 3, active_count: 2, names };
 	await spReceiptConversionStatus.refresh(frm);
 	assert.equal(shown.buttons[0][0], "تبدیل‌های مرتبط (2)");
 	shown.buttons[0][1]();
-	assert.deepEqual(routes, [["List", "SmartProcess Receipt Conversion", { source_receipt: "SP-REC-1" }]]);
+	assert.deepEqual(routes, [["List", "SmartProcess Receipt Conversion", { name: ["in", names] }]]);
 	assert.equal(spReceiptConversionStatus.listLabel(0), "تبدیل‌های مرتبط", "only drafts/cancelled: no count");
 	delete frappe.set_route;
 });
@@ -465,6 +467,23 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 		assert.equal(field(conversionMeta, name).read_only, 1, name);
 	}
 	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
+});
+
+test("the list shows mode, date, currency, source Party and amount with contextual mode labels", () => {
+	const columns = conversionMeta.field_order.filter((name) => field(conversionMeta, name)?.in_list_view);
+	assert.deepEqual(columns, ["conversion_mode", "posting_date", "target_currency", "source_party", "conversion_amount"]);
+	const csv = read(path.join(__dirname, "..", "..", "translations", "fa.csv"));
+	assert.match(csv, /^SmartProcess Receipt Conversion,تبدیل ارز,$/m);
+	assert.match(csv, /^Receipt,از رسید,SmartProcess Receipt Conversion$/m);
+	assert.match(csv, /^Balance,از مانده حساب,SmartProcess Receipt Conversion$/m);
+	assert.doesNotMatch(csv, /^Receipt,از رسید,$/m);
+
+	const contexts = [];
+	globalThis.__ = (text, args, context) => (contexts.push(context), { Balance: "از مانده حساب" }[text] || text);
+	require(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion_list.js"));
+	assert.equal(frappe.listview_settings["SmartProcess Receipt Conversion"].formatters.conversion_mode("Balance"), "از مانده حساب");
+	assert.deepEqual(contexts, ["SmartProcess Receipt Conversion"]);
+	delete globalThis.__;
 });
 
 test("Balance summary comes from the server, keeps balance and maximum apart and prefills only an empty target", async () => {

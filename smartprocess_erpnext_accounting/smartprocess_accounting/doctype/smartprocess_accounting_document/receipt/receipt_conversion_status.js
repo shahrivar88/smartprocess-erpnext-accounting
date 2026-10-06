@@ -29,7 +29,7 @@ const spReceiptConversionStatus = {
 			frm.dashboard.add_indicator(indicator[0], indicator[1]);
 		}
 		if (status?.linked_count) {
-			frm.add_custom_button(this.listLabel(status.active_count), () => this.openList(frm.doc.name));
+			frm.add_custom_button(this.listLabel(status.active_count), () => this.openList(status.names));
 		}
 	},
 
@@ -37,8 +37,9 @@ const spReceiptConversionStatus = {
 		return activeCount ? `${this.LIST_LABEL} (${activeCount})` : this.LIST_LABEL;
 	},
 
-	openList(receipt) {
-		return frappe.set_route("List", this.CONVERSION, { source_receipt: receipt });
+	// Receipt-mode and Balance-mode Conversions, submitted and cancelled, in one standard list.
+	openList(names) {
+		return frappe.set_route("List", this.CONVERSION, { name: ["in", names || []] });
 	},
 };
 

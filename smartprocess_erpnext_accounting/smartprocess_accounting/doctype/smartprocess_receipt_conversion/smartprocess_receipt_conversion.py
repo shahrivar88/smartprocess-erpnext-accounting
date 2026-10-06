@@ -5,10 +5,7 @@ from frappe import _
 from frappe.utils import cint
 from erpnext.controllers.accounts_controller import AccountsController
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion import (
-	BALANCE_MODE,
-	BalanceConversionService,
-)
+from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion import BalanceConversionService
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	assert_native_posting_contract,
 	cancel_voucher,
@@ -16,6 +13,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	require_posting_enabled,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion import ReceiptConversionService
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import BALANCE_MODE
 
 
 class SmartProcessReceiptConversion(AccountsController):

@@ -69,6 +69,7 @@ class TestReceiptConversion(ConversionFixtures):
 		rows = self.gl(conversion)
 		self.assertEqual({row.voucher_detail_no for row in rows}, {receiver.name})
 		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertEqual({receipt.name in row.remarks for row in rows}, {True}, "narration names the source Receipt")
 
 	def test_receiver_full_payer_half_posts_two_independent_pairs(self):
 		receipt = self.submitted_receipt()
@@ -318,12 +319,12 @@ class TestReceiptConversion(ConversionFixtures):
 		receipt = self.submitted_receipt()
 		balance = self.simulate_balance_consumption(receipt, payer="30000000")
 		self.assertConsumption(receipt, "Payer", converted="30000000")
-		self.assertStatus(receipt, "Partially Converted", linked=0, active=0)
+		self.assertStatus(receipt, "Partially Converted", linked=1, active=1)
 		with self.assertRaisesRegex(frappe.ValidationError, "locked|Cancel every linked Conversion"):
 			frappe.get_doc(RECEIPT, receipt.name).cancel()
 		frappe.get_doc(CONVERSION, balance.name).cancel()
 		self.assertConsumption(receipt, "Payer", converted=0)
-		self.assertStatus(receipt, "Not Converted", linked=0, active=0)
+		self.assertStatus(receipt, "Not Converted", linked=1, active=0)
 
 	def test_balance_sources_take_only_one_exact_source_row(self):
 		customer = self.clean_customer()
@@ -380,10 +381,10 @@ class TestReceiptConversion(ConversionFixtures):
 		return next(source for source in picture.sources if source.item.voucher_no == name)
 
 	def assertStatus(self, receipt, status, *, linked, active):
-		self.assertEqual(
-			get_receipt_conversion_status(receipt.name),
-			{"status": status, "linked_count": linked, "active_count": active},
-		)
+		result = get_receipt_conversion_status(receipt.name)
+		names = result.pop("names")
+		self.assertEqual(result, {"status": status, "linked_count": linked, "active_count": active})
+		self.assertEqual(len(names), linked)
 
 	def assertPair(self, conversion, leg, reversal, target):
 		"""One source reversal + one target line per positive leg, balanced in base."""

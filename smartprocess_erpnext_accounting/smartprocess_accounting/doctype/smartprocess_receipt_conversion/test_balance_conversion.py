@@ -12,7 +12,11 @@ from smartprocess_erpnext_accounting.smartprocess_accounting import balance_conv
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_api import get_balance_summary
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import balance_conversion_sources
 from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import make_receipt_conversion
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
+	get_receipt_conversion_status,
+	make_receipt_conversion,
+	related_conversions,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	load_source_leg,
 	lock_source_receipt,
@@ -73,6 +77,29 @@ class TestBalanceConversion(ConversionFixtures):
 		self.assertEqual(D(str(conversion.target_amount)), D("1333.33"))
 		self.assertEqual((self.converted(first), self.converted(second)), (HUNDRED_M, D("20000000")))
 		self.assertPicture(balance="30000000", maximum="30000000")
+
+	def test_narration_names_the_balance_source_and_never_one_receipt(self):
+		first, second = self.credit_receipt(HUNDRED_M), self.credit_receipt("50000000")
+		conversion = self.balance("120000000")
+		for leg in conversion.legs:
+			(text,) = {row.remarks for row in self.gl(conversion) if row.voucher_detail_no == leg.name}
+			for part in (self.party, self.receivable, leg.source_posting):
+				self.assertIn(part, text)
+			self.assertNotIn(first.name, text)
+			self.assertNotIn(second.name, text)
+
+	def test_receipt_status_and_related_history_include_balance_conversions(self):
+		receipt = self.credit_receipt(HUNDRED_M)
+		by_receipt = self.receipt_mode(receipt, "20000000")
+		by_balance = self.balance("30000000")
+		expected = sorted([by_receipt.name, by_balance.name])
+		self.assertRelated(receipt, "Partially Converted", linked=2, active=2, names=expected)
+		self.assertEqual(sorted(frappe.get_list(CONVERSION, filters={"name": ["in", expected]}, pluck="name")), expected)
+		frappe.get_doc(CONVERSION, by_balance.name).cancel()
+		frappe.get_doc(CONVERSION, by_receipt.name).cancel()
+		self.assertRelated(receipt, "Not Converted", linked=2, active=0, names=expected)
+		frappe.set_user("Guest")
+		self.assertEqual(related_conversions(receipt.name), {"linked_count": 0, "active_count": 0, "names": []})
 
 	def test_fifo_follows_posting_date_before_creation(self):
 		newer = self.credit_receipt("50000000")
@@ -228,7 +255,8 @@ class TestBalanceConversion(ConversionFixtures):
 				"target_account": self.target_receivable,
 			}
 		)
-		return doc.insert().submit()
+		doc.insert().submit()
+		return doc
 
 	def credit_receipt(self, amount, posting_date=None):
 		return self.submitted_receipt(payer=(self.party, self.receivable, str(amount), None), posting_date=posting_date)
@@ -267,6 +295,12 @@ class TestBalanceConversion(ConversionFixtures):
 
 	def summary(self):
 		return get_balance_summary(self.company, "Customer", self.party, self.receivable, None, self.target)
+
+	def assertRelated(self, receipt, status, *, linked, active, names):
+		result = get_receipt_conversion_status(receipt.name)
+		self.assertEqual(
+			(result["status"], result["linked_count"], result["active_count"], result["names"]), (status, linked, active, names)
+		)
 
 	def assertPicture(self, *, balance, maximum):
 		picture = self.picture()

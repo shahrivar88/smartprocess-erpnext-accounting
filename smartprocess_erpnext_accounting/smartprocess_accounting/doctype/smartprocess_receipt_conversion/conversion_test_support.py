@@ -97,6 +97,7 @@ class ConversionFixtures(AccountingFixtureTestCase):
 				"credit_in_account_currency",
 				"against_voucher_type",
 				"against_voucher",
+				"remarks",
 			],
 			order_by="creation, name",
 		)

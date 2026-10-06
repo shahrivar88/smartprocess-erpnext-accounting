@@ -27,14 +27,16 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion 
 	has_company_places,
 	validate_target,
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import lock_source_receipt
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
+	BALANCE_MODE,
+	lock_source_receipt,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	assert_one_currency_per_party,
 	get_company_currency,
 )
 
-BALANCE_MODE = "Balance"
 BALANCE_SIDE = {"debit": "Debit", "credit": "Credit"}
 
 

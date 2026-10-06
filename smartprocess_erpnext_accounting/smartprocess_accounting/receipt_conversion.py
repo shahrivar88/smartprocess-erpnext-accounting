@@ -24,6 +24,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils impor
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import PostingLine
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_allocation import ReceiverAllocation
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
+	BALANCE_MODE,
 	POSTING_DOCTYPE,
 	SourceLeg,
 	load_source_leg,
@@ -64,8 +65,7 @@ class LegPosting:
 			"voucher_detail_no": leg.name,
 			"posting_date": getdate(doc.posting_date),
 			"company_amount": self.base_amount,
-			"remarks": doc.remarks
-			or _("Receipt Conversion of {0} · Row {1} · {2}").format(source.receipt, source.pair_index, _(source.side)),
+			"remarks": doc.remarks or self.narration(doc),
 		}
 		reversal = PostingLine(
 			**common,
@@ -92,6 +92,15 @@ class LegPosting:
 			against=source.account,
 		)
 		return [reversal, target]
+
+	def narration(self, doc) -> str:
+		"""Default GL remarks naming the real source: one Receipt row, or one allocation of a Party balance."""
+		source = self.source
+		if doc.conversion_mode == BALANCE_MODE:
+			return _("Balance Conversion of {0} {1} · {2} · Source {3} Row {4} · {5}").format(
+				_(source.party_type), source.party, source.account, source.posting, source.pair_index, _(source.side)
+			)
+		return _("Receipt Conversion of {0} · Row {1} · {2}").format(source.receipt, source.pair_index, _(source.side))
 
 
 class ReceiptConversionService:
