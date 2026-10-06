@@ -106,6 +106,7 @@ def _ensure_workspace_sidebar():
 	# Frappe's get_can_read_items() permission-filters each item by the linked
 	# doctype, so the Settings item follows the Settings doctype's own permission.
 	for label, link_type, link_to, icon in (
+		("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None),
 		("گردش و مانده طرف حساب", "Page", "party-account-explorer", "list"),
 		("تنظیمات حسابداری هوشمند", "DocType", "SmartProcess Accounting Settings", None),
 	):

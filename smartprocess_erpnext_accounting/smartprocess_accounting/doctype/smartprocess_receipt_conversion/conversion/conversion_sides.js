@@ -46,13 +46,13 @@ const spConversionSides = {
 		const heads = ["#", this.SIDES[side].party, this.TEXT.account, ...this.SOURCE_AMOUNTS.map(([, label]) => label)];
 		const head = heads.map((label) => `<th>${escape(label)}</th>`).join("") + (editable ? "<th></th>" : "");
 		const body = rows
-			.map((row) => {
+			.map((row, index) => {
 				const party = row.source_party ? titleOf(row.source_party_type, row.source_party) || row.source_party : "—";
 				const amounts = this.SOURCE_AMOUNTS.map(([fieldname]) => `<td class="text-right">${format(fieldname, row)}</td>`);
 				const fill = editable
 					? `<td><button type="button" class="btn btn-xs btn-default" data-sp-fill="${escape(row.name)}">${escape(this.TEXT.fill)}</button></td>`
 					: "";
-				return `<tr><td>${escape(row.idx)}</td><td>${escape(party)}</td><td>${escape(row.source_account)}</td>${amounts.join("")}${fill}</tr>`;
+				return `<tr><td>${index + 1}</td><td>${escape(party)}</td><td>${escape(row.source_account)}</td>${amounts.join("")}${fill}</tr>`;
 			})
 			.join("");
 		return `<table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -143,6 +143,12 @@ const spConversionSides = {
 			setupFields();
 			grid.df = df;
 		};
+		const refresh = grid.refresh.bind(grid);
+		grid.refresh = (...args) => {
+			const result = refresh(...args);
+			this.numberRows(grid);
+			return result;
+		};
 		grid.editable_fields = this.editableFields();
 		grid.fieldinfo = legs.grid.fieldinfo;
 		grid.get_data = () => this.rows(frm, side);
@@ -154,6 +160,29 @@ const spConversionSides = {
 		spConversionForm.installNumbers(frm, control.$wrapper.get(0));
 		frm.__sp_sides[side] = { control, source };
 		return frm.__sp_sides[side];
+	},
+
+	// Display only: each side counts its own rows from 1. `idx` and `data-idx` keep
+	// the stored position, which Frappe and the ledger links rely on.
+	numberRows(grid) {
+		for (const row of grid.grid_rows || []) {
+			if (!row.__sp_local_number) {
+				const setRowIndex = row.set_row_index.bind(row);
+				row.set_row_index = () => {
+					setRowIndex();
+					this.numberRow(grid, row);
+				};
+				row.__sp_local_number = true;
+			}
+			this.numberRow(grid, row);
+		}
+	},
+
+	numberRow(grid, row) {
+		const number = grid.grid_rows.indexOf(row) + 1;
+		if (number > 0) {
+			row.wrapper?.find(".row-index span, .grid-form-row-index, .template-row-index span").text(number);
+		}
 	},
 };
 

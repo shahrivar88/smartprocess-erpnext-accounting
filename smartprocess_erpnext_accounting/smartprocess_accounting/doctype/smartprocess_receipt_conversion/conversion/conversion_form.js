@@ -16,6 +16,8 @@ const spConversionForm = {
 		currencyChange:
 			"با تغییر ارز مقصد، حساب و طرف مقصد، نرخ و مبلغ ارز مقصد همه ردیف‌ها پاک می‌شود و پیشنهادهای ارز جدید بارگذاری می‌شود. «مبلغ این تبدیل» حفظ می‌شود. ادامه می‌دهید؟",
 		noLegs: "این رسید سمتی به ارز پایه شرکت برای تبدیل ندارد.",
+		foreignSides:
+			"این رسید سمت ارزی هم دارد. فقط ردیف‌های با ارز پایه شرکت برای تبدیل در این مرحله نمایش داده می‌شوند.",
 		allZero: "حداقل یک ردیف باید «مبلغ این تبدیل» بزرگ‌تر از صفر داشته باشد.",
 	},
 
@@ -87,7 +89,7 @@ const spConversionForm = {
 		const state = this.state(frm);
 		state.touched.clear();
 		state.loadRequest++;
-		this.showReceiptError(frm, "");
+		this.showReceiptNote(frm, "");
 		frm.clear_table(spConversionLegs.TABLE);
 		this.refreshLegs(frm);
 		if (this.canLoad(frm)) {
@@ -95,7 +97,8 @@ const spConversionForm = {
 		}
 	},
 
-	showReceiptError(frm, message) {
+	// One passive line under Source Receipt: the server error, or why sides are missing.
+	showReceiptNote(frm, message) {
 		frm.set_df_property("source_receipt", "description", message ? frappe.utils.escape_html(message) : "");
 	},
 
@@ -166,7 +169,7 @@ const spConversionForm = {
 		if (request !== state.loadRequest || state.doc !== frm.doc) {
 			return;
 		}
-		this.showReceiptError(frm, response?.error || "");
+		this.showReceiptNote(frm, response?.error || (response?.foreign_sides > 0 ? this.MESSAGES.foreignSides : ""));
 		await this.adoptCompany(frm, state, response?.company);
 		this.rememberTitles(response?.titles);
 		const rows = spConversionLegs.mergeLegs(this.rows(frm), response?.legs, frm.doc.target_currency);

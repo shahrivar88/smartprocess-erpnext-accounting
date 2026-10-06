@@ -612,15 +612,71 @@ test("source info is a read-only block with party, account and amounts; fill onl
 	assert.ok(!spConversionSides.sourceHtml(unsafe, "Payer", options).includes("<b>x</b>"));
 });
 
-test("Source Receipt is a normal Link limited to submitted Receipts", () => {
+test("standard Link queries: submitted Receipts, target-currency Accounts, Party independent of the source", () => {
 	const queries = {};
-	const frm = form();
+	const frm = form({ target_currency: "USD" });
 	frm.set_query = (fieldname, table, fn) => (queries[fieldname] = typeof table === "function" ? table : fn);
 	spConversionForm.setup(frm);
 	assert.equal(field(conversionMeta, "source_receipt").fieldtype, "Link");
 	assert.equal(field(conversionMeta, "source_receipt").options, "SmartProcess Accounting Document");
 	assert.deepEqual(queries.source_receipt().filters, { operation_type: "Receipt", docstatus: 1 });
 	assert.match(read(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion.js")), /source_receipt\(frm\)\s*\{\s*return spConversionForm\.receiptChanged\(frm\);/);
+	const row = { doctype: LEG, name: "leg-q", ...serverLeg("Payer"), target_party_type: "Supplier", target_party: "SUP-7" };
+	docs.set(row.name, row);
+	const account = queries.target_account(frm.doc, LEG, row.name).filters;
+	assert.deepEqual(account, { company: "SP", disabled: 0, is_group: 0, account_currency: "USD", account_type: "Payable" });
+	const party = queries.target_party(frm.doc, LEG, row.name);
+	assert.deepEqual(party.filters, { party_type: "Supplier", company: "SP", currency: "USD" });
+	assert.ok(!JSON.stringify([account, party]).includes(row.source_party));
+});
+
+test("a mixed Receipt shows one passive note that foreign-currency sides are left out", async () => {
+	const frm = form({ target_currency: "USD" });
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver")], titles: {}, foreign_sides: 1 };
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.equal(frm.tableProperties["source_receipt:description"], spConversionForm.MESSAGES.foreignSides);
+	assert.match(spConversionForm.MESSAGES.foreignSides, /فقط ردیف‌های با ارز پایه شرکت/);
+	assert.deepEqual([calls.confirm.length, calls.alerts.length], [0, 0]);
+	responses.get_conversion_legs = () => ({ legs: [serverLeg("Receiver"), serverLeg("Payer")], titles: {}, foreign_sides: 0 });
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.equal(frm.tableProperties["source_receipt:description"], "");
+});
+
+test("each side numbers its rows from 1 without touching the stored idx", () => {
+	const rows = [{ name: "leg-2", idx: 2, ...serverLeg("Payer") }];
+	const html = spConversionSides.sourceHtml(rows, "Payer", { editable: false, format: () => "", titleOf: () => "" });
+	assert.match(html, /<tbody><tr><td>1<\/td>/);
+	const shown = {};
+	const gridRow = (doc) => {
+		const row = {
+			doc,
+			wrapper: { find: () => ({ text: (value) => (shown[doc.name] = value) }) },
+			set_row_index() {
+				shown[doc.name] = doc.idx;
+			},
+		};
+		return row;
+	};
+	const grid = { grid_rows: [gridRow({ name: "leg-2", idx: 2 }), gridRow({ name: "leg-4", idx: 4 })] };
+	spConversionSides.numberRows(grid);
+	assert.deepEqual(shown, { "leg-2": 1, "leg-4": 2 });
+	grid.grid_rows[1].set_row_index();
+	assert.equal(shown["leg-4"], 2);
+	assert.deepEqual(grid.grid_rows.map((row) => row.doc.idx), [2, 4]);
+});
+
+test("the Workspace and sidebar open the Receipt Conversion as «تبدیل ارز»", () => {
+	const workspace = JSON.parse(read(path.join(__dirname, "..", "workspace", "smartprocess_accounting", "smartprocess_accounting.json")));
+	const links = workspace.links.filter((link) => link.type === "Link");
+	assert.deepEqual(
+		links.filter((link) => link.label === "تبدیل ارز").map((link) => [link.link_type, link.link_to]),
+		[["DocType", "SmartProcess Receipt Conversion"]],
+	);
+	assert.ok(!links.some((link) => link.link_to === "SmartProcess Currency Conversion"));
+	const install = read(path.join(__dirname, "..", "..", "install.py"));
+	assert.match(install, /\("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None\)/);
 });
 
 test("choosing a Receipt directly loads its rows once the target currency is known", async () => {

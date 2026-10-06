@@ -12,10 +12,10 @@
   {"hidden":0,"is_query_report":0,"label":"حساب‌های ارزی طرف حساب","link_count":0,"link_to":"SmartProcess Party Currency Account","link_type":"DocType","onboard":1,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"تنظیمات حسابداری هوشمند","link_count":0,"link_to":"SmartProcess Accounting Settings","link_type":"DocType","onboard":1,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"ابزارهای فعلی","link_count":2,"link_type":"DocType","onboard":0,"type":"Card Break"},
-  {"hidden":0,"is_query_report":0,"label":"تبدیل","link_count":0,"link_to":"SmartProcess Currency Conversion","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"تبدیل ارز","link_count":0,"link_to":"SmartProcess Receipt Conversion","link_type":"DocType","onboard":1,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"گردش و مانده طرف حساب","link_count":0,"link_to":"party-account-explorer","link_type":"Page","onboard":1,"type":"Link"}
  ],
- "modified": "2026-09-30 00:00:00.000000", "modified_by": "Administrator", "module": "SmartProcess Accounting",
+ "modified": "2026-10-07 15:00:00.000000", "modified_by": "Administrator", "module": "SmartProcess Accounting",
  "name": "SmartProcess Accounting", "number_cards": [], "owner": "Administrator", "parent_page": "", "public": 1,
  "quick_lists": [], "restrict_to_domain": "",
  "roles": [{"role":"Accounts User"},{"role":"Accounts Manager"},{"role":"Auditor"},{"role":"System Manager"}],

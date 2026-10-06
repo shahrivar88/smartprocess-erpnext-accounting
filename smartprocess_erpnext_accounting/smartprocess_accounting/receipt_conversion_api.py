@@ -95,7 +95,8 @@ def get_conversion_legs(source_receipt: str, target_currency: str | None = None)
 	"""Draft legs for the form, with Party display titles for the source summaries.
 
 	An ineligible Receipt returns ``error`` instead of raising, so choosing it in
-	the form shows one inline message and loads no rows.
+	the form shows one inline message and loads no rows. ``foreign_sides`` counts
+	the Receipt sides left out because they are not in the Company currency.
 	"""
 	try:
 		doc = make_receipt_conversion(source_receipt, target_currency)
@@ -103,7 +104,13 @@ def get_conversion_legs(source_receipt: str, target_currency: str | None = None)
 		frappe.clear_messages()
 		return {"error": str(error), "legs": [], "titles": {}}
 	legs = [leg.as_dict(no_default_fields=True) for leg in doc.legs]
-	return {"company": doc.company, "legs": legs, "titles": _party_titles(legs)}
+	every_side = 2 * len(receipt_pair_names(doc.source_receipt))
+	return {
+		"company": doc.company,
+		"legs": legs,
+		"titles": _party_titles(legs),
+		"foreign_sides": every_side - len(legs),
+	}
 
 
 @frappe.whitelist()

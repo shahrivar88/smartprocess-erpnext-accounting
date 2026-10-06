@@ -215,6 +215,7 @@ class TestReceiptConversion(ConversionFixtures):
 		receipt = self.submitted_receipt(payer=(self.target_customer, self.target_receivable, "2", "1600000"))
 		doc = make_receipt_conversion(receipt.name, self.target)
 		self.assertEqual([leg.source_side for leg in doc.legs], ["Receiver"])
+		self.assertEqual(get_conversion_legs(receipt.name, self.target)["foreign_sides"], 1)
 		doc.append("legs", {"source_pair": doc.legs[0].source_pair, "source_side": "Payer"})
 		with self.assertRaisesRegex(frappe.ValidationError, "Only Company-currency"):
 			doc.insert()
@@ -257,7 +258,7 @@ class TestReceiptConversion(ConversionFixtures):
 		receipt = self.submitted_receipt()
 		with patch.object(receipt_conversion_api, "get_target_suggestion", return_value=None):
 			response = get_conversion_legs(receipt.name, self.target)
-		self.assertEqual(response["company"], self.company)
+		self.assertEqual((response["company"], response["foreign_sides"]), (self.company, 0))
 		receiver, payer = sorted(response["legs"], key=lambda leg: leg["source_side"] != "Receiver")
 		self.assertEqual((receiver["source_side"], payer["source_side"]), ("Receiver", "Payer"))
 		self.assertEqual((payer["source_party_type"], payer["source_party"]), ("Customer", self.customer))
