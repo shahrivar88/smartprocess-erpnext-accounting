@@ -30,6 +30,7 @@ def get_balance_summary(
 	except frappe.ValidationError as error:
 		frappe.clear_messages()
 		return {"error": str(error)}
+	_require_source_read(source_party_type, source_party, source_account)
 	company_currency = get_company_currency(company)
 	summary = {
 		"company_currency": company_currency,
@@ -43,3 +44,9 @@ def get_balance_summary(
 			company, source_account, picture.source_side, target_currency, source_party_type, source_party
 		)
 	return summary
+
+
+def _require_source_read(party_type: str, party: str, account: str) -> None:
+	"""A Party balance is visible only to a user who may read that Party and its Account."""
+	frappe.has_permission(party_type, "read", doc=party, throw=True)
+	frappe.has_permission("Account", "read", doc=account, throw=True)

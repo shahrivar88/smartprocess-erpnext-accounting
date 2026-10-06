@@ -71,9 +71,20 @@ const spReceiptHeader = {
 			frm.set_df_property(fieldname, "label", label);
 		}
 		frm.set_df_property("receipt_payer_exchange_rate", "formatter", isFlow ? spReceiptNumbers.formatter : null);
+		this.refreshTitles(frm, labels);
 		if (isFlow) {
 			this.applyReceiverKindLabels(frm);
 		}
+	},
+
+	// Frappe renders section and grid titles once, so a relabelled df keeps the
+	// old text on screen. Only the visible text node changes, never the layout.
+	refreshTitles(frm, labels) {
+		const head = frm.fields_dict.pairs_section?.head?.get?.(0);
+		const text = head && [...head.childNodes].find((node) => node.nodeType === 3 && node.textContent.trim());
+		if (text) text.textContent = ` ${__(labels.pairs_section)} `;
+		const title = frm.fields_dict.operational_pairs?.$wrapper?.find?.(".grid-field > .control-label").first();
+		if (title?.length) title.text(__(labels.operational_pairs));
 	},
 
 	applyReceiverKindLabels(frm) {

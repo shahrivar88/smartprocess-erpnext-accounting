@@ -232,6 +232,19 @@ class TestBalanceConversion(ConversionFixtures):
 		with self.assertRaises(frappe.PermissionError):
 			self.balance("10000000", submit=False)
 
+	def test_summary_needs_read_on_the_source_party_and_account(self):
+		self.credit_receipt(HUNDRED_M)
+		allowed = frappe.has_permission
+		for hidden in ("Customer", "Account"):
+			def deny(doctype, *args, **kwargs):
+				if doctype == hidden:
+					raise frappe.PermissionError
+				return allowed(doctype, *args, **kwargs)
+
+			with self.subTest(hidden), patch.object(frappe, "has_permission", side_effect=deny):
+				with self.assertRaises(frappe.PermissionError):
+					self.summary()
+
 	def balance(self, amount, *, rate="90000", submit=True, **values):
 		doc = frappe.get_doc(
 			{

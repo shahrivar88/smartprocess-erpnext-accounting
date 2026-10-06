@@ -605,6 +605,30 @@ test("23 a same-currency row starts from the header rate and keeps a typed rate"
 	assert.equal(payment.debit_exchange_rate, 1200);
 });
 
+test("24 section and grid titles follow the flow without touching layout metadata", () => {
+	const titled = (values) => {
+		const frm = form(values);
+		const indicator = { nodeType: 1, textContent: "" };
+		const text = { nodeType: 3, textContent: "\n Operational Pairs\n" };
+		const grid = { length: 1, value: "Operational Pairs", text(value) { this.value = value; } };
+		const properties = [];
+		frm.fields_dict.pairs_section = { head: { get: () => ({ childNodes: [text, indicator] }) } };
+		frm.fields_dict.operational_pairs = { $wrapper: { find: () => ({ first: () => grid }) } };
+		frm.set_df_property = (fieldname, property) => properties.push(property);
+		spReceiptHeader.configure(frm, spReceiptConfig.isFlow(frm.doc));
+		return { section: text.textContent.trim(), grid: grid.value, indicator, properties };
+	};
+	const receipt = titled({});
+	assert.deepEqual([receipt.section, receipt.grid], ["پرداخت‌کنندگان", "ردیف‌های رسید"]);
+	assert.equal(receipt.indicator.nodeType, 1);
+	const payment = titled({ operation_type: "Payment" });
+	assert.deepEqual([payment.section, payment.grid], ["دریافت‌کنندگان", "ردیف‌های پرداخت"]);
+	const generic = titled({ operation_type: "Journal" });
+	assert.deepEqual([generic.section, generic.grid], ["Operational Pairs", "Operational Pairs"]);
+	const touched = new Set([...receipt.properties, ...payment.properties, ...generic.properties]);
+	assert.deepEqual([...touched].filter((property) => !["label", "formatter", "options"].includes(property)), []);
+});
+
 test("modules stay small and are included by the form", () => {
 	for (const file of Object.values(MODULES)) {
 		const lines = read(path.join(RECEIPT_DIR, file)).split("\n").length;

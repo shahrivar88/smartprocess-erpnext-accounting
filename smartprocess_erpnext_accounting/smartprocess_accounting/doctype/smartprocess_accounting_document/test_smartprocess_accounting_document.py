@@ -1,3 +1,4 @@
+import functools
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -28,6 +29,19 @@ FOREIGN_RECEIVABLE = "MC Receivable A - SPV2"
 FOREIGN_B_RECEIVABLE = "MC Receivable B - SPV2"
 
 
+def proof_fixture(test):
+	"""Skip a test that needs the isolated proof Company on a site without it."""
+
+	@functools.wraps(test)
+	def run(self):
+		for doctype, name in (("Company", COMPANY), ("Customer", NATIVE_CUSTOMER), ("Customer", LEGACY_CUSTOMER)):
+			if not frappe.db.exists(doctype, name):
+				self.skipTest(f"Isolated proof fixture is missing {doctype} {name}")
+		return test(self)
+
+	return run
+
+
 class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 	def test_metadata_is_native_and_submittable(self):
 		meta = frappe.get_meta("SmartProcess Accounting Document")
@@ -42,6 +56,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		self.assertEqual(meta.get_field("debit_party").fieldtype, "Dynamic Link")
 		self.assertEqual(meta.get_field("debit_party").options, "debit_party_type")
 
+	@proof_fixture
 	def test_company_currency_is_authoritative_and_forged_account_currency_is_rejected(self):
 		doc = self._document()
 		doc.company_currency = "XFA"
@@ -53,6 +68,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		self.assertEqual(doc.company_currency, "XBA")
 		self.assertEqual(doc.operational_pairs[0].credit_account_currency, "XFA")
 
+	@proof_fixture
 	def test_decimal_calculation_and_rate_direction(self):
 		self.assertEqual(calculate_company_amount("0.1", "10"), Decimal("1.0"))
 		self.assertEqual(decimal_text(Decimal("10.500000")), "10.5")
@@ -62,18 +78,21 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		self.assertEqual(Decimal(str(row.credit_company_amount)), Decimal("100"))
 		self.assertEqual(row.credit_rate_direction, "1 XFA = 10 XBA")
 
+	@proof_fixture
 	def test_positive_amount_rule(self):
 		doc = self._document()
 		doc.operational_pairs[0].debit_amount = -1
 		with self.assertRaises(frappe.ValidationError):
 			doc.validate()
 
+	@proof_fixture
 	def test_empty_pair_is_rejected_on_explicit_validation(self):
 		doc = self._document()
 		doc.set("operational_pairs", [{}])
 		with self.assertRaisesRegex(frappe.ValidationError, "Both Debit and Credit"):
 			doc.validate()
 
+	@proof_fixture
 	def test_multiple_pairs_and_rates(self):
 		doc = self._document()
 		second = self._pair(200, 10, 20)
@@ -85,6 +104,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		self.assertEqual(Decimal(str(doc.operational_pairs[0].credit_exchange_rate)), Decimal("10"))
 		self.assertEqual(Decimal(str(doc.operational_pairs[1].credit_exchange_rate)), Decimal("20"))
 
+	@proof_fixture
 	def test_draft_save_and_blocked_submit_do_not_post(self):
 		# The gate must be off for this test regardless of what other suites left
 		# in the persisted settings Single (suite order is not guaranteed).
@@ -107,6 +127,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 			settings.enable_v2_posting = previous
 			settings.save()
 
+	@proof_fixture
 	def test_mapping_identity_is_unique(self):
 		existing = frappe.db.get_value(
 			"SmartProcess Party Currency Account",
@@ -122,6 +143,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 				}
 			).insert()
 
+	@proof_fixture
 	def test_mapping_currency_mismatch_is_rejected(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "account_currency"):
 			frappe.get_doc(
@@ -132,6 +154,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 				}
 			).insert()
 
+	@proof_fixture
 	def test_account_suggestion_is_gated_and_advisory(self):
 		settings = frappe.get_single("SmartProcess Accounting Settings")
 		settings.enable_counterpart_proposal = 0

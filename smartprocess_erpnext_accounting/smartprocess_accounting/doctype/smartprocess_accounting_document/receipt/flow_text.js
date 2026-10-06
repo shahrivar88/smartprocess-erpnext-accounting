@@ -3,7 +3,7 @@
 // stay the DocType metadata; Payment relabels the same fields on its own form.
 const spFlowText = {
 	Receipt: {
-		sections: { pairs_section: "ردیف‌های دریافت", operational_pairs: "پرداخت‌کنندگان / منابع" },
+		sections: { pairs_section: "پرداخت‌کنندگان", operational_pairs: "ردیف‌های رسید" },
 		header: {},
 		rows: { receipt_recipient_type: "نوع پرداخت‌کننده", receipt_recipient: "پرداخت‌کننده", account: "معین پرداخت‌کننده" },
 		summaryTitle: "مجموع واریزی به دریافت‌کننده",
@@ -15,7 +15,7 @@ const spFlowText = {
 		preview: "receipt_api.preview_receipt",
 	},
 	Payment: {
-		sections: { pairs_section: "ردیف‌های پرداخت", operational_pairs: "دریافت‌کنندگان / مصارف" },
+		sections: { pairs_section: "دریافت‌کنندگان", operational_pairs: "ردیف‌های پرداخت" },
 		header: {
 			receipt_receiver_kind: "نوع پرداخت‌کننده",
 			receipt_payer_currency: "ارز پرداخت‌کننده",
