@@ -118,7 +118,7 @@ Conversion Amount cannot be negative.,«مبلغ این تبدیل» نمی‌ت
 Conversion Amount has more decimals than the Company currency allows.,تعداد اعشار «مبلغ این تبدیل» بیشتر از حد مجاز ارز پایه است.,
 Receipt {0} has submitted Receipt Conversion {1}. Cancel every linked Conversion first.,رسید {0} تبدیل ارز ثبت‌شده {1} دارد. ابتدا همه تبدیل‌های مرتبط را لغو کنید.,
 Receipt is locked by Conversion,رسید به‌دلیل تبدیل ارز قفل است,
-Cancelled Receipt Conversions are permanent accounting audit records.,تبدیل‌های لغوشده سوابق دائمی حسابرسی هستند و حذف نمی‌شوند.,
+Cancelled {0} {1} is a permanent accounting audit record and cannot be deleted.,{0} {1} لغوشده سابقه دائمی حسابرسی است و حذف نمی‌شود.,
 Source Receipt {0} must be submitted.,رسید مبدا {0} باید ثبت نهایی شده باشد.,
 You do not have permission to read Receipt {0}.,اجازه مشاهده رسید {0} را ندارید.,
 Source Receipt is required.,رسید مبدا الزامی است.,

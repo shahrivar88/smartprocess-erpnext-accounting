@@ -4,6 +4,7 @@ import frappe
 from frappe import _
 from erpnext.controllers.accounts_controller import AccountsController
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.audit_trail import keep_cancelled_history
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import (
 	start_correction as create_correction,
 )
@@ -74,6 +75,10 @@ class SmartProcessAccountingDocument(AccountsController):
 		self._set_cancel_link_exceptions()
 		if not posted_by_units(self):
 			cancel_document(self)
+
+	def on_trash(self):
+		keep_cancelled_history(self)
+		super().on_trash()
 
 	def _set_cancel_link_exceptions(self):
 		self.ignore_linked_doctypes = (

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
-from frappe.utils import cint
 from erpnext.controllers.accounts_controller import AccountsController
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.audit_trail import keep_cancelled_history
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion import BalanceConversionService
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	assert_native_posting_contract,
@@ -44,8 +44,7 @@ class SmartProcessReceiptConversion(AccountsController):
 		cancel_voucher(self)
 
 	def on_trash(self):
-		if cint(self.docstatus) == 2:
-			frappe.throw(_("Cancelled Receipt Conversions are permanent accounting audit records."))
+		keep_cancelled_history(self)
 		super().on_trash()
 
 	def validate_account_currency(self, account, account_currency=None):
