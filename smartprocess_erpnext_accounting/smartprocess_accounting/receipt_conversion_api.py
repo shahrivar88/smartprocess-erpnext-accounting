@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 
 import frappe
+from frappe import _
 from frappe.query_builder import Order
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
@@ -41,6 +42,11 @@ def make_receipt_conversion(source_receipt: str, target_currency: str | None = N
 	receipt = load_source_receipt(source_receipt)
 	frappe.has_permission(CONVERSION_DOCTYPE, "create", throw=True)
 	company_currency = get_company_currency(receipt.company)
+	sources = list(_company_currency_sources(receipt.name, company_currency))
+	if not sources:
+		frappe.throw(
+			_("Receipt {0} has no Company-currency ({1}) side to convert.").format(receipt.name, company_currency)
+		)
 	doc = frappe.new_doc(CONVERSION_DOCTYPE)
 	doc.update(
 		{
@@ -49,7 +55,7 @@ def make_receipt_conversion(source_receipt: str, target_currency: str | None = N
 			"target_currency": target_currency,
 		}
 	)
-	for source in _company_currency_sources(receipt.name, company_currency):
+	for source in sources:
 		doc.append("legs", _draft_leg(source, company_currency, target_currency))
 	return doc
 
@@ -86,10 +92,18 @@ def conversion_status(balances: list[tuple]) -> str | None:
 
 @frappe.whitelist()
 def get_conversion_legs(source_receipt: str, target_currency: str | None = None) -> dict:
-	"""Draft legs for the form, with Party display titles for the compact grid."""
-	doc = make_receipt_conversion(source_receipt, target_currency)
+	"""Draft legs for the form, with Party display titles for the source summaries.
+
+	An ineligible Receipt returns ``error`` instead of raising, so choosing it in
+	the form shows one inline message and loads no rows.
+	"""
+	try:
+		doc = make_receipt_conversion(source_receipt, target_currency)
+	except frappe.ValidationError as error:
+		frappe.clear_messages()
+		return {"error": str(error), "legs": [], "titles": {}}
 	legs = [leg.as_dict(no_default_fields=True) for leg in doc.legs]
-	return {"legs": legs, "titles": _party_titles(legs)}
+	return {"company": doc.company, "legs": legs, "titles": _party_titles(legs)}
 
 
 @frappe.whitelist()
@@ -207,7 +221,7 @@ def _draft_leg(source, company_currency: str, target_currency: str | None) -> di
 		suggestion = get_target_suggestion(
 			source.company, source.account, source.side, target_currency, source.party_type, source.party
 		)
-		leg.update(suggestion or {"target_party_type": source.party_type})
+		leg.update(suggestion or {})
 	return leg
 
 

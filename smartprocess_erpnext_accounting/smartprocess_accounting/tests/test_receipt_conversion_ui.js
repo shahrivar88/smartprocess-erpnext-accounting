@@ -51,6 +51,7 @@ const RECEIPT_DIR = path.join(DOCTYPE_DIR, "smartprocess_accounting_document", "
 globalThis.spReceiptConfig = require(path.join(RECEIPT_DIR, "receipt_config.js"));
 globalThis.spReceiptConversionStatus = require(path.join(RECEIPT_DIR, "receipt_conversion_status.js"));
 globalThis.spConversionLegs = require(path.join(CONVERSION_DIR, "conversion", "conversion_legs.js"));
+globalThis.spConversionSides = require(path.join(CONVERSION_DIR, "conversion", "conversion_sides.js"));
 globalThis.spConversionForm = require(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
 globalThis.spReceiptNumbers = require(path.join(RECEIPT_DIR, "receipt_numbers.js"));
 globalThis.spBalanceForm = require(path.join(CONVERSION_DIR, "conversion", "balance_form.js"));
@@ -347,12 +348,12 @@ test("leg grid columns are the agreed compact set, in order", () => {
 	assert.equal(field(legMeta, "fill_remaining").label, "کل مانده");
 });
 
-test("header labels are Persian and Receipt/Company are read-only", () => {
+test("header labels are Persian, the Receipt is selectable and Company follows it", () => {
 	assert.deepEqual(
 		["source_receipt", "posting_date", "target_currency", "remarks"].map((fieldname) => field(conversionMeta, fieldname).label),
 		["رسید مبدا", "تاریخ تبدیل", "ارز مقصد", "توضیحات"],
 	);
-	assert.equal(field(conversionMeta, "source_receipt").read_only, 1);
+	assert.ok(!field(conversionMeta, "source_receipt").read_only);
 	assert.equal(field(conversionMeta, "company").read_only_depends_on, "eval:doc.conversion_mode!=='Balance'");
 	assert.ok(!field(conversionMeta, "target_currency").read_only);
 });
@@ -461,7 +462,7 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	);
 	assert.equal(field(conversionMeta, "conversion_mode").default, "Receipt");
 	assert.equal(field(conversionMeta, "source_receipt").depends_on, "eval:doc.conversion_mode!=='Balance'");
-	assert.equal(field(conversionMeta, "legs").depends_on, "eval:doc.conversion_mode!=='Balance' || doc.docstatus>0");
+	assert.equal(field(conversionMeta, "legs").depends_on, "eval:doc.conversion_mode==='Balance' && doc.docstatus>0");
 	assert.equal(field(conversionMeta, "posting_date").read_only_depends_on, "eval:doc.conversion_mode==='Balance'");
 	for (const name of ["as_of_balance", "balance_side", "max_convertible", "target_amount"]) {
 		assert.equal(field(conversionMeta, name).read_only, 1, name);
@@ -469,9 +470,9 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
 });
 
-test("the list shows mode, date, currency, source Party and amount with contextual mode labels", () => {
+test("the list shows mode, source Receipt, date, currency, source Party and amount with contextual mode labels", () => {
 	const columns = conversionMeta.field_order.filter((name) => field(conversionMeta, name)?.in_list_view);
-	assert.deepEqual(columns, ["conversion_mode", "posting_date", "target_currency", "source_party", "conversion_amount"]);
+	assert.deepEqual(columns, ["conversion_mode", "source_receipt", "posting_date", "target_currency", "source_party", "conversion_amount"]);
 	const csv = read(path.join(__dirname, "..", "..", "translations", "fa.csv"));
 	assert.match(csv, /^SmartProcess Receipt Conversion,تبدیل ارز,$/m);
 	assert.match(csv, /^Receipt,از رسید,SmartProcess Receipt Conversion$/m);
@@ -552,6 +553,151 @@ test("Receipt-mode legs never load for a Balance Conversion", async () => {
 	assert.equal(frm.tableProperties["legs:read_only"], 1);
 	assert.equal(frm.tableProperties["legs:label"], spBalanceForm.MESSAGES.legsLabel);
 	assert.deepEqual(frm.tableProperties["conversion_mode:options"].map((option) => option.label), ["از رسید", "از مانده حساب"]);
+});
+
+test("Receipt mode has separate Receiver and Payer sections before the stored legs table", () => {
+	const order = conversionMeta.field_order;
+	const at = (fieldname) => order.indexOf(fieldname);
+	assert.ok(at("receiver_conversion_section") < at("payer_conversion_section"));
+	assert.ok(at("payer_conversion_section") < at("legs_section"));
+	assert.deepEqual(
+		["receiver_conversion_section", "payer_conversion_section"].map((fieldname) => field(conversionMeta, fieldname).label),
+		["تبدیل دریافت‌کننده", "تبدیل پرداخت‌کنندگان"],
+	);
+	for (const fieldname of ["receiver_conversion_section", "payer_conversion_section"]) {
+		assert.equal(field(conversionMeta, fieldname).depends_on, "eval:doc.conversion_mode!=='Balance'");
+	}
+	assert.equal(field(conversionMeta, "receiver_conversion_html").fieldtype, "HTML");
+	assert.equal(field(conversionMeta, "payer_conversion_html").fieldtype, "HTML");
+});
+
+test("each side shows only its own rows and Balance mode shows none", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	assert.deepEqual(spConversionSides.rows(frm, "Receiver").map((row) => row.source_side), ["Receiver"]);
+	assert.deepEqual(spConversionSides.rows(frm, "Payer").map((row) => row.source_side), ["Payer"]);
+	frm.doc.conversion_mode = "Balance";
+	assert.deepEqual(spConversionSides.rows(frm, "Receiver"), []);
+});
+
+test("the side grids edit only target columns; source columns stay out of the grid", () => {
+	const fields = spConversionSides.editableFields();
+	assert.deepEqual(
+		fields.map((df) => df.fieldname),
+		["conversion_amount", "target_rate", "target_amount", "target_party_type", "target_party", "target_account"],
+	);
+	for (const fieldname of [...spConversionLegs.SOURCE_FIELDS]) {
+		assert.ok(!fields.some((df) => df.fieldname === fieldname), fieldname);
+	}
+	assert.ok(fields.reduce((total, df) => total + df.columns, 0) <= 10);
+	assert.equal(field(legMeta, "target_amount").read_only, 1);
+});
+
+test("source info is a read-only block with party, account and amounts; fill only in draft", () => {
+	const rows = [{ name: "leg-2", idx: 2, ...serverLeg("Payer", { already_converted: "40000000", remaining_amount: "60000000" }) }];
+	const options = {
+		editable: true,
+		format: (fieldname, row) => `#${row[fieldname]}`,
+		titleOf: (partyType, party) => (party === "CUST-1" ? "مشتری یک" : ""),
+	};
+	const html = spConversionSides.sourceHtml(rows, "Payer", options);
+	for (const text of ["پرداخت‌کننده", "مشتری یک", "Debtors - SP", "#100000000", "#40000000", "#60000000", "حساب مبدا", "مانده قابل تبدیل"]) {
+		assert.ok(html.includes(text), text);
+	}
+	assert.ok(html.includes('data-sp-fill="leg-2"'));
+	assert.ok(!html.includes("<input"));
+	assert.ok(!spConversionSides.sourceHtml(rows, "Payer", { ...options, editable: false }).includes("data-sp-fill"));
+	assert.ok(spConversionSides.sourceHtml([], "Receiver", options).includes("رسید مبدا"));
+	const unsafe = [{ ...rows[0], source_account: "<b>x</b>" }];
+	assert.ok(!spConversionSides.sourceHtml(unsafe, "Payer", options).includes("<b>x</b>"));
+});
+
+test("Source Receipt is a normal Link limited to submitted Receipts", () => {
+	const queries = {};
+	const frm = form();
+	frm.set_query = (fieldname, table, fn) => (queries[fieldname] = typeof table === "function" ? table : fn);
+	spConversionForm.setup(frm);
+	assert.equal(field(conversionMeta, "source_receipt").fieldtype, "Link");
+	assert.equal(field(conversionMeta, "source_receipt").options, "SmartProcess Accounting Document");
+	assert.deepEqual(queries.source_receipt().filters, { operation_type: "Receipt", docstatus: 1 });
+	assert.match(read(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion.js")), /source_receipt\(frm\)\s*\{\s*return spConversionForm\.receiptChanged\(frm\);/);
+});
+
+test("choosing a Receipt directly loads its rows once the target currency is known", async () => {
+	const frm = form({ source_receipt: "", target_currency: "USD" });
+	frm.doc.source_receipt = "SP-REC-2";
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.deepEqual(calls.xcall[0].args, { source_receipt: "SP-REC-2", target_currency: "USD" });
+	assert.equal(frm.doc.legs.length, 2);
+	assert.equal(calls.confirm.length, 0);
+	const empty = form();
+	await spConversionForm.receiptChanged(empty);
+	assert.ok(!calls.xcall.some((call) => call.args?.source_receipt === "SP-REC-1"));
+});
+
+test("a new Receipt replaces every row and target input from the previous one", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	Object.assign(frm.doc.legs[1], { conversion_amount: 5, target_rate: 90000, target_party: "CUST-9" });
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver", { source_pair: "pair-2" })], titles: {} };
+	frm.doc.source_receipt = "SP-REC-2";
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.deepEqual(frm.doc.legs.map((leg) => [leg.source_pair, leg.conversion_amount, leg.target_party]), [["pair-2", 0, undefined]]);
+	assert.equal(calls.confirm.length, 0);
+});
+
+test("an ineligible Receipt shows the server message inline and loads no rows", async () => {
+	const frm = form({ target_currency: "USD" });
+	responses.get_conversion_legs = { error: "رسید SP-REC-1 سمتی به ارز پایه شرکت (IRR) برای تبدیل ندارد.", legs: [], titles: {} };
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.deepEqual(frm.doc.legs, []);
+	assert.match(frm.tableProperties["source_receipt:description"], /سمتی به ارز پایه/);
+	assert.equal(calls.confirm.length, 0);
+	assert.equal(calls.alerts.length, 0);
+	responses.get_conversion_legs = () => ({ legs: [serverLeg("Receiver")], titles: {} });
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.equal(frm.tableProperties["source_receipt:description"], "");
+});
+
+test("the Conversion adopts the Company of the chosen Receipt", async () => {
+	const frm = form({ target_currency: "USD" });
+	responses.get_company_currency = "IRR";
+	responses.get_conversion_legs = { company: "SP-2", legs: [serverLeg("Receiver")], titles: {} };
+	await spConversionForm.receiptChanged(frm);
+	await settle();
+	assert.equal(frm.doc.company, "SP-2");
+});
+
+test("targets are independent: no source Party is copied and accounts follow the target currency", async () => {
+	const frm = form();
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver"), serverLeg("Payer")], titles: {} };
+	await selectCurrency(frm, "USD");
+	const payer = frm.doc.legs[1];
+	assert.equal(payer.source_party, "CUST-1");
+	assert.equal(payer.target_party_type, undefined);
+	assert.equal(payer.target_party, undefined);
+	assert.equal(payer.target_account, undefined);
+	assert.equal(spConversionLegs.accountFilters("SP", "USD", "Supplier", "SUP-7").account_currency, "USD");
+	assert.equal(spConversionLegs.accountFilters("SP", "USD", "Supplier", "SUP-7").account_type, "Payable");
+});
+
+test("typing in the side grids never asks for a confirmation", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const row = frm.doc.legs[1];
+	for (const value of [1, 12, 123]) {
+		row.conversion_amount = value;
+		spConversionForm.amountChanged(frm, LEG, row.name);
+		row.target_rate = value * 10;
+		spConversionForm.rateChanged(frm, LEG, row.name);
+	}
+	await settle();
+	assert.equal(calls.confirm.length, 0);
+	assert.equal(calls.alerts.length, 0);
 });
 
 (async () => {

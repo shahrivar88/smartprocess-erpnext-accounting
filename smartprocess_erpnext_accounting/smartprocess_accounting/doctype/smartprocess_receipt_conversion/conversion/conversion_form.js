@@ -38,6 +38,7 @@ const spConversionForm = {
 
 	setup(frm) {
 		const legs = spConversionLegs;
+		frm.set_query("source_receipt", () => ({ filters: legs.RECEIPT_FILTERS }));
 		frm.set_query("target_currency", () => ({ filters: legs.currencyFilters(this.state(frm).companyCurrency) }));
 		frm.set_query("target_party_type", legs.TABLE, () => ({ filters: { name: ["in", legs.PARTY_TYPES] } }));
 		frm.set_query("target_account", legs.TABLE, (doc, cdt, cdn) => {
@@ -51,6 +52,7 @@ const spConversionForm = {
 				filters: { party_type: row.target_party_type, company: doc.company, currency: doc.target_currency },
 			};
 		});
+		spConversionSides.setup(frm);
 	},
 
 	async refresh(frm) {
@@ -66,9 +68,40 @@ const spConversionForm = {
 		if (frm.doc.__islocal) {
 			this.prepareNewDoc(frm, state);
 		}
-		if (frm.doc.docstatus === 0 && frm.doc.source_receipt && frm.doc.target_currency && !this.rows(frm).length) {
+		spConversionSides.refresh(frm);
+		if (this.canLoad(frm) && !this.rows(frm).length) {
 			await this.loadLegs(frm);
 		}
+	},
+
+	canLoad(frm) {
+		const doc = frm.doc;
+		return doc.docstatus === 0 && spConversionSides.isReceiptMode(doc) && Boolean(doc.source_receipt && doc.target_currency);
+	},
+
+	// A directly chosen Receipt starts from its own server rows; nothing carries over.
+	async receiptChanged(frm) {
+		if (frm.doc.docstatus !== 0 || !spConversionSides.isReceiptMode(frm.doc)) {
+			return;
+		}
+		const state = this.state(frm);
+		state.touched.clear();
+		state.loadRequest++;
+		this.showReceiptError(frm, "");
+		frm.clear_table(spConversionLegs.TABLE);
+		this.refreshLegs(frm);
+		if (this.canLoad(frm)) {
+			await this.loadLegs(frm);
+		}
+	},
+
+	showReceiptError(frm, message) {
+		frm.set_df_property("source_receipt", "description", message ? frappe.utils.escape_html(message) : "");
+	},
+
+	refreshLegs(frm) {
+		frm.refresh_field(spConversionLegs.TABLE);
+		spConversionSides.refresh(frm);
 	},
 
 	// Frappe pre-fills a Currency Link with the user's default currency and adds an
@@ -105,13 +138,13 @@ const spConversionForm = {
 		}
 		state.currency = next;
 		state.touched.clear();
-		if (next) {
+		if (next && this.canLoad(frm)) {
 			return this.loadLegs(frm);
 		}
 		for (const row of this.rows(frm)) {
-			Object.assign(row, spConversionLegs.clearedTargets(), { target_currency: "" });
+			Object.assign(row, spConversionLegs.clearedTargets(), { target_currency: next });
 		}
-		frm.refresh_field(spConversionLegs.TABLE);
+		this.refreshLegs(frm);
 	},
 
 	async revertCurrency(frm, state) {
@@ -133,6 +166,8 @@ const spConversionForm = {
 		if (request !== state.loadRequest || state.doc !== frm.doc) {
 			return;
 		}
+		this.showReceiptError(frm, response?.error || "");
+		await this.adoptCompany(frm, state, response?.company);
 		this.rememberTitles(response?.titles);
 		const rows = spConversionLegs.mergeLegs(this.rows(frm), response?.legs, frm.doc.target_currency);
 		frm.clear_table(spConversionLegs.TABLE);
@@ -140,11 +175,22 @@ const spConversionForm = {
 			frm.add_child(spConversionLegs.TABLE, row);
 		}
 		this.applyFormatters(frm);
-		frm.refresh_field(spConversionLegs.TABLE);
-		if (!rows.length) {
+		this.refreshLegs(frm);
+		if (!rows.length && !response?.error) {
 			frappe.show_alert({ message: this.MESSAGES.noLegs, indicator: "orange" });
 		}
 		this.schedulePreview(frm);
+	},
+
+	// The Conversion always belongs to the Company of its source Receipt.
+	async adoptCompany(frm, state, company) {
+		if (!company || company === frm.doc.company) {
+			return;
+		}
+		frm.doc.company = company;
+		frm.refresh_field("company");
+		state.companyCurrency = undefined;
+		await this.loadCompanyCurrency(frm, state);
 	},
 
 	fillRemaining(frm, cdt, cdn) {
@@ -271,8 +317,14 @@ const spConversionForm = {
 		return frappe.utils.get_link_title(partyType, party);
 	},
 
+	isReceiptRow(row) {
+		return spConversionSides.isReceiptMode(row?.parent && frappe.get_doc(spConversionLegs.CONVERSION, row.parent));
+	},
+
 	refreshTargetCell(frm, cdn) {
-		frm.fields_dict[spConversionLegs.TABLE]?.grid?.grid_rows_by_docname?.[cdn]?.refresh_field("target_account");
+		for (const grid of [frm.fields_dict[spConversionLegs.TABLE]?.grid, ...spConversionSides.grids(frm)]) {
+			grid?.grid_rows_by_docname?.[cdn]?.refresh_field("target_account");
+		}
 	},
 
 	formatters() {
@@ -286,8 +338,11 @@ const spConversionForm = {
 			source_side: (value) => escape(legs.sideLabel(value)),
 			source_account: (value, df, options, doc) =>
 				escape(legs.partyAccountLabel(value, doc?.source_party_type, doc?.source_party, titleOf)),
+			// Receipt mode shows the target Party in its own column.
 			target_account: (value, df, options, doc) =>
-				escape(legs.partyAccountLabel(value, doc?.target_party_type, doc?.target_party, titleOf)),
+				escape(
+					this.isReceiptRow(doc) ? value || "" : legs.partyAccountLabel(value, doc?.target_party_type, doc?.target_party, titleOf),
+				),
 		};
 		return this._formatters;
 	},
@@ -325,8 +380,7 @@ const spConversionForm = {
 
 	// Editable grid cells and the row form get the Receipt's compact number input
 	// (no insignificant trailing zeros when the global setting is on).
-	installNumbers(frm) {
-		const wrapper = frm.fields_dict[spConversionLegs.TABLE]?.$wrapper?.get(0);
+	installNumbers(frm, wrapper = frm.fields_dict[spConversionLegs.TABLE]?.$wrapper?.get(0)) {
 		if (!wrapper || spConversionNumberWrappers.has(wrapper)) {
 			return;
 		}

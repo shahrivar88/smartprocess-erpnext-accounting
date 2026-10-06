@@ -1,8 +1,11 @@
 // Receipt Conversion client helpers. Pure functions: amounts are calculated on the server only.
 const spConversionLegs = {
 	API: "smartprocess_erpnext_accounting.smartprocess_accounting",
+	CONVERSION: "SmartProcess Receipt Conversion",
 	LEG: "SmartProcess Receipt Conversion Leg",
 	TABLE: "legs",
+	// The server still checks every chosen Receipt before it offers any row.
+	RECEIPT_FILTERS: { operation_type: "Receipt", docstatus: 1 },
 	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"],
 	PARTY_ACCOUNT_TYPES: {
 		Customer: "Receivable",

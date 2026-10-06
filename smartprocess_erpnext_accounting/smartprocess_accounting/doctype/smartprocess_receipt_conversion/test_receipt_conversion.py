@@ -14,7 +14,11 @@ from unittest.mock import patch
 import frappe
 from frappe.utils import add_days, nowdate
 
-from smartprocess_erpnext_accounting.smartprocess_accounting import conversion_consumption, receipt_conversion
+from smartprocess_erpnext_accounting.smartprocess_accounting import (
+	conversion_consumption,
+	receipt_conversion,
+	receipt_conversion_api,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import balance_conversion_sources
 from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import start_correction
@@ -249,15 +253,59 @@ class TestReceiptConversion(ConversionFixtures):
 		self.assertEqual((Decimal(str(receiver.target_rate)), Decimal(str(payer.target_rate))), (Decimal("90000"), Decimal("100000")))
 		self.assertEqual(preview_target_amounts(self.company, self.base, frappe.as_json(legs)), {})
 
-	def test_form_legs_carry_party_titles_and_source_party_type(self):
+	def test_form_legs_carry_party_titles_and_no_source_target(self):
 		receipt = self.submitted_receipt()
-		response = get_conversion_legs(receipt.name, self.target)
+		with patch.object(receipt_conversion_api, "get_target_suggestion", return_value=None):
+			response = get_conversion_legs(receipt.name, self.target)
+		self.assertEqual(response["company"], self.company)
 		receiver, payer = sorted(response["legs"], key=lambda leg: leg["source_side"] != "Receiver")
-		self.assertIsNone(receiver.get("target_party_type"))
-		self.assertEqual((payer["target_party_type"], payer.get("target_party")), ("Customer", None))
+		self.assertEqual((receiver["source_side"], payer["source_side"]), ("Receiver", "Payer"))
+		self.assertEqual((payer["source_party_type"], payer["source_party"]), ("Customer", self.customer))
+		for leg in (receiver, payer):
+			self.assertEqual([leg.get(key) for key in ("target_party_type", "target_party", "target_account")], [None] * 3)
 		title = frappe.db.get_value("Customer", self.customer, "customer_name")
 		self.assertEqual(response["titles"], {"Customer": {self.customer: title}})
 		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+
+	def test_ineligible_receipt_is_reported_without_legs(self):
+		receipt = self.submitted_receipt()
+		with patch.object(receipt_conversion_api, "_company_currency_sources", return_value=iter(())):
+			with self.assertRaisesRegex(frappe.ValidationError, "no Company-currency"):
+				make_receipt_conversion(receipt.name, self.target)
+			response = get_conversion_legs(receipt.name, self.target)
+		self.assertRegex(response["error"], "no Company-currency")
+		self.assertEqual((response["legs"], response["titles"]), ([], {}))
+		self.assertNotIn("company", response)
+		frappe.db.set_value(RECEIPT, receipt.name, "operation_type", "Payment", update_modified=False)
+		self.assertRegex(get_conversion_legs(receipt.name, self.target)["error"], "is not a Receipt")
+		frappe.db.set_value(RECEIPT, receipt.name, "operation_type", "Receipt", update_modified=False)
+		frappe.get_doc(RECEIPT, receipt.name).cancel()
+		self.assertRegex(get_conversion_legs(receipt.name, self.target)["error"], "must be submitted")
+		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+
+	def test_target_account_must_be_in_the_target_currency(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, payer="50000000")
+		self.legs(doc)[1].target_account = self.receivable
+		with self.assertRaisesRegex(frappe.ValidationError, "Target Account currency"):
+			doc.insert()
+
+	def test_target_party_must_belong_to_the_target_currency(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, payer="50000000")
+		self.legs(doc)[1].target_party = self.customer
+		with self.assertRaisesRegex(frappe.ValidationError, self.target):
+			doc.insert()
+		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+
+	def test_target_party_is_independent_of_the_source_party(self):
+		receipt = self.submitted_receipt()
+		conversion = self.convert(receipt, payer="50000000")
+		payer = self.legs(conversion)[1]
+		self.assertNotEqual(payer.target_party, payer.source_party)
+		rows = {row.account: row for row in self.gl(conversion) if row.voucher_detail_no == payer.name}
+		self.assertEqual(rows[self.receivable].party, self.customer)
+		self.assertEqual(rows[self.target_receivable].party, self.target_customer)
 
 	def test_status_treats_receiver_and_payer_independently(self):
 		receipt = self.submitted_receipt()
