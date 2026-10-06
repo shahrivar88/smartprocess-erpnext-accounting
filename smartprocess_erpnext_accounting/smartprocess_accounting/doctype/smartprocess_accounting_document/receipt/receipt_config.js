@@ -1,6 +1,9 @@
 // Receipt client constants. Values mirror receipt_contract.py on the server.
 const spReceiptConfig = {
 	OPERATION: "Receipt",
+	PAYMENT: "Payment",
+	// Receipt rows are the credited payers; Payment rows are the debited recipients.
+	ROW_SIDES: { Receipt: "credit", Payment: "debit" },
 	CHILD_DOCTYPE: "SmartProcess Accounting Pair",
 	TABLE: "operational_pairs",
 	ACCOUNT_PAYER: "Account",
@@ -34,6 +37,28 @@ const spReceiptConfig = {
 
 	isReceipt(doc) {
 		return doc?.operation_type === this.OPERATION;
+	},
+
+	isPayment(doc) {
+		return doc?.operation_type === this.PAYMENT;
+	},
+
+	// Receipt and Payment share this client: one header side, rows on the other.
+	// A Payment submitted before Payment V1 has no header account; it keeps the
+	// generic two-sided grid so none of its stored columns are hidden.
+	isFlow(doc) {
+		if (this.isPayment(doc) && doc.docstatus > 0 && !doc.receipt_payer_account) {
+			return false;
+		}
+		return Boolean(this.ROW_SIDES[doc?.operation_type]);
+	},
+
+	rowSide(doc) {
+		return this.ROW_SIDES[doc?.operation_type] || this.ROW_SIDES.Receipt;
+	},
+
+	rowField(doc, name) {
+		return `${this.rowSide(doc)}_${name}`;
 	},
 
 	isPartyType(type) {

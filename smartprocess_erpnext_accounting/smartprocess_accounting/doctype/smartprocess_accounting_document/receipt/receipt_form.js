@@ -1,30 +1,31 @@
-// Receipt form orchestration: one state object per document, grid layout per
-// operation type, and the entry points called from the DocType form events.
+// Receipt / Payment form orchestration: one state object per document, grid
+// layout per operation type, and the entry points called from the form events.
+// Rows fill one Pair side (Receipt: credit, Payment: debit); the server fills
+// the other side from the header.
 const SP_RECEIPT_GRID_FIELDS = ["receipt_posting_date", "receipt_recipient_type", "receipt_recipient", "receipt_currency"];
-const SP_RECEIPT_HIDDEN_FIELDS = [
-	"debit_account_category", "debit_account", "debit_suggested_account", "debit_party_type",
-	"debit_party", "debit_account_currency", "debit_amount", "debit_exchange_rate",
-	"debit_company_amount", "debit_rate_direction", "debit_description", "credit_column",
-	"credit_account_category", "credit_suggested_account", "credit_party_type", "credit_party",
-	"credit_account_currency", "credit_rate_direction", "receipt_payer_exchange_rate",
+const SP_PAIR_SIDE_FIELDS = [
+	"account_category", "account", "suggested_account", "party_type", "party", "account_currency",
+	"amount", "exchange_rate", "company_amount", "rate_direction", "description",
 ];
+const SP_ROW_SIDE_HIDDEN_FIELDS = ["account_category", "suggested_account", "party_type", "party", "account_currency", "rate_direction"];
 // Column sizes only; the column order stays the Pair metadata order. The row
-// Exchange Rate column joins them only for a foreign Payer Currency.
+// Exchange Rate column joins them only for a foreign row currency.
 const SP_RECEIPT_LIST_COLUMNS = [
 	["receipt_recipient_type", 2],
 	["receipt_recipient", 4],
-	["credit_account", 3],
-	["credit_amount", 2],
-	["credit_company_amount", 2],
+	["account", 3],
+	["amount", 2],
+	["company_amount", 2],
 ];
 const SP_RECEIPT_RATE_COLUMNS = 2;
+const SP_ROW_SIDE_LABELS = {
+	amount: "مبلغ",
+	exchange_rate: "نرخ ارز",
+	company_amount: "مبلغ به ارز پایه",
+	description: "توضیح",
+};
 const SP_RECEIPT_ROW_LABELS = {
 	receipt_currency: "ارز",
-	credit_account: "معین پرداخت‌کننده",
-	credit_amount: "مبلغ",
-	credit_exchange_rate: "نرخ ارز",
-	credit_company_amount: "مبلغ به ارز پایه",
-	credit_description: "توضیح",
 	details_section: "جزئیات بیشتر",
 	tracking_number: "شماره پیگیری",
 	transfer_reference: "مرجع انتقال",
@@ -82,11 +83,11 @@ const spReceiptForm = {
 	},
 
 	async refresh(frm) {
-		const isReceipt = spReceiptConfig.isReceipt(frm.doc);
+		const isFlow = spReceiptConfig.isFlow(frm.doc);
 		this.state(frm);
-		spReceiptHeader.configure(frm, isReceipt);
-		this.configureGrid(frm, isReceipt);
-		if (!isReceipt) {
+		spReceiptHeader.configure(frm, isFlow);
+		this.configureGrid(frm, isFlow);
+		if (!isFlow) {
 			frm.fields_dict.receipt_summary?.$wrapper.empty();
 			return;
 		}
@@ -95,29 +96,29 @@ const spReceiptForm = {
 		spReceiptRowQueries.installPayerTypeOrder(frm);
 		await spReceiptHeader.initialize(frm);
 		await spReceiptRowEvents.initializeRows(frm);
-		this.configureGrid(frm, isReceipt);
+		this.configureGrid(frm, isFlow);
 		spReceiptSummary.render(frm);
 		spReceiptSummary.schedule(frm, 0);
 	},
 
 	validate(frm) {
-		if (!spReceiptConfig.isReceipt(frm.doc)) {
+		if (!spReceiptConfig.isFlow(frm.doc)) {
 			return;
 		}
 		return spReceiptValidation.validateSave(frm);
 	},
 
-	configureGrid(frm, isReceipt) {
+	configureGrid(frm, isFlow) {
 		const field = frm.fields_dict[spReceiptConfig.TABLE];
 		const grid = field?.grid;
 		if (!grid) {
 			return;
 		}
-		field.$wrapper.closest(".form-section").toggleClass("sp-receipt-layout-section", isReceipt);
-		field.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
-		frm.fields_dict.receipt_summary?.$wrapper.toggleClass("sp-receipt-wide-grid", isReceipt);
+		field.$wrapper.closest(".form-section").toggleClass("sp-receipt-layout-section", isFlow);
+		field.$wrapper.toggleClass("sp-receipt-wide-grid", isFlow);
+		frm.fields_dict.receipt_summary?.$wrapper.toggleClass("sp-receipt-wide-grid", isFlow);
 		this.ownColumns(grid);
-		const properties = isReceipt ? this.receiptGridProperties(frm.doc) : this.genericGridProperties();
+		const properties = isFlow ? this.receiptGridProperties(frm.doc) : this.genericGridProperties();
 		const latest = new Map(properties.map(([fieldname, property, value]) => [`${fieldname}:${property}`, [fieldname, property, value]]));
 		let changed = false;
 		for (const [fieldname, property, value] of latest.values()) {
@@ -128,37 +129,52 @@ const spReceiptForm = {
 		}
 	},
 
-	// The row Currency mirrors the header Payer Currency: shown read-only in the
-	// row form, never as a grid column.
+	// The row Currency mirrors the header row currency: shown read-only in the
+	// row form, never as a grid column. The header side is never edited in a row.
 	receiptGridProperties(doc = {}) {
+		const side = spReceiptConfig.rowSide(doc);
+		const headerSide = side === "credit" ? "debit" : "credit";
+		const row = (name) => `${side}_${name}`;
+		const text = spFlowText.of(doc);
 		const properties = [];
-		for (const fieldname of SP_RECEIPT_HIDDEN_FIELDS) {
+		for (const name of SP_PAIR_SIDE_FIELDS) {
+			properties.push([`${headerSide}_${name}`, "hidden", 1], [`${headerSide}_${name}`, "reqd", 0]);
+		}
+		for (const fieldname of ["credit_column", "receipt_payer_exchange_rate", ...SP_ROW_SIDE_HIDDEN_FIELDS.map(row)]) {
 			properties.push([fieldname, "hidden", 1]);
 		}
 		for (const fieldname of SP_RECEIPT_GRID_FIELDS) {
 			properties.push([fieldname, "hidden", 0]);
 		}
-		for (const fieldname of ["receipt_posting_date", "receipt_currency", "credit_description"]) {
+		for (const fieldname of ["receipt_posting_date", "receipt_currency", row("description")]) {
 			properties.push([fieldname, "in_list_view", 0]);
 		}
-		for (const [fieldname, columns] of SP_RECEIPT_LIST_COLUMNS) {
+		for (const [name, columns] of SP_RECEIPT_LIST_COLUMNS) {
+			const fieldname = name.startsWith("receipt_") ? name : row(name);
 			properties.push([fieldname, "in_list_view", 1], [fieldname, "columns", columns]);
 		}
-		for (const [fieldname, label] of Object.entries(SP_RECEIPT_ROW_LABELS)) {
+		const labels = {
+			...SP_RECEIPT_ROW_LABELS,
+			...Object.fromEntries(Object.entries(SP_ROW_SIDE_LABELS).map(([name, label]) => [row(name), label])),
+			receipt_recipient_type: text.rows.receipt_recipient_type,
+			receipt_recipient: text.rows.receipt_recipient,
+			[row("account")]: text.rows.account,
+		};
+		for (const [fieldname, label] of Object.entries(labels)) {
 			properties.push([fieldname, "label", label]);
 		}
-		for (const fieldname of ["receipt_recipient_type", "credit_account", "credit_amount"]) {
+		for (const fieldname of ["receipt_recipient_type", row("account"), row("amount")]) {
 			properties.push([fieldname, "reqd", 1]);
 		}
 		properties.push(
 			["receipt_currency", "read_only", 1],
-			["credit_exchange_rate", "hidden", 0],
-			["credit_exchange_rate", "in_list_view", spReceiptConfig.isForeignPayer(doc) ? 1 : 0],
-			["credit_exchange_rate", "columns", SP_RECEIPT_RATE_COLUMNS],
-			["credit_exchange_rate", "read_only", 0],
-			["credit_exchange_rate", "read_only_depends_on", spReceiptConfig.ROW_BASE_RATE],
-			["credit_company_amount", "hidden", 0],
-			["credit_company_amount", "read_only", 1],
+			[row("exchange_rate"), "hidden", 0],
+			[row("exchange_rate"), "in_list_view", spReceiptConfig.isForeignPayer(doc) ? 1 : 0],
+			[row("exchange_rate"), "columns", SP_RECEIPT_RATE_COLUMNS],
+			[row("exchange_rate"), "read_only", 0],
+			[row("exchange_rate"), "read_only_depends_on", spReceiptConfig.ROW_BASE_RATE],
+			[row("company_amount"), "hidden", 0],
+			[row("company_amount"), "read_only", 1],
 		);
 		for (const fieldname of spReceiptNumbers.GRID_FIELDS) {
 			properties.push([fieldname, "formatter", spReceiptNumbers.formatter]);
@@ -166,10 +182,13 @@ const spReceiptForm = {
 		return properties;
 	},
 
-	// Restores the DocType metadata for every property the Receipt layout
-	// changes, so Payment / Transfer / Conversion keep their generic grid.
+	// Restores the DocType metadata for every property the Receipt or Payment
+	// layout changes, so Transfer / Conversion keep their generic grid.
 	genericGridProperties() {
-		const restored = this.receiptGridProperties().map(([fieldname, property]) => {
+		const changed = [spReceiptConfig.OPERATION, spReceiptConfig.PAYMENT].flatMap((operation_type) =>
+			this.receiptGridProperties({ operation_type }),
+		);
+		const restored = changed.map(([fieldname, property]) => {
 			const base = frappe.meta.docfield_map[spReceiptConfig.CHILD_DOCTYPE]?.[fieldname];
 			return [fieldname, property, base ? base[property] ?? null : null];
 		});
@@ -206,7 +225,7 @@ const spReceiptForm = {
 		spReceiptOwnedGrids.add(grid);
 		const setupUserDefinedColumns = grid.setup_user_defined_columns;
 		grid.setup_user_defined_columns = function () {
-			if (spReceiptConfig.isReceipt(this.frm?.doc)) {
+			if (spReceiptConfig.isFlow(this.frm?.doc)) {
 				this.user_defined_columns = [];
 				return;
 			}

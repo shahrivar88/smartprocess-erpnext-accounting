@@ -8,6 +8,7 @@ const RECEIPT_DIR = path.join(DOCTYPE_DIR, "receipt");
 const APP_DIR = path.join(__dirname, "..", "..");
 const MODULES = {
 	spReceiptConfig: "receipt_config.js",
+	spFlowText: "flow_text.js",
 	spReceiptNumbers: "receipt_numbers.js",
 	spReceiptForm: "receipt_form.js",
 	spReceiptHeader: "receipt_header.js",
@@ -510,6 +511,81 @@ test("17 read-only Base Amount cell drops trailing zeros only when the global se
 	} finally {
 		delete frappe.boot;
 	}
+});
+
+test("18 Payment rows edit the debit side; the Receipt grid stays on the credit side", () => {
+	const payment = { operation_type: "Payment", company_currency: "IRR", receipt_credit_currency: "IRR" };
+	assert.deepEqual(
+		["debit_account", "debit_amount", "debit_company_amount"].map((field) => gridProperty(field, "in_list_view", payment)),
+		[1, 1, 1],
+	);
+	assert.deepEqual([gridProperty("debit_account", "reqd", payment), gridProperty("debit_amount", "reqd", payment)], [1, 1]);
+	assert.deepEqual([gridProperty("credit_amount", "hidden", payment), gridProperty("credit_amount", "reqd", payment)], [1, 0]);
+	assert.equal(gridProperty("debit_exchange_rate", "in_list_view", payment), 0);
+	assert.equal(gridProperty("debit_exchange_rate", "in_list_view", { ...payment, receipt_credit_currency: "USD" }), 1);
+	assert.deepEqual(
+		["receipt_recipient_type", "receipt_recipient", "debit_account"].map((field) => gridProperty(field, "label", payment)),
+		["نوع دریافت‌کننده", "دریافت‌کننده", "معین دریافت‌کننده"],
+	);
+	assert.deepEqual([gridProperty("credit_amount", "in_list_view"), gridProperty("debit_amount", "hidden")], [1, 1]);
+	assert.equal(gridProperty("receipt_recipient", "label"), "پرداخت‌کننده");
+	const restored = spReceiptForm.genericGridProperties().map(([field, property]) => `${field}:${property}`);
+	assert.ok(restored.includes("debit_account:label") && restored.includes("credit_account:label"));
+});
+
+test("19 Payment header labels mirror Receipt; Receipt keeps its DocType labels", () => {
+	const base = (field) => docField(field)?.label;
+	const payment = spFlowText.headerLabels({ operation_type: "Payment" }, base);
+	assert.deepEqual(
+		[payment.receipt_receiver_kind, payment.receipt_payer_currency, payment.receipt_credit_currency],
+		["نوع پرداخت‌کننده", "ارز پرداخت‌کننده", "ارز دریافت‌کننده"],
+	);
+	const receipt = spFlowText.headerLabels({ operation_type: "Receipt" }, base);
+	for (const [field, label] of Object.entries(receipt)) {
+		assert.equal(label, base(field), field);
+	}
+	assert.equal(receipt.receipt_credit_currency, "ارز پرداخت‌کننده");
+});
+
+test("20 Payment preview, payload, Base Amount and placeholder checks use the debit side", async () => {
+	reset();
+	responses.preview_payment = { ready: true, issues: [], rows: [{ row: 1, currency: "USD", amount: "2", rate: "1600000", base_amount: "3200000" }] };
+	const first = row("pay-1", { debit_account: "Creditors USD", debit_amount: 2, debit_exchange_rate: 1600000, credit_amount: 99 });
+	const frm = form({ operation_type: "Payment", receipt_credit_currency: "USD" }, [first]);
+	await spReceiptSummary.refreshNow(frm);
+	assert.deepEqual(calls.xcall.map((call) => call.method.split(".").slice(-2).join(".")), ["payment_api.preview_payment"]);
+	const sent = calls.xcall[0].args.doc.operational_pairs[0];
+	assert.deepEqual([sent.debit_account, sent.debit_amount, sent.debit_exchange_rate, "credit_amount" in sent], ["Creditors USD", 2, 1600000, false]);
+	assert.equal(first.debit_company_amount, 3200000);
+	const placeholder = { receipt_recipient_type: "Supplier", credit_amount: 5 };
+	assert.equal(spReceiptValidation.rowHasUserContent(placeholder, frm.doc), false);
+	assert.equal(spReceiptValidation.rowHasUserContent({ debit_amount: 5 }, frm.doc), true);
+	assert.equal(spReceiptValidation.rowHasUserContent(placeholder, { operation_type: "Receipt" }), true);
+	const html = spReceiptSummary.html({ receiver_currency: "IRR" }, frm.doc, String, String);
+	assert.ok(html.includes("مجموع برداشت از پرداخت‌کننده") && html.includes("ارز پرداخت‌کننده"));
+});
+
+test("21 Payment row events copy and clear the debit side", async () => {
+	reset();
+	responses.get_receipt_recipient_type_default = "Supplier";
+	responses.get_receipt_recipient_type_options = [];
+	const first = row("pay-a1", { receipt_currency: "USD", debit_exchange_rate: 1600000, receipt_recipient_type: "Supplier" });
+	const second = row("pay-a2", {});
+	const frm = form({ operation_type: "Payment", receipt_credit_currency: "USD" }, [first, second]);
+	await spReceiptRowEvents.rowAdded(frm, second.doctype, second.name);
+	assert.deepEqual([second.debit_exchange_rate, second.credit_exchange_rate], [1600000, undefined]);
+	const base = row("pay-a3", { debit_exchange_rate: 5 });
+	await spReceiptRowEvents.rateChanged(form({ operation_type: "Payment" }, [base]), base.doctype, base.name);
+	assert.equal(base.debit_exchange_rate, 1);
+});
+
+test("22 a Payment submitted before Payment V1 keeps the generic two-sided grid", () => {
+	const legacy = { operation_type: "Payment", docstatus: 1, receipt_payer_account: "" };
+	assert.equal(spReceiptConfig.isFlow(legacy), false);
+	assert.equal(spReceiptConfig.isFlow({ ...legacy, docstatus: 2 }), false);
+	assert.equal(spReceiptConfig.isFlow({ ...legacy, receipt_payer_account: "Bank - SP" }), true);
+	assert.equal(spReceiptConfig.isFlow({ ...legacy, docstatus: 0 }), true);
+	assert.equal(spReceiptConfig.isFlow({ operation_type: "Receipt", docstatus: 1 }), true);
 });
 
 test("modules stay small and are included by the form", () => {

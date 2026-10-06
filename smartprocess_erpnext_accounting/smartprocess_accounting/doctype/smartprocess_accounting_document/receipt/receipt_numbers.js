@@ -7,8 +7,12 @@ const spReceiptCompactControls = new WeakSet();
 const spReceiptNumberWrappers = new WeakSet();
 
 const spReceiptNumbers = {
-	GRID_FIELDS: ["credit_amount", "credit_exchange_rate", "credit_company_amount"],
-	LIVE_FIELDS: ["credit_amount", "credit_exchange_rate", "receipt_payer_exchange_rate"],
+	// Both Pair sides: Receipt rows edit credit_*, Payment rows edit debit_*.
+	GRID_FIELDS: [
+		"credit_amount", "credit_exchange_rate", "credit_company_amount",
+		"debit_amount", "debit_exchange_rate", "debit_company_amount",
+	],
+	LIVE_FIELDS: ["credit_amount", "credit_exchange_rate", "debit_amount", "debit_exchange_rate", "receipt_payer_exchange_rate"],
 
 	compact(formatted, df, doc) {
 		const numeric = window.smartprocessAccounting?.numeric;
@@ -61,7 +65,7 @@ const spReceiptNumbers = {
 		// click handler returns false (stops propagation), so the click is caught in
 		// the capture phase and handled after that handler has built the controls.
 		const prepareRow = (target) => {
-			if (!spReceiptConfig.isReceipt(frm.doc)) {
+			if (!spReceiptConfig.isFlow(frm.doc)) {
 				return;
 			}
 			for (const control of this.rowControls(target)) {

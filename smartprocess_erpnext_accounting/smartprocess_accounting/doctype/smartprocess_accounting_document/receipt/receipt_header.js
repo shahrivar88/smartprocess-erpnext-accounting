@@ -8,8 +8,6 @@ const SP_RECEIPT_SHARED_LABELS = {
 		posting_date: "تاریخ ثبت",
 		general_reference: "مرجع عمومی",
 		general_description: "شرح عمومی",
-		pairs_section: "ردیف‌های دریافت",
-		operational_pairs: "پرداخت‌کنندگان / منابع",
 		supplementary_section: "اطلاعات تکمیلی",
 	},
 	generic: {
@@ -48,7 +46,7 @@ const spReceiptHeader = {
 	},
 
 	receiverPartyQuery(doc) {
-		if (!spReceiptConfig.isReceipt(doc)) {
+		if (!spReceiptConfig.isFlow(doc)) {
 			return {};
 		}
 		return {
@@ -61,13 +59,19 @@ const spReceiptHeader = {
 		};
 	},
 
-	configure(frm, isReceipt) {
-		const labels = SP_RECEIPT_SHARED_LABELS[isReceipt ? "receipt" : "generic"];
+	configure(frm, isFlow) {
+		const labels = isFlow
+			? {
+				...SP_RECEIPT_SHARED_LABELS.receipt,
+				...spFlowText.of(frm.doc).sections,
+				...spFlowText.headerLabels(frm.doc, (fieldname) => frappe.meta.docfield_map?.[frm.doctype]?.[fieldname]?.label),
+			}
+			: SP_RECEIPT_SHARED_LABELS.generic;
 		for (const [fieldname, label] of Object.entries(labels)) {
 			frm.set_df_property(fieldname, "label", label);
 		}
-		frm.set_df_property("receipt_payer_exchange_rate", "formatter", isReceipt ? spReceiptNumbers.formatter : null);
-		if (isReceipt) {
+		frm.set_df_property("receipt_payer_exchange_rate", "formatter", isFlow ? spReceiptNumbers.formatter : null);
+		if (isFlow) {
 			this.applyReceiverKindLabels(frm);
 		}
 	},
@@ -149,7 +153,7 @@ const spReceiptHeader = {
 
 	hasReceiptData(doc) {
 		return SP_RECEIVER_FIELDS.some((fieldname) => doc[fieldname])
-			|| (doc[spReceiptConfig.TABLE] || []).some((row) => spReceiptValidation.rowHasUserContent(row));
+			|| (doc[spReceiptConfig.TABLE] || []).some((row) => spReceiptValidation.rowHasUserContent(row, doc));
 	},
 
 	// The Receiver currency defaults to Company.default_currency; a populated

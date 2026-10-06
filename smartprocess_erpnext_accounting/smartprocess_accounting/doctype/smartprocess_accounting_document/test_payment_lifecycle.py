@@ -14,18 +14,21 @@ from decimal import Decimal
 import frappe
 from frappe.utils import add_days, getdate, nowdate
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.document_details import get_document_detail
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment import PaymentValidationError
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment_api import preview_payment
 
-from .test_receipt_lifecycle import TestReceiptLifecycle
+from . import test_receipt_lifecycle
 from .v2_test_support import AccountingFixtureTestCase
 
 DOCTYPE = "SmartProcess Accounting Document"
 POSTING = "SmartProcess Accounting Posting"
-LIFECYCLE = TestReceiptLifecycle
 
 
 class TestPaymentLifecycle(AccountingFixtureTestCase):
+	# Not a module-level name, so the loader does not run the Receipt tests here.
+	LIFECYCLE = test_receipt_lifecycle.TestReceiptLifecycle
+
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
@@ -131,7 +134,73 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 			self.assertEqual((debit[0].account, credit[0].account), (receivable, payer))
 			self.assertEqual(Decimal(str(debit[0].debit)), Decimal(str(credit[0].credit)), pair.idx)
 			self.assertEqual(Decimal(str(credit[0].credit_in_account_currency)), Decimal(str(pair.credit_amount)))
+		self.assert_drill_down(doc, postings, customer, receivable, payer, [rate for _, rate in rows])
 		self.cancel_and_assert_reversed(doc, postings)
+
+	def assert_drill_down(self, doc, postings, customer, receivable, payer, rates):
+		self.assertEqual(len(postings), 1)
+		detail = get_document_detail(POSTING, postings[0], party_type="Customer", party=customer, account=receivable)
+		self.assertEqual((detail["resolver"], detail["doctype"], detail["name"], detail["title"]), ("accounting_posting", DOCTYPE, doc.name, "پرداخت"))
+		lines = detail["accounts"]
+		self.assertEqual([line["row"] for line in lines], [1, 1, 2, 2, 3, 3])
+		self.assertEqual([line["side"] for line in lines], ["پرداخت‌کننده", "دریافت‌کننده"] * 3)
+		self.assertEqual([line["nature"] for line in lines], ["بستانکار", "بدهکار"] * 3)
+		self.assertEqual([line["account"] for line in lines], [payer, receivable] * 3)
+		self.assertEqual([line["is_party_row"] for line in lines], [False, True] * 3)
+		self.assertEqual([Decimal(str(line["exchange_rate"])) for line in lines[1::2]], [Decimal(rate) for rate in rates])
+		for pair, header, row in zip(doc.operational_pairs, lines[0::2], lines[1::2]):
+			self.assertEqual(Decimal(str(header["amount"])), Decimal(str(pair.credit_amount)))
+			self.assertEqual(Decimal(str(row["amount"])), Decimal(str(pair.debit_amount)))
+			self.assertEqual(Decimal(str(header["base_amount"])), Decimal(str(row["base_amount"])))
+
+	def test_receipt_drill_down_keeps_the_receiver_on_the_debit_side(self):
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(self.base)
+		doc = self.payment(
+			self.base,
+			self.base,
+			self.bank_header(bank),
+			[{"receipt_recipient_type": "Customer", "receipt_recipient": customer, "credit_account": receivable, "credit_amount": "30"}],
+		)
+		doc.operation_type = "Receipt"
+		doc.insert().submit()
+		detail = get_document_detail(POSTING, self.postings(doc)[0])
+		self.assertEqual((detail["title"], detail["name"]), ("رسید", doc.name))
+		self.assertEqual(
+			[(line["row"], line["side"], line["nature"], line["account"]) for line in detail["accounts"]],
+			[(1, "دریافت‌کننده", "بدهکار", bank.account), (1, "پرداخت‌کننده", "بستانکار", receivable)],
+		)
+
+	def test_payment_posted_before_v1_keeps_its_direct_reversal(self):
+		bank = self.company_bank_account(self.base)
+		other = self.generic_account(self.base)
+		doc = frappe.get_doc(
+			{
+				"doctype": DOCTYPE,
+				"operation_type": "Transfer",
+				"company": self.company,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"operational_pairs": [
+					{
+						"debit_account": bank.account,
+						"debit_amount": 50,
+						"debit_exchange_rate": 1,
+						"credit_account": other,
+						"credit_amount": 50,
+						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		).insert()
+		doc.submit()
+		# A pre-V1 Payment: GL on the document voucher, no posting unit.
+		frappe.db.set_value(DOCTYPE, doc.name, "operation_type", "Payment", update_modified=False)
+		active = {"voucher_type": DOCTYPE, "voucher_no": doc.name, "is_cancelled": 0}
+		self.assertEqual(frappe.db.count("GL Entry", active), 2)
+		frappe.get_doc(DOCTYPE, doc.name).cancel()
+		self.assertEqual(frappe.db.count("GL Entry", active), 0)
+		self.assertFalse(frappe.db.exists(POSTING, {"source_document": doc.name}))
 
 	def test_row_dates_post_one_unit_per_date_and_keep_each_row_date(self):
 		bank = self.company_bank_account(self.base)

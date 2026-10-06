@@ -1,10 +1,8 @@
-// Receipt row events = Payer side. Every row inherits the header Payer
-// Currency and keeps its own rate: Payer Type → Payer → Payer Ledger Account →
-// Amount → Rate. Base Amount comes from the server preview.
+// Row events = the row side (Receipt payers, Payment recipients). Every row
+// inherits the header row currency and keeps its own rate: Type → Party →
+// Ledger Account → Amount → Rate. Base Amount comes from the server preview.
 // Field changes never validate or show messages; Add Row / Save do that.
-const SP_RECEIPT_COPIED_FIELDS = [
-	"credit_exchange_rate", "receipt_recipient_type", "receipt_recipient", "credit_account",
-];
+const SP_RECEIPT_COPIED_FIELDS = ["exchange_rate", "receipt_recipient_type", "receipt_recipient", "account"];
 
 const spReceiptRowEvents = {
 	rows(frm) {
@@ -52,10 +50,11 @@ const spReceiptRowEvents = {
 			await this.setRowValue(row, "receipt_recipient_type", defaultType);
 		}
 		const currency = frm.doc[spReceiptConfig.PAYER_CURRENCY];
-		if (currency && (!row.receipt_currency || !spReceiptValidation.rowHasUserContent(row))) {
+		const filled = spReceiptValidation.rowHasUserContent(row, frm.doc);
+		if (currency && (!row.receipt_currency || !filled)) {
 			await this.setRowValue(row, "receipt_currency", currency);
 		}
-		if (!row.receipt_posting_date && !spReceiptValidation.rowHasUserContent(row) && frm.doc.posting_date) {
+		if (!row.receipt_posting_date && !filled && frm.doc.posting_date) {
 			await this.setRowValue(row, "receipt_posting_date", frm.doc.posting_date);
 		}
 		await this.normalizeRate(frm, row, false);
@@ -64,12 +63,13 @@ const spReceiptRowEvents = {
 	// A base Payer Currency always uses rate 1. A rate entered for another
 	// currency is dropped; otherwise each row keeps its own manual rate.
 	async normalizeRate(frm, row, reset) {
+		const rate = spReceiptConfig.rowField(frm.doc, "exchange_rate");
 		if (spReceiptConfig.isBasePayer(frm.doc)) {
-			if (Number(row.credit_exchange_rate) !== 1) {
-				await this.setRowValue(row, "credit_exchange_rate", 1);
+			if (Number(row[rate]) !== 1) {
+				await this.setRowValue(row, rate, 1);
 			}
-		} else if (reset && row.credit_exchange_rate) {
-			await this.setRowValue(row, "credit_exchange_rate", null);
+		} else if (reset && row[rate]) {
+			await this.setRowValue(row, rate, null);
 		}
 	},
 
@@ -90,9 +90,11 @@ const spReceiptRowEvents = {
 	},
 
 	rowsLosingValues(frm, currency) {
+		const account = spReceiptConfig.rowField(frm.doc, "account");
+		const rate = spReceiptConfig.rowField(frm.doc, "exchange_rate");
 		return this.rows(frm).filter((row) =>
 			this.isIncompatible(row, currency)
-			&& (row.receipt_recipient || row.credit_account || (row.credit_exchange_rate && Number(row.credit_exchange_rate) !== 1)),
+			&& (row.receipt_recipient || row[account] || (row[rate] && Number(row[rate]) !== 1)),
 		);
 	},
 
@@ -106,7 +108,7 @@ const spReceiptRowEvents = {
 				const incompatible = this.isIncompatible(row, currency);
 				if (incompatible) {
 					await this.setRowValue(row, "receipt_recipient", "");
-					await this.setRowValue(row, "credit_account", "");
+					await this.setRowValue(row, spReceiptConfig.rowField(frm.doc, "account"), "");
 				}
 				await this.setRowValue(row, "receipt_currency", currency);
 				await this.normalizeRate(frm, row, incompatible);
@@ -123,7 +125,7 @@ const spReceiptRowEvents = {
 				if (!row.receipt_posting_date || row.receipt_posting_date === date) {
 					continue;
 				}
-				if (!spReceiptValidation.rowHasUserContent(row) && row.receipt_posting_date === previous) {
+				if (!spReceiptValidation.rowHasUserContent(row, frm.doc) && row.receipt_posting_date === previous) {
 					await this.setRowValue(row, "receipt_posting_date", date);
 				} else {
 					kept.push(row);
@@ -134,7 +136,7 @@ const spReceiptRowEvents = {
 	},
 
 	async rowAdded(frm, cdt, cdn) {
-		if (!spReceiptConfig.isReceipt(frm.doc)) {
+		if (!spReceiptConfig.isFlow(frm.doc)) {
 			return;
 		}
 		await this.loadPayerTypeSettings(frm);
@@ -142,8 +144,9 @@ const spReceiptRowEvents = {
 		const index = rows.findIndex((candidate) => candidate.name === cdn);
 		const previous = index > 0 ? rows[index - 1] : null;
 		const row = frappe.get_doc(cdt, cdn);
+		const copied = SP_RECEIPT_COPIED_FIELDS.map((name) => (name.startsWith("receipt_") ? name : spReceiptConfig.rowField(frm.doc, name)));
 		await spReceiptForm.quietly(frm, async () => {
-			for (const fieldname of previous ? SP_RECEIPT_COPIED_FIELDS : []) {
+			for (const fieldname of previous ? copied : []) {
 				if (previous[fieldname]) {
 					await this.setRowValue(row, fieldname, previous[fieldname]);
 				}
@@ -155,7 +158,7 @@ const spReceiptRowEvents = {
 	},
 
 	async rateChanged(frm, cdt, cdn) {
-		if (!spReceiptConfig.isReceipt(frm.doc) || spReceiptForm.isQuiet(frm)) {
+		if (!spReceiptConfig.isFlow(frm.doc) || spReceiptForm.isQuiet(frm)) {
 			return;
 		}
 		await spReceiptForm.quietly(frm, () => this.normalizeRate(frm, frappe.get_doc(cdt, cdn), false));
@@ -163,19 +166,19 @@ const spReceiptRowEvents = {
 	},
 
 	async payerTypeChanged(frm, cdt, cdn) {
-		if (!spReceiptConfig.isReceipt(frm.doc) || spReceiptForm.isQuiet(frm)) {
+		if (!spReceiptConfig.isFlow(frm.doc) || spReceiptForm.isQuiet(frm)) {
 			return;
 		}
 		const row = frappe.get_doc(cdt, cdn);
 		await spReceiptForm.quietly(frm, async () => {
 			await this.setRowValue(row, "receipt_recipient", "");
-			await this.setRowValue(row, "credit_account", "");
+			await this.setRowValue(row, spReceiptConfig.rowField(frm.doc, "account"), "");
 		});
 		spReceiptSummary.schedule(frm);
 	},
 
 	async payerChanged(frm, cdt, cdn) {
-		if (!spReceiptConfig.isReceipt(frm.doc) || spReceiptForm.isQuiet(frm)) {
+		if (!spReceiptConfig.isFlow(frm.doc) || spReceiptForm.isQuiet(frm)) {
 			return;
 		}
 		const row = frappe.get_doc(cdt, cdn);
@@ -184,7 +187,7 @@ const spReceiptRowEvents = {
 		if (frappe.get_doc(cdt, cdn)?.receipt_recipient !== payer) {
 			return;
 		}
-		await spReceiptForm.quietly(frm, () => this.setRowValue(row, "credit_account", account));
+		await spReceiptForm.quietly(frm, () => this.setRowValue(row, spReceiptConfig.rowField(frm.doc, "account"), account));
 		spReceiptSummary.schedule(frm);
 	},
 

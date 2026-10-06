@@ -133,7 +133,7 @@ def cancel_document(doc) -> None:
 	if cint(doc.docstatus) != 2:
 		frappe.throw(_("Only a cancelled SmartProcess Accounting Document can reverse its ledger."))
 	assert_native_posting_contract()
-	if doc.operation_type in FLOW_OPERATIONS:
+	if posted_by_units(doc):
 		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
 			cancel_receipt,
 		)
@@ -141,6 +141,16 @@ def cancel_document(doc) -> None:
 		cancel_receipt(doc)
 		return
 	cancel_voucher(doc)
+
+
+def posted_by_units(doc) -> bool:
+	"""A Payment submitted before Payment V1 posted its GL on the document itself
+	and keeps that reversal; Receipt always posts by posting unit."""
+	if doc.operation_type == "Receipt":
+		return True
+	if doc.operation_type not in FLOW_OPERATIONS:
+		return False
+	return bool(frappe.db.exists("SmartProcess Accounting Posting", {"source_document": doc.name}))
 
 
 def cancel_voucher(doc) -> None:

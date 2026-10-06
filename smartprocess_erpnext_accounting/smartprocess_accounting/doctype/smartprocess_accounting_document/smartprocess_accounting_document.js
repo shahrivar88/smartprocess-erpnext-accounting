@@ -1,4 +1,5 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_config.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/flow_text.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_numbers.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_form.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_header.js" %}
@@ -15,7 +16,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		for (const side of ["debit", "credit"]) {
 			frm.set_query(`${side}_account`, "operational_pairs", (doc, cdt, cdn) => {
 				const row = frappe.get_doc(cdt, cdn);
-				if (side === "credit" && spReceiptConfig.isReceipt(frm.doc)) {
+				if (isFlowForm(frm) && side === spReceiptConfig.rowSide(frm.doc)) {
 					return { filters: spReceiptRowQueries.payerAccountFilters(frm.doc, row) };
 				}
 				const filters = { company: frm.doc.company, disabled: 0, is_group: 0 };
@@ -61,31 +62,31 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		for (const row of frm.doc.operational_pairs || []) {
 			await frappe.model.set_value(row.doctype, row.name, "company_currency", currency || "");
 		}
-		if (spReceiptConfig.isReceipt(frm.doc)) {
+		if (isFlowForm(frm)) {
 			await spReceiptHeader.companyChanged(frm);
 		}
 	},
 	posting_date(frm) {
-		return isReceiptForm(frm) && spReceiptPayerHeader.postingDateChanged(frm);
+		return isFlowForm(frm) && spReceiptPayerHeader.postingDateChanged(frm);
 	},
 	receipt_payer_currency(frm) {
-		return isReceiptForm(frm) && spReceiptHeader.currencyChanged(frm);
+		return isFlowForm(frm) && spReceiptHeader.currencyChanged(frm);
 	},
 	receipt_credit_currency(frm) {
-		return isReceiptForm(frm) && spReceiptPayerHeader.currencyChanged(frm);
+		return isFlowForm(frm) && spReceiptPayerHeader.currencyChanged(frm);
 	},
 	receipt_receiver_kind(frm) {
-		return isReceiptForm(frm) && spReceiptHeader.receiverKindChanged(frm);
+		return isFlowForm(frm) && spReceiptHeader.receiverKindChanged(frm);
 	},
 	receipt_bank_account(frm) {
-		return isReceiptForm(frm) && spReceiptHeader.bankChanged(frm);
+		return isFlowForm(frm) && spReceiptHeader.bankChanged(frm);
 	},
 	receipt_payer(frm) {
-		return isReceiptForm(frm) && spReceiptHeader.partyChanged(frm);
+		return isFlowForm(frm) && spReceiptHeader.partyChanged(frm);
 	},
 	receipt_payer_account: receiptPreviewChanged,
 	receipt_payer_exchange_rate(frm) {
-		return isReceiptForm(frm) && spReceiptHeader.rateChanged(frm);
+		return isFlowForm(frm) && spReceiptHeader.rateChanged(frm);
 	},
 });
 
@@ -93,8 +94,13 @@ function isReceiptForm(frm) {
 	return spReceiptConfig.isReceipt(frm.doc);
 }
 
+// Receipt and Payment share the header / row client; only Receipt converts.
+function isFlowForm(frm) {
+	return spReceiptConfig.isFlow(frm.doc);
+}
+
 function receiptPreviewChanged(frm) {
-	if (isReceiptForm(frm)) {
+	if (isFlowForm(frm)) {
 		spReceiptSummary.schedule(frm);
 	}
 }
@@ -147,8 +153,8 @@ function startCorrection(frm, correctionReason) {
 	});
 }
 
-// Generic Payment / Transfer / Conversion pair calculation. Receipt rows never
-// use it: their amounts come from the Receipt preview.
+// Generic Transfer / Conversion pair calculation. Receipt and Payment rows never
+// use it: their amounts come from the server preview.
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {
 		const row = frappe.get_doc(cdt, cdn);
@@ -221,16 +227,17 @@ const pairEvents = {
 		return spReceiptRowEvents.payerChanged(frm, cdt, cdn);
 	},
 	receipt_posting_date: receiptPreviewChanged,
-	credit_description: receiptPreviewChanged,
 };
 for (const side of ["debit", "credit"]) {
-	const receiptChange = side === "credit" ? receiptPreviewChanged : () => {};
-	const receiptRateChange = side === "credit" ? (frm, cdt, cdn) => spReceiptRowEvents.rateChanged(frm, cdt, cdn) : () => {};
-	const pick = (receipt, generic) => (frm, cdt, cdn) =>
-		isReceiptForm(frm) ? receipt(frm, cdt, cdn) : generic(frm, cdt, cdn);
-	pairEvents[`${side}_account`] = pick(receiptChange, (frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side));
-	pairEvents[`${side}_amount`] = pick(receiptChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
-	pairEvents[`${side}_exchange_rate`] = pick(receiptRateChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
+	// In a Receipt / Payment only the row side is edited; the server fills the other.
+	const rowChange = (frm) => side === spReceiptConfig.rowSide(frm.doc) && receiptPreviewChanged(frm);
+	const rowRateChange = (frm, cdt, cdn) => side === spReceiptConfig.rowSide(frm.doc) && spReceiptRowEvents.rateChanged(frm, cdt, cdn);
+	const pick = (flow, generic) => (frm, cdt, cdn) =>
+		isFlowForm(frm) ? flow(frm, cdt, cdn) : generic(frm, cdt, cdn);
+	pairEvents[`${side}_description`] = rowChange;
+	pairEvents[`${side}_account`] = pick(rowChange, (frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side));
+	pairEvents[`${side}_amount`] = pick(rowChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
+	pairEvents[`${side}_exchange_rate`] = pick(rowRateChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
 	pairEvents[`${side}_party_type`] = pick(() => {}, (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side));
 	pairEvents[`${side}_party`] = pick(() => {}, (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side));
 }

@@ -1,5 +1,5 @@
-// Header fields that steer every payer row: the one Payer Currency all rows
-// inherit, and the document date that new rows start from.
+// Header fields that steer every row: the one row currency all rows inherit
+// (Receipt payers / Payment recipients), and the date new rows start from.
 const spReceiptPayerHeader = {
 	// A new Receipt pays in Company.default_currency; a Receipt saved before the
 	// header field existed takes the single currency its rows already use.
@@ -14,7 +14,7 @@ const spReceiptPayerHeader = {
 		let currency = current;
 		if (!current) {
 			currency = this.rowCurrency(frm) || companyCurrency;
-		} else if (replace && !spReceiptRowEvents.rows(frm).some((row) => spReceiptValidation.rowHasUserContent(row))) {
+		} else if (replace && !spReceiptRowEvents.rows(frm).some((row) => spReceiptValidation.rowHasUserContent(row, frm.doc))) {
 			currency = companyCurrency;
 		}
 		if (current !== currency) {
@@ -48,7 +48,7 @@ const spReceiptPayerHeader = {
 			return;
 		}
 		const affected = spReceiptRowEvents.rowsLosingValues(frm, current);
-		if (affected.length && !(await this.confirmChange(previous, current, affected.length))) {
+		if (affected.length && !(await this.confirmChange(previous, current, affected.length, undefined, frm.doc))) {
 			await spReceiptForm.quietly(frm, () => frm.set_value(spReceiptConfig.PAYER_CURRENCY, previous));
 			return;
 		}
@@ -58,11 +58,8 @@ const spReceiptPayerHeader = {
 		spReceiptSummary.schedule(frm);
 	},
 
-	confirmChange(previous, current, count, escape = (value) => frappe.utils.escape_html(value)) {
-		const message = __(
-			"ارز پرداخت‌کننده از {0} به {1} تغییر می‌کند. پرداخت‌کننده، معین و نرخ ارز {2} ردیفِ پرشده با ارز قبلی پاک می‌شود؛ نوع پرداخت‌کننده، مبلغ و تاریخ ردیف‌ها می‌ماند. ادامه می‌دهید؟",
-			[escape(previous || "—"), escape(current || "—"), count],
-		);
+	confirmChange(previous, current, count, escape = (value) => frappe.utils.escape_html(value), doc = null) {
+		const message = __(spFlowText.of(doc).currencyChange, [escape(previous || "—"), escape(current || "—"), count]);
 		return new Promise((resolve) => {
 			frappe.confirm(message, () => resolve(true), () => resolve(false));
 		});

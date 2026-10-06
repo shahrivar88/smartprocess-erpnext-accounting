@@ -3,14 +3,15 @@
 const spReceiptGuardedGrids = new WeakSet();
 
 const spReceiptValidation = {
-	// A row with only the default Payer Type (and its mirrored currency) is an
-	// untouched placeholder.
-	rowHasUserContent(row) {
+	// A row with only the default type (and its mirrored currency) is an
+	// untouched placeholder; only the row side counts as user input.
+	rowHasUserContent(row, doc = null) {
+		const field = (name) => spReceiptConfig.rowField(doc, name);
 		return Boolean(
 			row?.receipt_recipient
-			|| row?.credit_account
-			|| Number(row?.credit_amount)
-			|| row?.credit_description,
+			|| row?.[field("account")]
+			|| Number(row?.[field("amount")])
+			|| row?.[field("description")],
 		);
 	},
 
@@ -54,7 +55,7 @@ const spReceiptValidation = {
 		grid.add_new_row = function (...args) {
 			const rows = this.frm.doc[spReceiptConfig.TABLE] || [];
 			const last = rows[rows.length - 1];
-			if (!spReceiptConfig.isReceipt(this.frm.doc) || !spReceiptValidation.rowHasUserContent(last)) {
+			if (!spReceiptConfig.isFlow(this.frm.doc) || !spReceiptValidation.rowHasUserContent(last, this.frm.doc)) {
 				return addNewRow.apply(this, args);
 			}
 			spReceiptValidation.addAfterCheck(this.frm, rows.length, () => {
@@ -86,7 +87,7 @@ const spReceiptValidation = {
 	// stays the authority for the complete check.
 	dropPlaceholderRows(frm) {
 		const rows = frm.doc[spReceiptConfig.TABLE] || [];
-		const placeholders = rows.filter((row) => !this.rowHasUserContent(row));
+		const placeholders = rows.filter((row) => !this.rowHasUserContent(row, frm.doc));
 		if (!placeholders.length || placeholders.length === rows.length) {
 			return;
 		}
@@ -103,7 +104,7 @@ const spReceiptValidation = {
 			return;
 		}
 		frappe.validated = false;
-		this.show(__("رسید کامل نیست"), preview.issues || []);
+		this.show(__(spFlowText.of(frm.doc).incomplete), preview.issues || []);
 	},
 };
 

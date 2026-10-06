@@ -76,7 +76,9 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(meta.get_field("receipt_payer_exchange_rate").label, "نرخ ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_receiver_kind").default, "بانک")
 		self.assertEqual(meta.get_field("receipt_credit_currency").label, "ارز پرداخت‌کننده")
-		self.assertEqual(meta.get_field("company_currency").depends_on, "eval:doc.operation_type != 'Receipt'")
+		self.assertEqual(
+			meta.get_field("company_currency").depends_on, "eval:!['Receipt', 'Payment'].includes(doc.operation_type)"
+		)
 
 	def test_app_never_rewrites_the_site_receipt_layout(self):
 		"""The user arranges the Receipt in Customize Form; the app must not reorder or rewrite it."""

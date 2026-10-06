@@ -1,10 +1,11 @@
-// Receipt preview and summary. receipt_api.preview_receipt is the only source
-// of financial values: the Payer Currency total, its weighted rate, the derived
-// Receiver amount and each row's base amount.
+// Receipt / Payment preview and summary. The server preview is the only source
+// of financial values: the row-currency total, its weighted rate, the derived
+// header amount and each row's base amount.
 const SP_RECEIPT_PREVIEW_DELAY = 400;
 
 const spReceiptSummary = {
 	payload(doc) {
+		const field = (name) => spReceiptConfig.rowField(doc, name);
 		return {
 			doctype: doc.doctype,
 			name: doc.name,
@@ -26,16 +27,13 @@ const spReceiptSummary = {
 				receipt_recipient_type: row.receipt_recipient_type,
 				receipt_recipient: row.receipt_recipient,
 				receipt_currency: row.receipt_currency,
-				credit_account: row.credit_account,
-				credit_amount: row.credit_amount,
-				credit_exchange_rate: row.credit_exchange_rate,
-				credit_description: row.credit_description,
+				...Object.fromEntries(["account", "amount", "exchange_rate", "description"].map((name) => [field(name), row[field(name)]])),
 			})),
 		};
 	},
 
 	canPreview(frm) {
-		return spReceiptConfig.isReceipt(frm.doc)
+		return spReceiptConfig.isFlow(frm.doc)
 			&& Boolean(frappe.model.can_write(frm.doctype) || frappe.model.can_create(frm.doctype));
 	},
 
@@ -58,7 +56,7 @@ const spReceiptSummary = {
 		}
 		const request = ++state.previewRequest;
 		const payload = this.payload(frm.doc);
-		const preview = await frappe.xcall(spReceiptConfig.method("receipt_api.preview_receipt"), { doc: payload });
+		const preview = await frappe.xcall(spReceiptConfig.method(spFlowText.of(frm.doc).preview), { doc: payload });
 		if (request === state.previewRequest && state === spReceiptForm.state(frm)) {
 			state.preview = preview;
 			await this.applyRowAmounts(frm, payload, preview);
@@ -80,12 +78,13 @@ const spReceiptSummary = {
 				byName.set(row.name, Number(entry.base_amount));
 			}
 		}
+		const baseField = spReceiptConfig.rowField(frm.doc, "company_amount");
 		for (const row of frm.doc[spReceiptConfig.TABLE] || []) {
 			const value = byName.has(row.name) ? byName.get(row.name) : null;
-			const current = row.credit_company_amount;
+			const current = row[baseField];
 			const same = value === null ? !Number(current) : Number(current) === value && current !== "";
 			if (!same) {
-				await frappe.model.set_value(row.doctype, row.name, "credit_company_amount", value);
+				await frappe.model.set_value(row.doctype, row.name, baseField, value);
 			}
 		}
 	},
@@ -111,16 +110,17 @@ const spReceiptSummary = {
 		const payers = (result.payer_totals || []).map((total) =>
 			row("sp-receipt-payer-values", [escape(total.currency), number(total.amount), number(total.rate), base(total.base_amount)]),
 		);
+		const text = spFlowText.of(doc);
 		const receiverCurrency = result.receiver_currency || doc.receipt_payer_currency || "";
 		const receiver = result.receiver_account || doc.receipt_payer_account || "";
-		const receiverTitle = receiver ? `مجموع واریزی به دریافت‌کننده — ${escape(receiver)}` : "مجموع واریزی به دریافت‌کننده";
+		const receiverTitle = receiver ? `${text.summaryTitle} — ${escape(receiver)}` : text.summaryTitle;
 		return `<div class="sp-receipt-summary">
 			<table class="table table-bordered">
 				<thead><tr><th>ارز</th><th>جمع به همان ارز</th><th>میانگین موزون نرخ</th><th>جمع به ارز پایه</th></tr></thead>
 				<tbody class="sp-receipt-payers">${payers.join("") || row("sp-receipt-payer-values", ["—", "—", "—", "—"])}</tbody>
 				<tbody class="sp-receipt-receiver">
 					<tr class="sp-receipt-receiver-title"><th colspan="4">${receiverTitle}</th></tr>
-					<tr class="sp-receipt-receiver-head"><th>ارز دریافت‌کننده</th><th>مبلغ دریافت‌کننده</th><th>نرخ مؤثر</th><th>مبلغ به ارز پایه</th></tr>
+					<tr class="sp-receipt-receiver-head"><th>${text.headerCurrency}</th><th>${text.headerAmount}</th><th>نرخ مؤثر</th><th>مبلغ به ارز پایه</th></tr>
 					${row("sp-receipt-receiver-values", [
 						escape(receiverCurrency || "—"),
 						number(result.receiver_amount),

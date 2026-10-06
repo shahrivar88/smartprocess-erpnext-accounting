@@ -12,6 +12,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 	FLOW_OPERATIONS,
 	cancel_document,
 	post_document,
+	posted_by_units,
 	require_posting_enabled,
 	validate_document,
 )
@@ -65,13 +66,13 @@ class SmartProcessAccountingDocument(AccountsController):
 	def before_cancel(self):
 		if self.operation_type == "Receipt":
 			assert_no_active_conversions(self.name)
-		if self.operation_type in FLOW_OPERATIONS:
+		if posted_by_units(self):
 			self._set_cancel_link_exceptions()
 			cancel_document(self)
 
 	def on_cancel(self):
 		self._set_cancel_link_exceptions()
-		if self.operation_type not in FLOW_OPERATIONS:
+		if not posted_by_units(self):
 			cancel_document(self)
 
 	def _set_cancel_link_exceptions(self):

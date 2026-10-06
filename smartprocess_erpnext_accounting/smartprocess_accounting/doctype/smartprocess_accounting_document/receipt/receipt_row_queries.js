@@ -1,5 +1,5 @@
-// Receipt row queries: every payer and payer ledger is filtered by the header
-// Payer Currency, the company and the row Payer Type.
+// Row queries: every row party and ledger is filtered by the header row
+// currency, the company and the row type.
 const spReceiptRowQueries = {
 	setupQueries(frm) {
 		frm.set_query("receipt_recipient_type", spReceiptConfig.TABLE, () => ({
@@ -11,7 +11,7 @@ const spReceiptRowQueries = {
 	},
 
 	payerQuery(doc, row) {
-		if (!spReceiptConfig.isReceipt(doc)) {
+		if (!spReceiptConfig.isFlow(doc)) {
 			return {};
 		}
 		const currency = doc[spReceiptConfig.PAYER_CURRENCY];
@@ -71,7 +71,7 @@ const spReceiptRowQueries = {
 		spReceiptOrderedWrappers.add(wrapper);
 		wrapper.addEventListener("focusin", (event) => {
 			const control = spReceiptNumbers.controlFor(event.target, "receipt_recipient_type");
-			if (control?.awesomplete && spReceiptConfig.isReceipt(frm.doc)) {
+			if (control?.awesomplete && spReceiptConfig.isFlow(frm.doc)) {
 				this.attachPayerTypeOrder(frm, control);
 			}
 		});

@@ -195,6 +195,7 @@ class TestResolvers(unittest.TestCase):
 			"Payment Entry",
 			"Journal Entry",
 			"SmartProcess Currency Conversion",
+			"SmartProcess Accounting Posting",
 		):
 			self.assertIn(name, RESOLVERS)
 
