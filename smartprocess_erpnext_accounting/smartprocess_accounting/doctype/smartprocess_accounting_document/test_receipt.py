@@ -734,7 +734,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		self.assertEqual(replacement.operational_pairs[0].receipt_currency, FOREIGN_A)
 
 	def test_other_operation_types_keep_generic_pair_contract(self):
-		for operation_type in ("Payment", "Transfer", "Currency Conversion"):
+		for operation_type in ("Transfer", "Currency Conversion"):
 			with self.subTest(operation_type=operation_type):
 				doc = self.submit_document([self.base_pair()], operation_type=operation_type)
 				self.assertEqual(len(self.active_gl(doc)), 2)

@@ -18,13 +18,13 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract im
 	NON_GENERIC_ACCOUNT_TYPES,
 	PAYER_CURRENCY_FIELD,
 	PAYER_HEADER_CURRENCY_FIELD,
-	PAYER_RATE_FIELD,
 	PAYER_TYPES,
 	RATE_PLACES,
 	RECEIVER_ACCOUNT_FIELD,
 	RECEIVER_CURRENCY_FIELD,
 	RECEIVER_KINDS,
 	RECEIVER_RATE_FIELD,
+	RECEIPT_TEXT,
 	CanonicalReceipt,
 	CanonicalReceiver,
 	CanonicalRow,
@@ -35,26 +35,36 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 	assert_one_currency_per_party,
 )
 
-ROW_INPUT_FIELDS = ("receipt_recipient_type", "receipt_recipient", "credit_account", "credit_amount")
-
 
 class ReceiptBuilder:
+	"""Header side = ``receiver``; every row fills the ``ROW_SIDE`` of its Pair."""
+
+	ROW_SIDE = "credit"
+	TEXT = RECEIPT_TEXT
+
 	def __init__(self, doc, lookups):
 		self.doc = doc
 		self.lookups = lookups
 		self.issues: list[ReceiptIssue] = []
 		self.party_entries: list[tuple] = []
 		self.receiver = None
+		self.row_account = f"{self.ROW_SIDE}_account"
+		self.row_amount = f"{self.ROW_SIDE}_amount"
+		self.row_rate = f"{self.ROW_SIDE}_exchange_rate"
+		self.row_input_fields = ("receipt_recipient_type", "receipt_recipient", self.row_account, self.row_amount)
+
+	def text(self, key: str) -> str:
+		return _(self.TEXT[key])
 
 	def build(self) -> CanonicalReceipt:
 		self.company_currency = self._company_currency()
 		self.company = self.doc.get("company") if self.company_currency else None
 		self.receiver_currency = self._currency(
-			self.doc.get(RECEIVER_CURRENCY_FIELD), RECEIVER_CURRENCY_FIELD, _("ارز دریافت‌کننده")
+			self.doc.get(RECEIVER_CURRENCY_FIELD), RECEIVER_CURRENCY_FIELD, self.text("header_currency")
 		)
 		self.receiver_rate = self._rate(self.receiver_currency, self.doc.get(RECEIVER_RATE_FIELD), RECEIVER_RATE_FIELD)
 		self.payer_currency = self._currency(
-			self.doc.get(PAYER_HEADER_CURRENCY_FIELD), PAYER_HEADER_CURRENCY_FIELD, _("ارز پرداخت‌کننده")
+			self.doc.get(PAYER_HEADER_CURRENCY_FIELD), PAYER_HEADER_CURRENCY_FIELD, self.text("row_currency")
 		)
 		self.posting_date = self._date(self.doc.get("posting_date"), "posting_date")
 		self.accounts = self._account_details()
@@ -110,7 +120,7 @@ class ReceiptBuilder:
 	def _account_details(self) -> dict:
 		if not self.company:
 			return {}
-		names = {self.doc.get(RECEIVER_ACCOUNT_FIELD), *(row.get("credit_account") for row in self._input_rows())}
+		names = {self.doc.get(RECEIVER_ACCOUNT_FIELD), *(row.get(self.row_account) for row in self._input_rows())}
 		names = {name for name in names if isinstance(name, str) and name}
 		ok, details = self._call(lambda: self.lookups.accounts(names))
 		return details if ok else {}
@@ -118,7 +128,7 @@ class ReceiptBuilder:
 	def _receiver(self):
 		kind = self.doc.get("receipt_receiver_kind")
 		if kind not in RECEIVER_KINDS:
-			return self._issue(_("نوع دریافت‌کننده را انتخاب کنید."), "receipt_receiver_kind")
+			return self._issue(self.text("header_kind_required"), "receipt_receiver_kind")
 		if not self.company:
 			return None
 		party_type = party = bank_account = None
@@ -131,26 +141,26 @@ class ReceiptBuilder:
 		elif kind in ALLOWED_PARTY_TYPES:
 			party_type, party = kind, self.doc.get("receipt_payer") or None
 			if not party:
-				self._issue(_("دریافت‌کننده الزامی است."), "receipt_payer")
+				self._issue(self.text("header_party_required"), "receipt_payer")
 		if not account_name:
-			return self._issue(_("معین دریافت‌کننده الزامی است."), RECEIVER_ACCOUNT_FIELD)
+			return self._issue(self.text("header_account_required"), RECEIVER_ACCOUNT_FIELD)
 		account = self._account(account_name, RECEIVER_ACCOUNT_FIELD)
 		if not account:
 			return None
 		currency = self.receiver_currency
-		self._require_currency(account, _("معین دریافت‌کننده"), currency, _("ارز دریافت‌کننده"), RECEIVER_ACCOUNT_FIELD)
+		self._require_currency(
+			account, self.text("header_account"), currency, self.text("header_currency"), RECEIVER_ACCOUNT_FIELD
+		)
 		if kind in ACCOUNT_RECEIVER_TYPES:
 			self._check_receiver_account_type(kind, account)
 		elif party:
-			self._check_party(party_type, party, account, currency, _("دریافت‌کننده"), "receipt_payer")
+			self._check_party(party_type, party, account, currency, self.text("header_party"), "receipt_payer")
 		return CanonicalReceiver(kind, account.name, party_type, party, bank_account)
 
 	def _check_receiver_account_type(self, kind, account) -> None:
 		required = ACCOUNT_RECEIVER_TYPES[kind]
 		if required and account.account_type != required:
-			self._issue(
-				_("نوع حساب معین دریافت‌کننده باید {0} باشد.").format(required), RECEIVER_ACCOUNT_FIELD
-			)
+			self._issue(self.text("header_account_type").format(required), RECEIVER_ACCOUNT_FIELD)
 		elif not required and account.account_type in NON_GENERIC_ACCOUNT_TYPES:
 			self._issue(
 				_("برای سایر حساب‌ها، یک حساب معتبر غیر بانکی، غیر صندوق و غیر طرف حساب انتخاب کنید."),
@@ -160,22 +170,22 @@ class ReceiptBuilder:
 	def _rows(self) -> list[CanonicalRow]:
 		rows = self._input_rows()
 		if not rows:
-			self._issue(_("حداقل یک ردیف دریافت لازم است."), "operational_pairs")
+			self._issue(self.text("rows_required"), "operational_pairs")
 			return []
 		names = [row.get("name") for row in rows if row.get("name")]
 		if len(names) != len(set(names)):
-			self._issue(_("شناسه ردیف‌های رسید تکراری است."), "operational_pairs")
+			self._issue(self.text("duplicate_rows"), "operational_pairs")
 		canonical = (self._row(number, row) for number, row in enumerate(rows, start=1))
 		return [row for row in canonical if row]
 
 	def _row(self, number: int, row):
-		if not any(row.get(fieldname) for fieldname in ROW_INPUT_FIELDS):
+		if not any(row.get(fieldname) for fieldname in self.row_input_fields):
 			return self._issue(_("ردیف خالی است؛ آن را تکمیل یا حذف کنید."), None, number)
 		currency = self._row_currency(number, row)
-		rate = self._rate(currency, row.get(PAYER_RATE_FIELD), PAYER_RATE_FIELD, number)
+		rate = self._rate(currency, row.get(self.row_rate), self.row_rate, number)
 		payer_type = row.get("receipt_recipient_type")
 		if payer_type not in PAYER_TYPES:
-			self._issue(_("نوع پرداخت‌کننده را انتخاب کنید."), "receipt_recipient_type", number)
+			self._issue(self.text("row_type_required"), "receipt_recipient_type", number)
 		amount = self._amount(number, row, currency)
 		row_date = row.get("receipt_posting_date")
 		posting_date = self._date(row_date, "receipt_posting_date", number) if row_date else self.posting_date
@@ -189,11 +199,11 @@ class ReceiptBuilder:
 		)
 
 	def _row_currency(self, number: int, row):
-		"""Every row inherits the header Payer Currency; a stored row mirror must agree."""
+		"""Every row inherits the header row currency; a stored row mirror must agree."""
 		stored = row.get(PAYER_CURRENCY_FIELD)
 		if stored and self.payer_currency and stored != self.payer_currency:
 			return self._issue(
-				_("ارز ردیف ({0}) با ارز پرداخت‌کننده ({1}) یکی نیست.").format(stored, self.payer_currency),
+				self.text("row_currency_mismatch").format(stored, self.payer_currency),
 				PAYER_CURRENCY_FIELD,
 				number,
 			)
@@ -201,7 +211,7 @@ class ReceiptBuilder:
 
 	def _payer(self, number: int, row, payer_type, currency):
 		party_type = party = None
-		account_name = row.get("credit_account")
+		account_name = row.get(self.row_account)
 		if payer_type == BANK_ACCOUNT_RECIPIENT:
 			if not self.company:
 				return None
@@ -211,21 +221,21 @@ class ReceiptBuilder:
 		elif payer_type in ALLOWED_PARTY_TYPES:
 			party_type, party = payer_type, row.get("receipt_recipient") or None
 			if not party:
-				self._issue(_("پرداخت‌کننده الزامی است."), "receipt_recipient", number)
+				self._issue(self.text("row_party_required"), "receipt_recipient", number)
 		if not account_name:
-			return self._issue(_("معین پرداخت‌کننده الزامی است."), "credit_account", number)
+			return self._issue(self.text("row_account_required"), self.row_account, number)
 		if not self.company:
 			return None
-		account = self._account(account_name, "credit_account", number)
+		account = self._account(account_name, self.row_account, number)
 		if not account:
 			return None
 		self._require_currency(
-			account, _("حساب معین پرداخت‌کننده"), currency, _("ارز پرداخت‌کننده"), "credit_account", number
+			account, self.text("row_account"), currency, self.text("row_currency"), self.row_account, number
 		)
 		if payer_type == BANK_ACCOUNT_RECIPIENT and account.account_type != "Bank":
-			self._issue(_("معین متصل به حساب بانکی باید از نوع Bank باشد."), "credit_account", number)
+			self._issue(_("معین متصل به حساب بانکی باید از نوع Bank باشد."), self.row_account, number)
 		elif payer_type == ACCOUNT_RECIPIENT:
-			self._call(lambda: self.lookups.validate_party(None, None, account.account_type), "credit_account", number)
+			self._call(lambda: self.lookups.validate_party(None, None, account.account_type), self.row_account, number)
 		elif party:
 			label = _("ردیف {0}").format(number)
 			self._check_party(party_type, party, account, currency, label, "receipt_recipient", number)
@@ -237,18 +247,18 @@ class ReceiptBuilder:
 	def _reject_self_offset(self, number: int, account: str, party_type, party) -> None:
 		receiver = self.receiver
 		if receiver and (receiver.account, receiver.party_type, receiver.party) == (account, party_type, party):
-			self._issue(_("پرداخت‌کننده با دریافت‌کننده یکسان است."), "credit_account", number)
+			self._issue(self.text("self_offset"), self.row_account, number)
 
 	def _amount(self, number: int, row, currency):
-		amount = _decimal(row.get("credit_amount"))
+		amount = _decimal(row.get(self.row_amount))
 		if amount is None or amount <= 0:
-			return self._issue(_("مبلغ باید بزرگ‌تر از صفر باشد."), "credit_amount", number)
+			return self._issue(_("مبلغ باید بزرگ‌تر از صفر باشد."), self.row_amount, number)
 		if currency:
 			places = self.lookups.amount_precision(currency)
 			if _places(amount) > places:
 				return self._issue(
 					_("مبلغ برای ارز {0} حداکثر {1} رقم اعشار می‌پذیرد.").format(currency, places),
-					"credit_amount",
+					self.row_amount,
 					number,
 				)
 		return amount
@@ -260,12 +270,12 @@ class ReceiptBuilder:
 		value = (amount * rate).quantize(Decimal("1").scaleb(-places), rounding=ROUND_HALF_UP)
 		if value <= 0:
 			return self._issue(
-				_("مبلغ به ارز پایه پس از گرد کردن باید بزرگ‌تر از صفر بماند."), "credit_amount", number
+				_("مبلغ به ارز پایه پس از گرد کردن باید بزرگ‌تر از صفر بماند."), self.row_amount, number
 			)
 		return value
 
 	def _allocate(self, rows: list[CanonicalRow]):
-		"""Derive the receiver amount and give every row its balanced receiver share."""
+		"""Derive the header amount and give every row its balanced header share."""
 		if self.receiver_rate is None or not rows:
 			return None, rows
 		allocation = ReceiverAllocation(
@@ -276,21 +286,12 @@ class ReceiptBuilder:
 		bases = [row.base_amount for row in rows]
 		receiver_amount = allocation.total(bases)
 		if receiver_amount <= 0:
-			self._issue(
-				_("مبلغ دریافت‌کننده به ارز {0} پس از گرد کردن باید بزرگ‌تر از صفر باشد.").format(self.receiver_currency),
-				RECEIVER_RATE_FIELD,
-			)
+			self._issue(self.text("header_amount_zero").format(self.receiver_currency), RECEIVER_RATE_FIELD)
 			return None, rows
 		allocated = []
 		for row, share in zip(rows, allocation.shares(bases), strict=True):
 			if share.rate is None:
-				self._issue(
-					_("سهم این ردیف به ارز دریافت‌کننده ({0}) قابل تراز در ارز پایه نیست؛ مبلغ را افزایش دهید.").format(
-						self.receiver_currency
-					),
-					"credit_amount",
-					row.number,
-				)
+				self._issue(self.text("share_unbalanced").format(self.receiver_currency), self.row_amount, row.number)
 			allocated.append(replace(row, receiver_amount=share.amount, receiver_rate=share.rate))
 		return receiver_amount, allocated
 

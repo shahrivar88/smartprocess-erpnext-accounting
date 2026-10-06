@@ -24,6 +24,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumpt
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	PAYER,
 	POSTING_DOCTYPE,
+	RECEIPT_DOCTYPE,
 	RECEIVER,
 	SourceLeg,
 	load_source_leg,
@@ -181,7 +182,10 @@ def _open_items(key: LedgerKey, account_type: str, places: int) -> list[OpenItem
 
 
 def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]:
-	"""Active Party lines of each submitted posting unit of this Company."""
+	"""Active Party lines of each submitted Receipt posting unit of this Company.
+
+	Payment posting units share the DocType but are never a conversion source.
+	"""
 	if not postings:
 		return {}
 	receipts = dict(
@@ -192,6 +196,15 @@ def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]
 			as_list=True,
 		)
 	)
+	if receipts:
+		kept = set(
+			frappe.get_all(
+				RECEIPT_DOCTYPE,
+				filters={"name": ["in", list(set(receipts.values()))], "operation_type": "Receipt"},
+				pluck="name",
+			)
+		)
+		receipts = {posting: receipt for posting, receipt in receipts.items() if receipt in kept}
 	if not receipts:
 		return {}
 	found = {name: PostingRows(receipt, []) for name, receipt in receipts.items()}
@@ -205,7 +218,7 @@ def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]
 
 
 def _classify(key: LedgerKey, item: OpenItem, balance: Decimal, posting: PostingRows | None) -> BalanceSource:
-	if item.voucher_type != POSTING_DOCTYPE:
+	if item.voucher_type != POSTING_DOCTYPE or posting is None:
 		return _not_eligible(item, _("Only SmartProcess Receipt postings can be converted for now."))
 	if _side(item.amount) != _side(balance):
 		return _not_eligible(item, _("Open amount is on the opposite side of the net balance."))

@@ -7,7 +7,9 @@ from erpnext.controllers.accounts_controller import AccountsController
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import (
 	start_correction as create_correction,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.payment import canonicalize_payment
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
+	FLOW_OPERATIONS,
 	cancel_document,
 	post_document,
 	require_posting_enabled,
@@ -53,22 +55,23 @@ class SmartProcessAccountingDocument(AccountsController):
 	def before_submit(self):
 		require_posting_enabled()
 		self._validate_accounting()
-		if self.operation_type == "Receipt":
+		if self.operation_type in FLOW_OPERATIONS:
 			post_document(self)
 
 	def on_submit(self):
-		if self.operation_type != "Receipt":
+		if self.operation_type not in FLOW_OPERATIONS:
 			post_document(self)
 
 	def before_cancel(self):
 		if self.operation_type == "Receipt":
 			assert_no_active_conversions(self.name)
+		if self.operation_type in FLOW_OPERATIONS:
 			self._set_cancel_link_exceptions()
 			cancel_document(self)
 
 	def on_cancel(self):
 		self._set_cancel_link_exceptions()
-		if self.operation_type != "Receipt":
+		if self.operation_type not in FLOW_OPERATIONS:
 			cancel_document(self)
 
 	def _set_cancel_link_exceptions(self):
@@ -113,4 +116,5 @@ class SmartProcessAccountingDocument(AccountsController):
 
 	def _validate_accounting(self):
 		canonicalize_receipt(self)
+		canonicalize_payment(self)
 		return validate_document(self)

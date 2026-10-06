@@ -34,6 +34,8 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 			with self.subTest(operation_type=operation_type):
 				if operation_type == "Receipt":
 					doc = self._submit_base_receipt()
+				elif operation_type == "Payment":
+					doc = self._submit_base_payment()
 				else:
 					doc = self.submit_document([self.base_pair()], operation_type=operation_type)
 				rows = self.active_gl(doc)
@@ -222,6 +224,28 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 						"credit_account": BASE_BANK,
 						"credit_amount": 100,
 						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		).insert().submit()
+
+	def _submit_base_payment(self):
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": "Payment",
+				"company": COMPANY,
+				"posting_date": frappe.utils.nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": BASE,
+				"receipt_payer_account": BASE_CLEARING,
+				"receipt_credit_currency": BASE,
+				"receipt_receiver_kind": "سایر حساب‌ها",
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Account",
+						"debit_account": BASE_BANK,
+						"debit_amount": 100,
 					}
 				],
 			}

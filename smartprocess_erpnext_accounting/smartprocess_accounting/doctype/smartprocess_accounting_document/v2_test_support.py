@@ -203,7 +203,7 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 		)
 
 	def accounting_vouchers(self, doc, *, include_cancelled=False):
-		if doc.operation_type != "Receipt":
+		if doc.operation_type not in ("Receipt", "Payment"):
 			return doc.doctype, [doc.name]
 		filters = {"source_document": doc.name}
 		if not include_cancelled:

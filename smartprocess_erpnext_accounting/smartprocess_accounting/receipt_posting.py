@@ -1,4 +1,4 @@
-"""Date-grouped native posting lifecycle for Receipt documents."""
+"""Date-grouped native posting lifecycle for Receipt and Payment documents."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from frappe import _
 from frappe.utils import cint, getdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
+	FLOW_OPERATIONS,
 	PostingLine,
 	cancel_voucher,
 	post_lines,
@@ -81,8 +82,8 @@ def validate_posting_unit(posting) -> None:
 	if not posting.source_document:
 		frappe.throw(_("Source Receipt is required."))
 	source = frappe.get_doc(SOURCE_DOCTYPE, posting.source_document)
-	if source.operation_type != "Receipt":
-		frappe.throw(_("Posting units can only reference Receipt documents."))
+	if source.operation_type not in FLOW_OPERATIONS:
+		frappe.throw(_("Posting units can only reference Receipt or Payment documents."))
 	if source.company != posting.company:
 		frappe.throw(_("Posting unit Company must match its source Receipt."))
 	if posting.group_identity != _group_identity(source.name, posting.posting_date):

@@ -101,6 +101,18 @@ class TestBalanceConversion(ConversionFixtures):
 		frappe.set_user("Guest")
 		self.assertEqual(related_conversions(receipt.name), {"linked_count": 0, "active_count": 0, "names": []})
 
+	def test_payment_postings_are_never_a_conversion_source(self):
+		payment = self.debit_payment("40000000")
+		picture = self.picture()
+		self.assertEqual((picture.side, picture.max_convertible), ("debit", 0))
+		(source,) = picture.sources
+		self.assertEqual((source.item.voucher_no, source.source), (self.source_posting(payment), None))
+		self.assertEqual((source.convertible, bool(source.reason)), (0, True))
+		receipt = self.debit_receipt(HUNDRED_M)
+		self.assertPicture(balance="140000000", maximum=HUNDRED_M)
+		conversion = self.balance(HUNDRED_M)
+		self.assertEqual({leg.source_posting for leg in conversion.legs}, {self.source_posting(receipt)})
+
 	def test_fifo_follows_posting_date_before_creation(self):
 		newer = self.credit_receipt("50000000")
 		older = self.credit_receipt("50000000", posting_date=add_days(nowdate(), -1))
@@ -282,6 +294,33 @@ class TestBalanceConversion(ConversionFixtures):
 						"receipt_recipient": self.customer,
 						"credit_account": self.receivable,
 						"credit_amount": str(amount),
+					}
+				],
+			}
+		)
+		doc.insert()
+		doc.submit()
+		return doc
+
+	def debit_payment(self, amount):
+		"""The source Party is paid: one Payment row debits its Receivable."""
+		doc = frappe.get_doc(
+			{
+				"doctype": RECEIPT,
+				"operation_type": "Payment",
+				"company": self.company,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": self.base,
+				"receipt_credit_currency": self.base,
+				"receipt_receiver_kind": "سایر حساب‌ها",
+				"receipt_payer_account": self.generic_account(self.base),
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Customer",
+						"receipt_recipient": self.party,
+						"debit_account": self.receivable,
+						"debit_amount": str(amount),
 					}
 				],
 			}

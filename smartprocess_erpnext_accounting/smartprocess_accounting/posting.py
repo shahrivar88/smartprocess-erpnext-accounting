@@ -32,6 +32,8 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 
 SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
+# Operation types that post one date-grouped posting unit per row date.
+FLOW_OPERATIONS = ("Receipt", "Payment")
 
 
 @dataclass(frozen=True)
@@ -103,7 +105,7 @@ def post_document(doc) -> None:
 	if cint(doc.docstatus) != 1:
 		frappe.throw(_("Only a submitted SmartProcess Accounting Document can post."))
 	assert_native_posting_contract()
-	if doc.operation_type == "Receipt":
+	if doc.operation_type in FLOW_OPERATIONS:
 		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
 			submit_receipt,
 		)
@@ -131,7 +133,7 @@ def cancel_document(doc) -> None:
 	if cint(doc.docstatus) != 2:
 		frappe.throw(_("Only a cancelled SmartProcess Accounting Document can reverse its ledger."))
 	assert_native_posting_contract()
-	if doc.operation_type == "Receipt":
+	if doc.operation_type in FLOW_OPERATIONS:
 		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
 			cancel_receipt,
 		)
@@ -310,7 +312,7 @@ def _account_names(rows) -> set[str]:
 
 
 def _effective_posting_date(doc, row):
-	if doc.operation_type == "Receipt":
+	if doc.operation_type in FLOW_OPERATIONS:
 		return getdate(row.get("receipt_posting_date") or doc.posting_date)
 	return getdate(doc.posting_date)
 

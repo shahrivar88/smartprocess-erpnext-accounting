@@ -48,6 +48,28 @@ ACCOUNT_RECEIVER_TYPES = {BANK_RECEIVER: "Bank", "صندوق": "Cash", OTHER_ACC
 RECEIVER_KINDS = (*ALLOWED_PARTY_TYPES, *ACCOUNT_RECEIVER_TYPES)
 NON_GENERIC_ACCOUNT_TYPES = ("Bank", "Cash", "Receivable", "Payable")
 
+# Builder messages that name the header (receiver) and row (payer) roles.
+RECEIPT_TEXT = {
+	"header_currency": "ارز دریافت‌کننده",
+	"row_currency": "ارز پرداخت‌کننده",
+	"header_kind_required": "نوع دریافت‌کننده را انتخاب کنید.",
+	"header_party_required": "دریافت‌کننده الزامی است.",
+	"header_account_required": "معین دریافت‌کننده الزامی است.",
+	"header_account": "معین دریافت‌کننده",
+	"header_account_type": "نوع حساب معین دریافت‌کننده باید {0} باشد.",
+	"header_party": "دریافت‌کننده",
+	"rows_required": "حداقل یک ردیف دریافت لازم است.",
+	"duplicate_rows": "شناسه ردیف‌های رسید تکراری است.",
+	"row_currency_mismatch": "ارز ردیف ({0}) با ارز پرداخت‌کننده ({1}) یکی نیست.",
+	"row_type_required": "نوع پرداخت‌کننده را انتخاب کنید.",
+	"row_party_required": "پرداخت‌کننده الزامی است.",
+	"row_account_required": "معین پرداخت‌کننده الزامی است.",
+	"row_account": "حساب معین پرداخت‌کننده",
+	"self_offset": "پرداخت‌کننده با دریافت‌کننده یکسان است.",
+	"header_amount_zero": "مبلغ دریافت‌کننده به ارز {0} پس از گرد کردن باید بزرگ‌تر از صفر باشد.",
+	"share_unbalanced": "سهم این ردیف به ارز دریافت‌کننده ({0}) قابل تراز در ارز پایه نیست؛ مبلغ را افزایش دهید.",
+}
+
 
 @dataclass(frozen=True)
 class ReceiptIssue:
