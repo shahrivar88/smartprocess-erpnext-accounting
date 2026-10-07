@@ -10,6 +10,6 @@ def get_data():
 			"color": "#1F4E79",
 			"icon": "octicon octicon-file-directory",
 			"category": "Modules",
-			"link": "List/SmartProcess Currency Conversion",
+			"link": "List/SmartProcess Accounting Document",
 		}
 	]

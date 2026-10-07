@@ -179,19 +179,6 @@ def get_receipt_party_account_suggestion(
 	return _get_exact_party_account(party_type, party, company, currency)
 
 
-@frappe.whitelist(methods=["GET"])
-def get_party_currency_context(party_type: str, party: str, company: str) -> dict:
-	"""Canonical currency context: the Party's resolved accounting currency and its native mapped account."""
-	_require_party(party_type, party, company)
-	account = _mapped_party_account(party_type, party, company)
-	account_currency = frappe.get_cached_value("Account", account, "account_currency") if account else None
-	return {
-		"ledger_currency": resolve_party_currency(party_type, party, company),
-		"account": account,
-		"account_currency": account_currency,
-	}
-
-
 def _get_exact_party_account(party_type: str, party: str, company: str, currency: str) -> str | None:
 	_require_party(party_type, party, company, currency)
 	if resolve_party_currency(party_type, party, company) not in (None, currency):
@@ -254,7 +241,7 @@ def party_currency_query(doctype, txt, searchfield, start, page_len, filters):
 		or_filters = [["name", "like", f"%{search}%"]]
 		for fieldname in {searchfield or "", PARTY_DISPLAY_FIELDS.get(doctype, "name")} - {"", "name"}:
 			or_filters.append([fieldname, "like", f"%{search}%"])
-	names = frappe.get_all(doctype, filters=conditions, or_filters=or_filters, pluck="name", limit=0)
+	names = frappe.get_list(doctype, filters=conditions, or_filters=or_filters, pluck="name", limit=0)
 
 	effective_currencies = batch_party_currencies(doctype, company, names)
 	if currency:
@@ -299,7 +286,7 @@ def _bank_account_candidates(company: str, currency: str | None, txt: str) -> li
 			["bank", "like", f"%{search}%"],
 			["account", "like", f"%{search}%"],
 		]
-	rows = frappe.get_all(
+	rows = frappe.get_list(
 		"Bank Account",
 		filters=conditions,
 		or_filters=or_filters,

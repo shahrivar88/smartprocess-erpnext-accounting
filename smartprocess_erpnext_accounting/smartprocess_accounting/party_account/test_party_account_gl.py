@@ -10,10 +10,7 @@ from unittest.mock import patch
 import frappe
 from frappe.utils import nowdate
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import make_receipt_conversion
-
 from ..doctype.smartprocess_receipt_conversion.conversion_test_support import (
-	CONVERSION,
 	POSTING,
 	RECEIPT,
 	ConversionFixtures,
@@ -322,60 +319,6 @@ class TestDrillDown(PartyAccountCase):
 		self.assertTrue(export["content"].startswith(b"PK"))
 		self.assertEqual(set(meta["accounts"]), {self.receivable, other})
 		self.assertEqual((meta["line_count"], meta["opening_account"], meta["closing_account"]), (2, 4, 11))
-
-	def receipt_conversion(self, receipt):
-		doc = make_receipt_conversion(receipt.name, self.target)
-		payer = next(leg for leg in doc.legs if leg.source_side == "Payer")
-		payer.update(
-			{
-				"conversion_amount": "10000000",
-				"target_rate": "90000",
-				"target_party_type": "Customer",
-				"target_party": self.target_customer,
-				"target_account": self.target_receivable,
-			}
-		)
-		doc.insert()
-		doc.submit()
-		return doc
-
-	def payment_values(self):
-		return {
-			"doctype": RECEIPT,
-			"operation_type": "Payment",
-			"company": self.company,
-			"posting_date": nowdate(),
-			"general_reference": frappe.generate_hash(length=10),
-			"receipt_payer_currency": self.base,
-			"receipt_credit_currency": self.base,
-			"receipt_receiver_kind": "بانک",
-			"receipt_bank_account": self.bank.name,
-			"operational_pairs": [
-				{
-					"receipt_recipient_type": "Customer",
-					"receipt_recipient": self.customer,
-					"debit_account": self.receivable,
-					"debit_amount": "1000000",
-				}
-			],
-		}
-
-	def balance_values(self, party):
-		return {
-			"doctype": CONVERSION,
-			"conversion_mode": "Balance",
-			"company": self.company,
-			"posting_date": nowdate(),
-			"target_currency": self.target,
-			"source_party_type": "Customer",
-			"source_party": party,
-			"source_account": self.receivable,
-			"conversion_amount": "10000000",
-			"target_rate": "90000",
-			"target_party_type": "Customer",
-			"target_party": self.target_customer,
-			"target_account": self.target_receivable,
-		}
 
 	def conversion_line(self, conversion, party, account):
 		lines = self.ledger(party=party, account=account, from_date=nowdate(), to_date=nowdate())["rows"]

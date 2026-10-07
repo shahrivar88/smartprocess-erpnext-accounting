@@ -9,9 +9,7 @@ from __future__ import annotations
 import frappe
 from frappe.utils import nowdate
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import make_receipt_conversion
-
-from .conversion_test_support import CONVERSION, HUNDRED_M, POSTING, RECEIPT, ConversionFixtures
+from .conversion_test_support import HUNDRED_M, POSTING, RECEIPT, ConversionFixtures
 
 AUDIT_MESSAGE = "permanent accounting audit record"
 
@@ -79,23 +77,6 @@ class TestFinancialAuditTrail(ConversionFixtures):
 			"postings": postings,
 		}
 
-	def receipt_conversion(self, receipt, submit=True):
-		doc = make_receipt_conversion(receipt.name, self.target)
-		payer = next(leg for leg in doc.legs if leg.source_side == "Payer")
-		payer.update(
-			{
-				"conversion_amount": "10000000",
-				"target_rate": "90000",
-				"target_party_type": "Customer",
-				"target_party": self.target_customer,
-				"target_account": self.target_receivable,
-			}
-		)
-		doc.insert()
-		if submit:
-			doc.submit()
-		return doc
-
 	def receipt_values(self):
 		return {
 			"doctype": RECEIPT,
@@ -115,42 +96,4 @@ class TestFinancialAuditTrail(ConversionFixtures):
 					"credit_amount": "1000000",
 				}
 			],
-		}
-
-	def payment_values(self):
-		return {
-			"doctype": RECEIPT,
-			"operation_type": "Payment",
-			"company": self.company,
-			"posting_date": nowdate(),
-			"general_reference": frappe.generate_hash(length=10),
-			"receipt_payer_currency": self.base,
-			"receipt_credit_currency": self.base,
-			"receipt_receiver_kind": "بانک",
-			"receipt_bank_account": self.bank.name,
-			"operational_pairs": [
-				{
-					"receipt_recipient_type": "Customer",
-					"receipt_recipient": self.customer,
-					"debit_account": self.receivable,
-					"debit_amount": "1000000",
-				}
-			],
-		}
-
-	def balance_values(self, party):
-		return {
-			"doctype": CONVERSION,
-			"conversion_mode": "Balance",
-			"company": self.company,
-			"posting_date": nowdate(),
-			"target_currency": self.target,
-			"source_party_type": "Customer",
-			"source_party": party,
-			"source_account": self.receivable,
-			"conversion_amount": "10000000",
-			"target_rate": "90000",
-			"target_party_type": "Customer",
-			"target_party": self.target_customer,
-			"target_account": self.target_receivable,
 		}

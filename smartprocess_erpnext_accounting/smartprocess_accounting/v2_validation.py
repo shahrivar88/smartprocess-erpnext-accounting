@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
+from frappe.query_builder import Order
+from frappe.query_builder.functions import Max
 
 
 ALLOWED_PARTY_TYPES = (
@@ -117,21 +119,23 @@ def batch_party_currencies(doctype: str, company: str, names: list[str]) -> dict
 		return {}
 	result: dict[str, str | None] = {}
 
-	# 1) Active GL ledger currency — mirrors get_party_gle_currency: the first
-	# active GL Entry decides, so the first row per Party wins.
-	for row in frappe.get_all(
-		"GL Entry",
-		filters={
-			"party_type": doctype,
-			"party": ["in", names],
-			"company": company,
-			"docstatus": 1,
-			"is_cancelled": 0,
-		},
-		fields=["party", "account_currency"],
-		limit=0,
+	# 1) Active GL ledger currency — mirrors get_party_gle_currency: the most
+	# recent active GL Entry decides, so the first row per Party wins.
+	gle = frappe.qb.DocType("GL Entry")
+	latest = Max(gle.creation)
+	for party, currency in (
+		frappe.qb.from_(gle)
+		.select(gle.party, gle.account_currency)
+		.where(gle.party_type == doctype)
+		.where(gle.party.isin(names))
+		.where(gle.company == company)
+		.where(gle.docstatus == 1)
+		.where(gle.is_cancelled == 0)
+		.groupby(gle.party, gle.account_currency)
+		.orderby(latest, order=Order.desc)
+		.run()
 	):
-		result.setdefault(row.party, row.account_currency)
+		result.setdefault(party, currency)
 
 	# 2) Explicit Party Account mapping currency (native chain: Party, then Group).
 	pending = [name for name in names if not result.get(name)]

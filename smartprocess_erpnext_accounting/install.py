@@ -1,5 +1,7 @@
 import frappe
-from frappe.utils import cint
+
+# Kept as DocTypes for history only; never offered in navigation.
+RETIRED_DOCTYPES = ("SmartProcess Currency Conversion", "SmartProcess Party Currency Account")
 
 
 def after_migrate():
@@ -100,7 +102,10 @@ def _ensure_workspace_sidebar():
 	if not frappe.db.exists("Workspace Sidebar", name):
 		return
 	doc = frappe.get_doc("Workspace Sidebar", name)
-	changed = False
+	retired = [row for row in doc.items if (row.link_to or "") in RETIRED_DOCTYPES]
+	for row in retired:
+		doc.remove(row)
+	changed = bool(retired)
 	# The module's right-hand sidebar is built from the Workspace Sidebar doc
 	# (frappe/desk/doctype/workspace_sidebar), not from the Workspace links table.
 	# Frappe's get_can_read_items() permission-filters each item by the linked
@@ -146,40 +151,3 @@ def _ensure_doctype_app():
 		values,
 		update_modified=False,
 	)
-
-
-def verify_desk_customization():
-	doctype = "SmartProcess Currency Conversion"
-	meta = frappe.get_meta(doctype, cached=False)
-	if cint(meta.custom):
-		frappe.throw("DocType must stay standard (custom=0) for Customize Form.")
-	if meta.issingle:
-		frappe.throw("DocType must not be single.")
-	doc = frappe.new_doc("Customize Form")
-	doc.doc_type = doctype
-	doc.fetch_to_customize()
-	return {
-		"doc_type": doc.doc_type,
-		"fields": len(doc.fields or []),
-		"custom": cint(meta.custom),
-		"module": meta.module,
-		"developer_mode": cint(frappe.conf.get("developer_mode")),
-		"module_app": frappe.db.get_value("Module Def", "SmartProcess Accounting", "app_name"),
-	}
-
-
-def verify_child_table():
-	parent = frappe.get_meta("SmartProcess Currency Conversion")
-	child = frappe.get_meta("SmartProcess Conversion Row")
-	table = parent.get_field("conversion_rows")
-	doc = frappe.new_doc("SmartProcess Currency Conversion")
-	doc._normalize_rows()
-	return {
-		"table_options": table.options if table else None,
-		"child_istable": cint(child.istable),
-		"old_side_field": bool(parent.get_field("side_1_account")),
-		"seeded_rows": len(doc.conversion_rows or []),
-		"row1_nature": doc.conversion_rows[0].nature,
-		"row2_nature": doc.conversion_rows[1].nature,
-		"has_side_label": bool(child.get_field("side_label")),
-	}

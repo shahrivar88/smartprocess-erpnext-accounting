@@ -45,8 +45,6 @@ LAYOUT_WRITERS = re.compile(
 )
 # Every such reference in the app, and why it cannot move the user's Receipt layout.
 LAYOUT_WRITER_ALLOWLIST = {
-	# verify_desk_customization(): a read-only Customize Form check of SmartProcess Currency Conversion.
-	"install.py",
 	# Applied once; deletes only a stale field_order setter that lists a field removed from the DocType.
 	"patches/v0_1/remove_abandoned_conversion_metadata.py",
 }
@@ -95,9 +93,6 @@ class TestReceiptClientContract(unittest.TestCase):
 		install = (APP_DIR / "install.py").read_text(encoding="utf-8")
 		self.assertNotIn(DOCTYPE, install)
 		self.assertNotIn(PAIR, install)
-		after_migrate = install.split("def after_migrate():", 1)[1].split("\ndef ", 1)[0]
-		self.assertNotIn("verify_desk_customization", after_migrate)
-
 		self.assertTrue(frappe.db.exists("Patch Log", {"patch": ABANDONED_PATCH}), "the cleanup patch never runs again")
 		self.assertIsNone(frappe.get_meta(DOCTYPE).get_field("receipt_receiver_currency"))
 

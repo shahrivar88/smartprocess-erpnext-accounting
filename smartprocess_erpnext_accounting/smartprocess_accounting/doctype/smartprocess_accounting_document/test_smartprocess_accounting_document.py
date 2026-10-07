@@ -127,32 +127,11 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 			settings.enable_v2_posting = previous
 			settings.save()
 
-	@proof_fixture
-	def test_mapping_identity_is_unique(self):
-		existing = frappe.db.get_value(
-			"SmartProcess Party Currency Account",
-			{"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY, "currency": "XFA"},
-		)
-		self.assertTrue(existing)
-		with self.assertRaises((frappe.DuplicateEntryError, frappe.ValidationError)):
-			frappe.get_doc(
-				{
-					"doctype": "SmartProcess Party Currency Account",
-					"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY,
-					"currency": "XFA", "account": FOREIGN_RECEIVABLE,
-				}
-			).insert()
-
-	@proof_fixture
-	def test_mapping_currency_mismatch_is_rejected(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "account_currency"):
-			frappe.get_doc(
-				{
-					"doctype": "SmartProcess Party Currency Account",
-					"party_type": "Customer", "party": LEGACY_CUSTOMER, "company": COMPANY,
-					"currency": "XFB", "account": FOREIGN_RECEIVABLE,
-				}
-			).insert()
+	def test_retired_party_currency_mapping_cannot_be_created(self):
+		doc = frappe.new_doc("SmartProcess Party Currency Account")
+		with self.assertRaisesRegex(frappe.ValidationError, "منسوخ"):
+			doc.run_method("validate")
+		self.assertTrue(frappe.db.table_exists("SmartProcess Party Currency Account"))
 
 	@proof_fixture
 	def test_account_suggestion_is_gated_and_advisory(self):
@@ -179,21 +158,17 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import PurchaseInvoice
 		from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
 
-		from smartprocess_erpnext_accounting.smartprocess_accounting.compatibility import (
-			multi_currency_party,
-		)
-
-		self.assertNotIn(multi_currency_party.MultiCurrencyPartyGLEntryMixin, GLEntry.__mro__)
-		self.assertNotIn(multi_currency_party.MultiCurrencyPartyInvoiceMixin, SalesInvoice.__mro__)
-		self.assertNotIn(multi_currency_party.MultiCurrencyPartyInvoiceMixin, PurchaseInvoice.__mro__)
+		for controller in (GLEntry, SalesInvoice, PurchaseInvoice):
+			self.assertFalse(
+				[cls for cls in controller.__mro__ if cls.__module__.startswith("smartprocess_erpnext_accounting")]
+			)
 
 		app_root = Path(smartprocess_erpnext_accounting.__file__).resolve().parent
+		self.assertFalse(list((app_root / "smartprocess_accounting" / "compatibility").glob("*.py")))
 		hooks_source = (app_root / "hooks.py").read_text(encoding="utf-8")
 		self.assertNotIn("extend_doctype_class", hooks_source)
 		for path in app_root.rglob("*.py"):
 			if path.name.startswith("test_") or path.name == "v2_test_support.py":
-				continue
-			if path.parent.name == "compatibility":
 				continue
 			source = path.read_text(encoding="utf-8")
 			self.assertNotIn("multi_currency_party", source, msg=f"{path.name} still references the retired override")

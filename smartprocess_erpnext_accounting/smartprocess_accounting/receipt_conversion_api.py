@@ -36,7 +36,6 @@ PARTIALLY_CONVERTED = "Partially Converted"
 FULLY_CONVERTED = "Fully Converted"
 
 
-@frappe.whitelist()
 def make_receipt_conversion(source_receipt: str, target_currency: str | None = None):
 	"""Unsaved Conversion with one zero-amount leg per Company-currency Receipt row side."""
 	receipt = load_source_receipt(source_receipt)
@@ -146,7 +145,6 @@ def preview_target_amounts(company: str, target_currency: str, legs: str | list)
 	}
 
 
-@frappe.whitelist()
 def get_target_suggestion(
 	company: str,
 	source_account: str,

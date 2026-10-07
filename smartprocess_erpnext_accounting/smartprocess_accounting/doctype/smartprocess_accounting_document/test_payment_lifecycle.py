@@ -168,16 +168,18 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 
 	def assert_drill_down(self, doc, postings, customer, receivable, payer, rates):
 		self.assertEqual(len(postings), 1)
-		detail = get_document_detail(POSTING, postings[0], party_type="Customer", party=customer, account=receivable)
-		self.assertEqual((detail["resolver"], detail["doctype"], detail["name"], detail["title"]), ("accounting_posting", DOCTYPE, doc.name, "پرداخت"))
-		lines = detail["accounts"]
+		detail = self.drill_down(doc, postings[0], customer, receivable)
+		self.assertEqual(
+			(detail["resolver"], detail["document"], detail["title"]),
+			("accounting_posting", {"doctype": DOCTYPE, "name": doc.name}, "پرداخت"),
+		)
+		lines = detail["sections"][0]["rows"]
 		self.assertEqual([line["row"] for line in lines], [1, 1, 2, 2, 3, 3])
-		self.assertEqual([line["side"] for line in lines], ["پرداخت‌کننده", "دریافت‌کننده"] * 3)
-		self.assertEqual([line["nature"] for line in lines], ["بستانکار", "بدهکار"] * 3)
-		self.assertEqual([line["account"] for line in lines], [payer, receivable] * 3)
-		self.assertEqual([line["is_party_row"] for line in lines], [False, True] * 3)
-		self.assertEqual([Decimal(str(line["exchange_rate"])) for line in lines[1::2]], [Decimal(rate) for rate in rates])
-		for pair, header, row in zip(doc.operational_pairs, lines[0::2], lines[1::2]):
+		self.assertEqual([line["role"] for line in lines], ["دریافت‌کننده", "پرداخت‌کننده"] * 3)
+		self.assertEqual([line["nature"] for line in lines], ["بدهکار", "بستانکار"] * 3)
+		self.assertEqual([line["account"] for line in lines], [receivable, payer] * 3)
+		self.assertEqual([Decimal(str(line["rate"])) for line in lines[0::2]], [Decimal(rate) for rate in rates])
+		for pair, row, header in zip(doc.operational_pairs, lines[0::2], lines[1::2]):
 			self.assertEqual(Decimal(str(header["amount"])), Decimal(str(pair.credit_amount)))
 			self.assertEqual(Decimal(str(row["amount"])), Decimal(str(pair.debit_amount)))
 			self.assertEqual(Decimal(str(header["base_amount"])), Decimal(str(row["base_amount"])))
@@ -193,12 +195,22 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		)
 		doc.operation_type = "Receipt"
 		doc.insert().submit()
-		detail = get_document_detail(POSTING, self.postings(doc)[0])
-		self.assertEqual((detail["title"], detail["name"]), ("رسید", doc.name))
+		detail = self.drill_down(doc, self.postings(doc)[0], customer, receivable)
+		self.assertEqual((detail["title"], detail["document"]["name"]), ("رسید", doc.name))
 		self.assertEqual(
-			[(line["row"], line["side"], line["nature"], line["account"]) for line in detail["accounts"]],
+			[(line["row"], line["role"], line["nature"], line["account"]) for line in detail["sections"][0]["rows"]],
 			[(1, "دریافت‌کننده", "بدهکار", bank.account), (1, "پرداخت‌کننده", "بستانکار", receivable)],
 		)
+
+	def drill_down(self, doc, posting, customer, receivable):
+		gl_entry = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": POSTING, "voucher_no": posting, "account": receivable, "party": customer, "is_cancelled": 0},
+			pluck="name",
+			order_by="creation, name",
+			limit=1,
+		)[0]
+		return get_document_detail(gl_entry, doc.company, "Customer", customer, receivable)
 
 	def test_payment_posted_before_v1_keeps_its_direct_reversal(self):
 		bank = self.company_bank_account(self.base)
@@ -325,7 +337,30 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		)
 
 	def bank_header(self, bank):
+		self.fund(bank)
 		return {"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name}
+
+	def fund(self, bank, amount=1000):
+		"""Move money into the bank first, so a test Payment never depends on the live bank balance."""
+		frappe.get_doc(
+			{
+				"doctype": DOCTYPE,
+				"operation_type": "Transfer",
+				"company": self.company,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"operational_pairs": [
+					{
+						"debit_account": bank.account,
+						"debit_amount": amount,
+						"debit_exchange_rate": 1,
+						"credit_account": self.generic_account(self.base),
+						"credit_amount": amount,
+						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		).insert().submit()
 
 	def account_header(self, account, rate):
 		return {"receipt_receiver_kind": "سایر حساب‌ها", "receipt_payer_account": account, "receipt_payer_exchange_rate": rate}

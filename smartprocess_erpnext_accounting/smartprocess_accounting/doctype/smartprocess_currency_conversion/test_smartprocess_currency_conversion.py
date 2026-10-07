@@ -1,37 +1,36 @@
+import json
 import unittest
+from pathlib import Path
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
-from frappe.utils import cint
+
+APP_DIR = Path(__file__).resolve().parents[3]
+DOCTYPE = "SmartProcess Currency Conversion"
 
 
-class TestSmartProcessCurrencyConversion(FrappeTestCase):
-	def test_doctype_is_standard_module_document(self):
-		meta = frappe.get_meta("SmartProcess Currency Conversion")
-		self.assertEqual(cint(meta.custom), 0)
-		self.assertEqual(meta.module, "SmartProcess Accounting")
-		self.assertTrue(meta.is_submittable)
+class TestRetiredCurrencyConversion(unittest.TestCase):
+	def test_schema_is_kept_for_history(self):
+		self.assertTrue(frappe.db.table_exists(DOCTYPE))
+		self.assertTrue(frappe.db.table_exists("SmartProcess Conversion Row"))
+		self.assertEqual(frappe.get_meta(DOCTYPE).get_field("conversion_rows").options, "SmartProcess Conversion Row")
 
-	def test_module_def_belongs_to_app(self):
-		app_name = frappe.db.get_value("Module Def", "SmartProcess Accounting", "app_name")
-		self.assertEqual(app_name, "smartprocess_erpnext_accounting")
+	def test_new_document_is_rejected_before_any_write(self):
+		writes = frappe.db.transaction_writes
+		doc = frappe.new_doc(DOCTYPE)
+		with self.assertRaisesRegex(frappe.ValidationError, "منسوخ"):
+			doc.run_method("validate")
+		with self.assertRaisesRegex(frappe.ValidationError, "منسوخ"):
+			doc.run_method("before_cancel")
+		self.assertEqual(frappe.db.transaction_writes, writes)
 
-	def test_child_table_is_standard(self):
-		meta = frappe.get_meta("SmartProcess Conversion Row")
-		self.assertEqual(cint(meta.istable), 1)
-		self.assertEqual(meta.module, "SmartProcess Accounting")
-		parent = frappe.get_meta("SmartProcess Currency Conversion")
-		table = parent.get_field("conversion_rows")
-		self.assertEqual(table.options, "SmartProcess Conversion Row")
-		self.assertIsNone(parent.get_field("side_1_account"))
-
-
-def run_currency_conversion_metadata_suite():
-	suite = unittest.defaultTestLoader.loadTestsFromTestCase(TestSmartProcessCurrencyConversion)
-	result = unittest.TextTestRunner(verbosity=2).run(suite)
-	if not result.wasSuccessful():
-		raise AssertionError(
-			f"Currency Conversion metadata suite failed: "
-			f"failures={len(result.failures)}, errors={len(result.errors)}"
+	def test_no_navigation_or_runtime_reference_remains(self):
+		workspace = json.loads(
+			(APP_DIR / "smartprocess_accounting/workspace/smartprocess_accounting/smartprocess_accounting.json").read_text(
+				encoding="utf-8"
+			)
 		)
-	return {"tests_run": result.testsRun, "failures": 0, "errors": 0}
+		targets = {row.get("link_to") for row in workspace["links"] + workspace["shortcuts"]}
+		self.assertNotIn(DOCTYPE, targets)
+		self.assertNotIn(DOCTYPE, (APP_DIR / "config/desktop.py").read_text(encoding="utf-8"))
+		self.assertNotIn("conversion_form.css", (APP_DIR / "hooks.py").read_text(encoding="utf-8"))
+		self.assertFalse((APP_DIR / "smartprocess_accounting/conversion_math.py").exists())
