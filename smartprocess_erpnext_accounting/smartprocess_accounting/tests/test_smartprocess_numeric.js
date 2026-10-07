@@ -101,3 +101,96 @@ assert.equal(liveNumberSeparator.mapCaret("1", "1,234"), 1);
 assert.equal(liveNumberSeparator.toDisplayNumericText("1234.5", { decimal_str: "," }), "1234,5");
 assert.equal(liveNumberSeparator.toDisplayNumericText("1.234.5", { decimal_str: "," }), "1.234,5");
 console.log(`live_number_separator: ${liveCases.length + 8} cases passed`);
+
+// Raw/model value vs display text. A Frappe-like Float format (precision 9,
+// grouped) is compacted; the display must read back as exactly the raw number.
+{
+	const frappeFloat = (value, precision = 9) => {
+		const [integer, fraction] = Math.abs(value).toFixed(precision).split(".");
+		return `${value < 0 ? "-" : ""}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction}`;
+	};
+	const rawCases = [
+		["0", "0"],
+		["1", "1"],
+		["1.0", "1"],
+		["1.000000", "1"],
+		["1.20", "1.2"],
+		["1.200000", "1.2"],
+		["1.02", "1.02"],
+		["1000", "1,000"],
+		["1000.00", "1,000"],
+		["1000.50", "1,000.5"],
+		["1000.05", "1,000.05"],
+		["100.05", "100.05"],
+		["15000.000000", "15,000"],
+		["15000.500000000", "15,000.5"],
+		["15000.050000000", "15,000.05"],
+		["1500000.5", "1,500,000.5"],
+		["-1500000.5", "-1,500,000.5"],
+		["0.000001", "0.000001"],
+		["987654321012.25", "987,654,321,012.25"],
+	];
+	const site = { decimal_str: ".", group_str: "," };
+	for (const [stored, expected] of rawCases) {
+		const raw = Number(stored);
+		const display = compactFormattedNumber(frappeFloat(raw), ".");
+		assert.equal(display, expected, stored);
+		assert.equal(Number(liveNumberSeparator.cleanNumericText(display, site)), raw, `${stored} reads back unchanged`);
+		assert.equal(raw, Number(stored), "the raw value is never touched");
+	}
+	// Persian/RTL context: the wrapper text and a "," decimal site format.
+	assert.equal(
+		compactFormattedNumber('<span dir="rtl">ریال 15,000.000000000</span>', "."),
+		'<span dir="rtl">ریال 15,000</span>',
+	);
+	assert.equal(compactFormattedNumber("1.500.000,500000000", ","), "1.500.000,5");
+	assert.equal(compactFormattedNumber("100,050000", ","), "100,05");
+	console.log(`raw_vs_display: ${rawCases.length + 3} cases passed`);
+}
+
+// Live separator on a control: display text changes, the parsed value stays raw.
+{
+	const makeControl = () => {
+		const listeners = [];
+		const element = {
+			value: "",
+			selectionStart: null,
+			addEventListener: (type, handler) => listeners.push([type, handler]),
+			setSelectionRange() {},
+		};
+		const control = { $input: { get: () => element }, parse: (value) => (value === "" ? null : parseFloat(value)) };
+		const type = (text) => {
+			element.value = text;
+			element.selectionStart = text.length;
+			for (const [, handler] of listeners) handler();
+		};
+		return { control, element, listeners, type };
+	};
+	const on = { enabled: 1, separator: ",", decimal_str: ".", group_str: "," };
+	const typed = makeControl();
+	liveNumberSeparator.attach(typed.control, () => on);
+	liveNumberSeparator.attach(typed.control, () => on);
+	assert.equal(typed.listeners.length, 1, "attaching twice adds one listener");
+	for (const [text, display, raw] of [
+		["1500000.5", "1,500,000.5", 1500000.5],
+		["-1500000.5", "-1,500,000.5", -1500000.5],
+		["1000.05", "1,000.05", 1000.05],
+		["0.000001", "0.000001", 0.000001],
+	]) {
+		typed.type(text);
+		assert.equal(typed.element.value, display);
+		assert.equal(typed.control.parse(typed.element.value), raw, `${text} parses to the raw number`);
+		assert.notEqual(typeof typed.control.parse(typed.element.value), "string", "never a grouped string");
+	}
+	const persian = makeControl();
+	liveNumberSeparator.attach(persian.control, () => ({ ...on, separator: "٬" }));
+	persian.type("1500000.5");
+	assert.equal(persian.element.value, "1٬500٬000.5");
+	assert.equal(persian.control.parse(persian.element.value), 1500000.5);
+	const off = makeControl();
+	liveNumberSeparator.attach(off.control, () => ({ ...on, enabled: 0 }));
+	off.type("1500000.5");
+	assert.equal(off.element.value, "1500000.5", "setting off leaves the input text alone");
+	assert.equal(off.control.parse("1500000.5"), 1500000.5);
+	console.log("live_separator_control: 13 cases passed");
+}

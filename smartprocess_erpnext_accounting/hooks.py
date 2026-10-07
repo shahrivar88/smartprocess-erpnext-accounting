@@ -33,8 +33,9 @@ extend_bootinfo = [
 ]
 
 doctype_js = {
-	"Sales Invoice": "public/js/manual_invoice_conversion_rate.js",
-	"Purchase Invoice": "public/js/manual_invoice_conversion_rate.js",
+	"Sales Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
+	"Purchase Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
+	"Payment Entry": "public/js/native_rate_fields.js",
 }
 
 doc_events = {

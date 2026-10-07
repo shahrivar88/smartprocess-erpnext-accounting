@@ -629,6 +629,63 @@ test("24 section and grid titles follow the flow without touching layout metadat
 	assert.deepEqual([...touched].filter((property) => !["label", "formatter", "options"].includes(property)), []);
 });
 
+test("25 live separator settings come from the page boot payload without an RPC", () => {
+	reset();
+	const boot = { enabled: 1, separator: "٬", decimal_str: ".", group_str: "," };
+	try {
+		frappe.boot = { smartprocess_accounting: { live_number_separator: boot } };
+		const frm = form({});
+		const settings = spReceiptNumbers.settings(frm);
+		assert.deepEqual(settings, boot);
+		assert.equal(spReceiptNumbers.settings(frm), settings, "one settings object per document");
+		assert.deepEqual(calls.xcall, []);
+		delete frappe.boot;
+		spReceiptForm.state(frm).numberSettings = null;
+		const fallback = spReceiptNumbers.settings(frm);
+		assert.equal(fallback.enabled, 0, "nothing changes until the settings arrive");
+		assert.ok(calls.xcall[0].method.endsWith("get_number_input_settings"));
+	} finally {
+		delete frappe.boot;
+	}
+});
+
+test("26 preparing number controls never writes the document or marks it dirty", () => {
+	require(path.join(APP_DIR, "public", "js", "smartprocess_numeric.js"));
+	reset();
+	const doc = docs.get(row("dirty-1", { credit_amount: 1500000.5, credit_exchange_rate: 15000 }).name);
+	const frm = form({}, [doc]);
+	let dirty = 0;
+	frm.dirty = () => { dirty += 1; };
+	const snapshot = JSON.stringify(doc);
+	const listeners = [];
+	const control = (fieldname) => {
+		const element = { addEventListener: (type) => listeners.push(type) };
+		return {
+			df: { fieldtype: "Float", fieldname, precision: "9" },
+			doc,
+			value: doc[fieldname],
+			$input: { get: () => element },
+			parse: (value) => value,
+			set_formatted_input() {},
+			format_for_input: (value) => `${value}.000000000`,
+		};
+	};
+	try {
+		frappe.boot = { smartprocess_accounting: { hide_insignificant_trailing_zeros: 1, live_number_separator: { enabled: 1 } } };
+		for (const fieldname of ["credit_amount", "credit_exchange_rate"]) {
+			const ctrl = control(fieldname);
+			spReceiptNumbers.prepare(frm, ctrl);
+			spReceiptNumbers.prepare(frm, ctrl);
+			assert.equal(ctrl.value, doc[fieldname]);
+		}
+		assert.equal(JSON.stringify(doc), snapshot);
+		assert.deepEqual([calls.setValue, dirty], [[], 0]);
+		assert.deepEqual(listeners, ["input", "input"], "one input listener per control, however often it is prepared");
+	} finally {
+		delete frappe.boot;
+	}
+});
+
 test("modules stay small and are included by the form", () => {
 	for (const file of Object.values(MODULES)) {
 		const lines = read(path.join(RECEIPT_DIR, file)).split("\n").length;

@@ -44,21 +44,13 @@ smartprocess_erpnext_accounting.manual_invoice_rate = {
 		return (info && info.decimal_str) || ".";
 	},
 
+	// Follows the global "hide_insignificant_trailing_zeros" setting.
 	strip_trailing_zeros(formatted) {
-		if (!formatted) {
+		const numeric = window.smartprocessAccounting?.numeric;
+		if (!formatted || !numeric || !frappe.boot?.smartprocess_accounting?.hide_insignificant_trailing_zeros) {
 			return formatted;
 		}
-		const decimal = this.decimal_separator();
-		if (!decimal) {
-			return formatted;
-		}
-		const idx = String(formatted).lastIndexOf(decimal);
-		if (idx < 0) {
-			return formatted;
-		}
-		const int_part = formatted.slice(0, idx);
-		const dec_part = formatted.slice(idx + decimal.length).replace(/0+$/, "");
-		return dec_part ? int_part + decimal + dec_part : int_part;
+		return numeric.compactFormattedNumber(formatted, this.decimal_separator());
 	},
 
 	install_display(ctrl) {

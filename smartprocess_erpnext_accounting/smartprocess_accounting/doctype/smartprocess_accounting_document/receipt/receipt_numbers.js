@@ -36,9 +36,14 @@ const spReceiptNumbers = {
 	},
 
 	// `state` is the caller's per-document state; another form passes its own.
+	// The page-load boot payload is used when present, so no form needs an RPC.
 	settings(frm, state = spReceiptForm.state(frm)) {
 		if (!state.numberSettings) {
-			state.numberSettings = { enabled: 0, separator: ",", decimal_str: ".", group_str: "," };
+			const boot = frappe.boot?.smartprocess_accounting?.live_number_separator;
+			state.numberSettings = { enabled: 0, separator: ",", decimal_str: ".", group_str: ",", ...boot };
+			if (boot) {
+				return state.numberSettings;
+			}
 			frappe
 				.xcall(SP_RECEIPT_NUMBER_SETTINGS_METHOD)
 				.then((settings) => {

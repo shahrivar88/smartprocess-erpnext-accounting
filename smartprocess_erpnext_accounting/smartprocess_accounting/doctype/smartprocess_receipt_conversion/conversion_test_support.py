@@ -141,7 +141,8 @@ class ConversionFixtures(AccountingFixtureTestCase):
 		names = frappe.get_all("Customer", filters={"disabled": 0}, pluck="name", limit=500)
 		currencies = batch_party_currencies("Customer", self.company, names)
 		used = set(frappe.get_all("GL Entry", filters={"party_type": "Customer"}, pluck="party", distinct=True))
-		used.update(exclude)
+		# The fixture's own Customers receive default documents in the same test.
+		used.update(exclude, (self.customer, self.target_customer))
 		customer = next((name for name in names if currencies.get(name) == self.base and name not in used), None)
 		if not customer:
 			self.skipTest(f"No {self.base} Customer without ledger history.")

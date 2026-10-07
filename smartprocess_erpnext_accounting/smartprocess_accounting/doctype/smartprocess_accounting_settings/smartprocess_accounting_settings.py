@@ -3,6 +3,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, get_number_format_info
 
+SETTINGS = "SmartProcess Accounting Settings"
 
 class SmartProcessAccountingSettings(Document):
 	def validate(self):
@@ -41,35 +42,44 @@ class SmartProcessAccountingSettings(Document):
 @frappe.whitelist()
 def get_number_input_settings():
 	"""Live number-separator config for client-side numeric inputs (presentation only)."""
-	meta = frappe.get_meta("SmartProcess Accounting Settings")
-	settings = frappe.get_single("SmartProcess Accounting Settings")
+	return number_input_settings()
 
-	enabled = settings.enable_live_number_separator
-	if enabled is None:
-		enabled = cint(meta.get_field("enable_live_number_separator").default)
-	separator = settings.number_separator or meta.get_field("number_separator").default or ","
+
+def number_input_settings():
+	meta = frappe.get_meta(SETTINGS)
+	separator = _stored(SETTINGS).get("number_separator") or meta.get_field("number_separator").default or ","
 
 	number_format = frappe.get_system_settings("number_format") or "#,###.##"
 	decimal_str, group_str, _precision = get_number_format_info(number_format)
 
 	return {
-		"enabled": cint(enabled),
+		"enabled": display_flag("enable_live_number_separator"),
 		"separator": separator,
 		"decimal_str": decimal_str,
 		"group_str": group_str,
 	}
 
 
-def hide_insignificant_trailing_zeros():
-	doctype = "SmartProcess Accounting Settings"
-	value = frappe.db.get_singles_dict(doctype, cast=False).get("hide_insignificant_trailing_zeros")
+def display_flag(fieldname):
+	"""A display-only Check of the Settings; a value never saved yet uses the field default."""
+	value = _stored(SETTINGS).get(fieldname)
 	if value is None:
-		value = frappe.get_meta(doctype).get_field("hide_insignificant_trailing_zeros").default
+		value = frappe.get_meta(SETTINGS).get_field(fieldname).default
 	return cint(value)
 
 
+def hide_insignificant_trailing_zeros():
+	return display_flag("hide_insignificant_trailing_zeros")
+
+
+def _stored(doctype):
+	return frappe.db.get_singles_dict(doctype, cast=False)
+
+
 def extend_bootinfo(bootinfo):
-	"""Desk display flags, read once per page load by smartprocess_numeric.js."""
+	"""Desk display flags, read once per page load. UI only: no server rule reads them."""
 	bootinfo.smartprocess_accounting = {
 		"hide_insignificant_trailing_zeros": hide_insignificant_trailing_zeros(),
+		"allow_exchange_rate_editing": display_flag("allow_exchange_rate_editing"),
+		"live_number_separator": number_input_settings(),
 	}

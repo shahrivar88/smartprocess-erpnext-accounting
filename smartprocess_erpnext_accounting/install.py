@@ -24,6 +24,7 @@ def _ensure_number_separator_defaults():
 		"enable_live_number_separator",
 		"number_separator",
 		"hide_insignificant_trailing_zeros",
+		"allow_exchange_rate_editing",
 	):
 		df = meta.get_field(fieldname)
 		if not df or df.default is None or fieldname in present:
