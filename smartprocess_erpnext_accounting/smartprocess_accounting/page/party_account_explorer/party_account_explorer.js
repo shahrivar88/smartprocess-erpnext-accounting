@@ -53,9 +53,7 @@ class PartyAccountExplorer {
 	}
 
 	reset_ledger_view() {
-		this.view_state = { query: "", side: "", sort_key: null, sort_dir: null };
-		this.details = new Map();
-		this.open_details = new Set();
+		this.filters = { search: "", side: "" };
 	}
 
 	make_filters() {
@@ -154,28 +152,14 @@ class PartyAccountExplorer {
 		});
 		this.$overview.on("click", ".sp-page-prev", () => this.refresh_overview(this.overview_page - 1));
 		this.$overview.on("click", ".sp-page-next", () => this.refresh_overview(this.overview_page + 1));
-		this.$ledger.on("click", ".sp-detail-btn", (event) => this.toggle_detail($(event.currentTarget).closest("tr").attr("data-gl")));
-		this.$ledger.on("click", "th.sp-sortable", (event) => {
-			Object.assign(this.view_state, pae_ledger_rows.next_sort(this.view_state, $(event.currentTarget).attr("data-sort")));
-			this.render_ledger_table();
-		});
+		this.$ledger.on("click", ".sp-detail-btn", (event) => this.show_detail($(event.currentTarget).closest("tr").attr("data-gl")));
 		this.$ledger.on("input", ".sp-ledger-search", (event) => {
 			clearTimeout(this.search_timer);
-			this.search_timer = setTimeout(() => {
-				this.view_state.query = $(event.currentTarget).val();
-				this.render_ledger_table();
-			}, 250);
+			const search = $(event.currentTarget).val();
+			this.search_timer = setTimeout(() => this.apply_filters({ search }), 400);
 		});
-		this.$ledger.on("change", ".sp-ledger-side", (event) => {
-			this.view_state.side = $(event.currentTarget).val();
-			this.render_ledger_table();
-		});
-		this.$ledger.on("click", ".sp-clear-view", () => {
-			Object.assign(this.view_state, { query: "", side: "", sort_key: null, sort_dir: null });
-			this.$ledger.find(".sp-ledger-search").val("");
-			this.$ledger.find(".sp-ledger-side").val("");
-			this.render_ledger_table();
-		});
+		this.$ledger.on("change", ".sp-ledger-side", (event) => this.apply_filters({ side: $(event.currentTarget).val() }));
+		this.$ledger.on("click", ".sp-clear-view", () => this.apply_filters({ search: "", side: "" }));
 		this.$ledger.on("click", ".sp-page-prev", () => this.load_ledger_page(this.page_index - 1));
 		this.$ledger.on("click", ".sp-page-next", () => this.load_ledger_page(this.page_index + 1));
 	}
@@ -457,9 +441,10 @@ class PartyAccountExplorer {
 		}
 		if (reload) {
 			this.cursors = this.cursors.slice(0, index + 1);
-			this.details.clear();
 		}
 		const state = this.ledger_state;
+		const request = (this.ledger_request || 0) + 1;
+		this.ledger_request = request;
 		frappe
 			.xcall(PAE_API + "ledger.get_account_ledger", {
 				...state,
@@ -467,94 +452,120 @@ class PartyAccountExplorer {
 				to_date: state.to_date || null,
 				after: this.cursors[index],
 				page_length: PAE_PAGE_LENGTH,
+				search: this.filters.search.trim() || null,
+				side: this.filters.side || null,
 			})
 			.then((data) => {
+				if (request !== this.ledger_request) {
+					return;
+				}
 				this.page_index = index;
 				this.cursors = this.cursors.slice(0, index + 1);
 				if (data.has_more) {
 					this.cursors.push(data.next_cursor);
 				}
 				this.ledger = data;
-				this.open_details.clear();
 				this.render_ledger();
 			});
 	}
 
+	// Search and debit/credit filters run on the server over the whole period.
+	apply_filters(changes) {
+		Object.assign(this.filters, changes);
+		this.cursors = [null];
+		this.load_ledger_page(0);
+	}
+
 	render_ledger() {
 		const { context, summary } = this.ledger;
+		const focused = document.activeElement && document.activeElement.classList.contains("sp-ledger-search");
 		this.columns = pae_ledger_view.columns(context);
 		this.groups = pae_ledger_rows.groups(this.ledger.rows, this.page_index * PAE_PAGE_LENGTH, this.show_items.get_value());
 		this.$ledger.html(`
 			${pae_ledger_view.header(context, summary)}
-			${pae_ledger_view.toolbar(this.view_state)}
+			${pae_ledger_view.toolbar(this.filters)}
 			<div class="sp-table-wrap sp-ledger-wrap"></div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
-			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}</p>
+			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}
+				${__("«سند ثبت» سندی است که ردیف دفتر کل را ثبت کرده است: ثبت حسابداری (SP-POST) برای رسید و پرداخت، سند روزنامه، یا خود فاکتور/سند.")}</p>
 		`);
 		this.render_ledger_table();
+		if (focused) {
+			const input = this.$ledger.find(".sp-ledger-search").get(0);
+			input.focus();
+			input.setSelectionRange(input.value.length, input.value.length);
+		}
 	}
 
 	render_ledger_table() {
 		const data = this.ledger;
 		const context = data.context;
 		const columns = this.columns;
-		const shown = pae_ledger_rows.view(this.groups, this.view_state);
-		const rows = [
-			pae_ledger_view.balance_row("sp-opening-row", columns, context, {
-				label: this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره"),
-				date: this.page_index ? null : context.from_date,
-				balance: data.opening,
-				nature: data.opening_nature,
-				balance_base: data.opening_base,
-			}),
-		];
-		shown.forEach((group) => {
-			const open = this.open_details.has(group.gl_entry);
-			rows.push(pae_ledger_view.group_rows(group, columns, context, open));
-			if (open) {
-				rows.push(pae_ledger_view.detail_row(group.gl_entry, columns, this.detail_html(group.gl_entry)));
-			}
-		});
-		if (!shown.length) {
+		const rows = [];
+		// A filtered page after the first has no meaningful carry-forward row.
+		if (!(data.filtered && this.page_index > 0)) {
+			rows.push(
+				pae_ledger_view.balance_row("sp-opening-row", columns, context, {
+					label: this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره"),
+					date: this.page_index ? null : context.from_date,
+					balance: data.opening,
+					nature: data.opening_nature,
+					balance_base: data.opening_base,
+				})
+			);
+		}
+		this.groups.forEach((group) => rows.push(pae_ledger_view.group_rows(group, columns, context)));
+		if (!this.groups.length) {
 			rows.push(`<tr><td colspan="${columns.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`);
 		}
-		const footer = pae_ledger_view.balance_row("sp-total-row", columns, context, {
-			label: __("جمع گردش کل دوره"),
-			debit: data.summary.period_debit,
-			credit: data.summary.period_credit,
-			balance: data.summary.closing,
-			nature: data.summary.nature,
-			balance_base: data.summary.closing_base,
-		});
+		const footer = [];
+		if (data.filter_totals) {
+			footer.push(
+				pae_ledger_view.balance_row("sp-total-row sp-filtered-total", columns, context, {
+					label: __("جمع {0} ردیف فیلترشده", [data.filter_totals.row_count]),
+					debit: data.filter_totals.debit,
+					credit: data.filter_totals.credit,
+				})
+			);
+		}
+		footer.push(
+			pae_ledger_view.balance_row("sp-total-row", columns, context, {
+				label: __("جمع گردش کل دوره"),
+				debit: data.summary.period_debit,
+				credit: data.summary.period_credit,
+				balance: data.summary.closing,
+				nature: data.summary.nature,
+				balance_base: data.summary.closing_base,
+			})
+		);
 		const $wrap = this.$ledger.find(".sp-ledger-wrap");
 		$wrap.html(`<table class="table sp-table sp-ledger-table">
 			${pae_ledger_view.colgroup(columns, this.prefs, "ledger")}
-			<thead><tr>${pae_ledger_view.head(columns, this.view_state)}</tr></thead>
+			<thead><tr>${pae_ledger_view.head(columns)}</tr></thead>
 			<tbody>${rows.join("")}</tbody>
-			<tfoot>${footer}</tfoot>
+			<tfoot>${footer.join("")}</tfoot>
 		</table>`);
 		this.prefs.attach($wrap.find("table"), "ledger");
-		this.fit_detail_panels();
-		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.view_state, shown.length, this.groups.length));
+		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.filters, data.filter_totals, context.currency));
 	}
 
-	// ---- inline document details ----
+	// ---- document details dialog ----
 
-	toggle_detail(gl_entry) {
-		if (this.open_details.has(gl_entry)) {
-			this.open_details.delete(gl_entry);
-		} else {
-			this.open_details.add(gl_entry);
-			if (!this.details.has(gl_entry)) {
-				this.load_detail(gl_entry);
-			}
-		}
-		this.render_ledger_table();
-	}
-
-	load_detail(gl_entry) {
+	show_detail(gl_entry) {
 		const state = this.ledger_state;
-		this.details.set(gl_entry, null);
+		const $body = $('<div class="sp-party-explorer sp-detail"></div>').html(pae_detail_view.loading());
+		const dialog = new frappe.ui.Dialog({ title: __("جزئیات سند"), size: "extra-large" });
+		$body.appendTo(dialog.body);
+		$body.on("click", "a.sp-doc-link", (event) => {
+			if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			dialog.hide();
+			frappe.set_route("Form", $(event.currentTarget).attr("data-doctype"), $(event.currentTarget).attr("data-name"));
+		});
+		dialog.show();
 		frappe
 			.xcall(PAE_API + "document_details.get_document_detail", {
 				gl_entry,
@@ -563,41 +574,37 @@ class PartyAccountExplorer {
 				party: state.party,
 				account: state.account,
 			})
-			.then((detail) => this.details.set(gl_entry, detail))
-			.catch(() => this.details.set(gl_entry, false))
-			.finally(() => {
-				if (this.open_details.has(gl_entry)) {
-					this.$ledger.find("tr.sp-detail-row").filter((_index, row) => row.getAttribute("data-gl") === gl_entry).find(".sp-detail-panel").html(this.detail_html(gl_entry));
+			.then((detail) => {
+				dialog.set_title(pae_detail_view.title(detail));
+				$body.html(pae_detail_view.html(detail));
+				if (detail.document) {
+					dialog.set_primary_action(__("باز کردن سند کامل"), () => {
+						dialog.hide();
+						frappe.set_route("Form", detail.document.doctype, detail.document.name);
+					});
 				}
-			});
-	}
-
-	detail_html(gl_entry) {
-		const detail = this.details.get(gl_entry);
-		if (detail === false) {
-			return pae_detail_view.failed();
-		}
-		return detail ? pae_detail_view.html(detail) : pae_detail_view.loading();
-	}
-
-	// The panel spans the whole table; keep it as wide as the visible area.
-	fit_detail_panels() {
-		const width = this.$ledger.find(".sp-ledger-wrap").innerWidth();
-		if (width) {
-			this.$ledger.find(".sp-detail-panel").css("width", `${width - 24}px`);
-		}
+			})
+			.catch(() => $body.html(pae_detail_view.failed()));
 	}
 
 	// ---- export ----
 
 	export_file(file_type) {
 		if (this.mode === "ledger" && this.ledger_state) {
-			open_url_post(frappe.request.url, {
+			const args = {
 				cmd: PAE_API + "excel_export.export_account_ledger",
 				file_type,
 				...this.ledger_state,
 				show_items: this.show_items.get_value() ? 1 : 0,
-			});
+			};
+			if (this.filters.search.trim()) {
+				args.search = this.filters.search.trim();
+			}
+			if (this.filters.side) {
+				args.side = this.filters.side;
+			}
+			Object.keys(args).forEach((key) => (args[key] === null || args[key] === undefined) && delete args[key]);
+			open_url_post(frappe.request.url, args);
 			return;
 		}
 		const filters = this.overview_filters();

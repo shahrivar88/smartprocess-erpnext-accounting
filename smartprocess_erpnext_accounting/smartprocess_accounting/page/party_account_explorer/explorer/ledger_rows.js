@@ -1,15 +1,7 @@
-// Ledger page → display groups. One group per GL line; a split invoice line keeps
-// its item/adjustment rows, each repeating the date and the document. Sorting and
-// filtering move or hide whole groups of the loaded page only; balances are never
-// recomputed here.
-const PAE_SORTS = {
-	number: (group) => group.position,
-	date: (group) => String(group.line.posting_date || ""),
-	document: (group) => `${group.doc.label || ""} ${group.doc.number || ""}`,
-	debit: (group) => flt(group.line.debit),
-	credit: (group) => flt(group.line.credit),
-};
-
+// Ledger page → display groups. One group per GL line, always in chronological
+// order (posting date, creation, name) so the running balance is never misleading;
+// a split invoice line keeps its item/adjustment rows, each repeating the date and
+// the document. Search and debit/credit filters run on the server.
 const pae_ledger_rows = {
 	groups(lines, offset, split) {
 		return (lines || []).map((line, index) => pae_ledger_rows.group(line, offset + index + 1, split));
@@ -22,6 +14,12 @@ const pae_ledger_rows = {
 			doctype: line.document ? line.document.doctype : null,
 			name: line.document ? line.document.name : null,
 		};
+		const voucher = {
+			number: line.voucher_no,
+			doctype: line.voucher ? line.voucher.doctype : null,
+			name: line.voucher ? line.voucher.name : null,
+			detail: line.detail_ref || "",
+		};
 		const components = split && line.components && line.components.length ? line.components : null;
 		const entries = components || [pae_ledger_rows.plain_entry(line)];
 		const badges = pae_ledger_rows.badges(line);
@@ -33,9 +31,9 @@ const pae_ledger_rows = {
 			kind: entry.kind || "line",
 			date: line.posting_date,
 			doc,
+			voucher,
 			description: entry.description || "",
 			title: entry.title || "",
-			item_code: entry.item_code || "",
 			qty: entry.qty,
 			rate: entry.rate,
 			debit: flt(entry.debit),
@@ -44,10 +42,9 @@ const pae_ledger_rows = {
 			balance: entry.balance,
 			nature: entry.nature,
 			balance_base: entry.balance_base,
-			detail_ref: line.detail_ref || "",
 			badges: index === 0 ? badges : [],
 		}));
-		return { gl_entry: line.gl_entry, position, line, doc, rows };
+		return { gl_entry: line.gl_entry, position, line, doc, voucher, rows };
 	},
 
 	plain_entry(line) {
@@ -77,54 +74,11 @@ const pae_ledger_rows = {
 		return badges;
 	},
 
-	search_text(group) {
-		const parts = [group.doc.label, group.doc.number, group.line.remarks, group.line.detail_ref];
-		group.rows.forEach((row) => parts.push(row.title, row.description, row.item_code));
-		return parts.filter(Boolean).join(" ").toLowerCase();
-	},
-
-	view(groups, state) {
-		const query = String((state && state.query) || "").trim().toLowerCase();
-		const side = state && state.side;
-		let out = groups.filter((group) => {
-			if (side === "debit" && !flt(group.line.debit)) {
-				return false;
-			}
-			if (side === "credit" && !flt(group.line.credit)) {
-				return false;
-			}
-			return !query || pae_ledger_rows.search_text(group).includes(query);
-		});
-		const key = PAE_SORTS[state && state.sort_key];
-		if (key) {
-			const direction = state.sort_dir === "desc" ? -1 : 1;
-			out = out.slice().sort((a, b) => direction * (pae_ledger_rows.compare(key(a), key(b)) || a.position - b.position));
-		}
-		return out;
-	},
-
-	compare(a, b) {
-		if (typeof a === "number" && typeof b === "number") {
-			return a - b;
-		}
-		return String(a).localeCompare(String(b), "fa");
-	},
-
-	is_filtered(state) {
-		return Boolean(state && (String(state.query || "").trim() || state.side || PAE_SORTS[state.sort_key]));
-	},
-
-	next_sort(state, key) {
-		if (state.sort_key !== key) {
-			return { sort_key: key, sort_dir: "asc" };
-		}
-		if (state.sort_dir === "asc") {
-			return { sort_key: key, sort_dir: "desc" };
-		}
-		return { sort_key: null, sort_dir: null };
+	is_filtered(filters) {
+		return Boolean(filters && (String(filters.search || "").trim() || filters.side));
 	},
 };
 
 if (typeof module === "object" && module.exports) {
-	module.exports = { pae_ledger_rows, PAE_SORTS };
+	module.exports = { pae_ledger_rows };
 }

@@ -37,7 +37,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.pdf_h
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import (
 	CREDIT,
 	DEBIT,
-	LinkText,
 	SheetRow,
 	ledger_headers,
 	ledger_rows,
@@ -48,6 +47,10 @@ PA = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account"
 PAGE_JS = os.path.join(
 	os.path.dirname(os.path.dirname(__file__)), "page", "party_account_explorer", "party_account_explorer.js"
 )
+PAGE_CSS = os.path.join(
+	os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "public", "css", "party_account_explorer.css"
+)
+BALANCE, NATURE, VOUCHER = 9, 10, 11
 
 
 def gl_row(name, debit=0, credit=0, debit_base=None, credit_base=None, **extra):
@@ -338,6 +341,207 @@ class TestVoucherLinks(unittest.TestCase):
 		self.assertEqual(lines[0]["document"], {"doctype": "Sales Invoice", "name": "SINV-1"})
 		self.assertIsNone(lines[2]["document"], "unreadable invoice must stay plain text")
 		self.assertEqual(lines[2]["voucher_label"], "فاکتور فروش")
+		self.assertEqual(lines[0]["voucher"], {"doctype": "Sales Invoice", "name": "SINV-1"}, "an invoice posts its own GL rows")
+		self.assertIsNone(lines[2]["voucher"])
+
+	def test_posting_lines_link_the_sp_post_voucher_and_the_business_document(self):
+		line = {**self.line("G1", "SP-POST-1", credit=700), "voucher_type": "SmartProcess Accounting Posting", "voucher_detail_no": "PAIR-1"}
+		readable = {
+			"SmartProcess Accounting Posting": {"SP-POST-1": frappe._dict(name="SP-POST-1")},
+			"SmartProcess Accounting Document": {"SP-REC-1": frappe._dict(name="SP-REC-1", operation_type="Receipt")},
+		}
+		get_all = lambda doctype, **kwargs: [("SP-POST-1", "SP-REC-1")] if doctype == "SmartProcess Accounting Posting" else [("PAIR-1", 1)]
+		with (
+			patch(f"{PA}.voucher_links.frappe.get_all", side_effect=get_all),
+			patch(f"{PA}.voucher_links.readable_rows", side_effect=lambda doctype, names, fields=None: readable[doctype]),
+		):
+			voucher_links.decorate_lines([line])
+		self.assertEqual(line["voucher"], {"doctype": "SmartProcess Accounting Posting", "name": "SP-POST-1"})
+		self.assertEqual(line["document"], {"doctype": "SmartProcess Accounting Document", "name": "SP-REC-1"})
+		self.assertEqual(line["voucher_label"], "رسید")
+		self.assertIn("ردیف 1", line["detail_ref"])
+
+	def test_unknown_voucher_types_are_kept_not_validated(self):
+		line = {**self.line("G1", "X-1", debit=3), "voucher_type": "Some Custom Voucher"}
+		with patch(f"{PA}.voucher_links.readable_rows", return_value={}):
+			voucher_links.decorate_lines([line])
+		self.assertEqual((line["debit"], line["document_number"]), (3, "X-1"), "the row stays, with its own number")
+		self.assertIsNone(line["voucher"], "not readable: no link, nothing invented")
+
+
+class TestLedgerFilter(unittest.TestCase):
+	def condition(self, search=None, side=None, readable=True):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+
+		with patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=readable):
+			return LedgerFilter(search, side).condition("gle")
+
+	def test_cancelled_gl_rows_are_excluded_by_the_scope(self):
+		self.assertIn(f"{GL}.is_cancelled = 0", GLScope("Any Company", "Customer").where)
+
+	def test_no_filter_is_falsy_and_matches_everything(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+
+		self.assertFalse(LedgerFilter("  ", "sideways"))
+		self.assertEqual(self.condition(), ("1 = 1", {}))
+
+	def test_side_filter_uses_the_gl_amounts(self):
+		sql, params = self.condition(side="credit")
+		self.assertEqual(sql, "(gle.credit_in_account_currency != 0 or gle.credit != 0)")
+		self.assertEqual(params, {})
+
+	def test_search_covers_numbers_remarks_postings_and_items(self):
+		sql, params = self.condition(search="50%_")
+		self.assertEqual(params["pae_search"], "%50\\%\\_%", "LIKE wildcards are escaped")
+		self.assertIn("gle.voucher_no like %(pae_search)s", sql)
+		self.assertIn("ifnull(gle.remarks, '') like %(pae_search)s", sql)
+		self.assertIn("document.name like %(pae_search)s", sql, "the SP business document number")
+		self.assertIn("invoice_item.item_name like %(pae_search)s", sql)
+		self.assertNotIn("50%_", sql, "the search text is only a parameter")
+
+	def test_search_matches_persian_type_labels(self):
+		sql, _params = self.condition(search="رسید")
+		self.assertIn("document.operation_type in ('Receipt'", sql)
+		sql, _params = self.condition(search="برگشت از فروش")
+		self.assertIn("invoice.is_return in (1)", sql)
+
+	def test_item_search_needs_read_permission_on_the_invoice(self):
+		sql, _params = self.condition(search="CAM", readable=False)
+		self.assertNotIn("invoice_item", sql)
+
+
+class TestInvoiceDialogDetails(unittest.TestCase):
+	def test_header_financials_and_items_with_code_and_unit(self):
+		doc = TestResolvers().invoice(company="SP", status="Unpaid", is_return=0, posting_date="2026-05-01")
+		gl = gl_row("G1", debit=297.5, voucher_type="Sales Invoice", voucher_no="SINV-1")
+		with (
+			patch(f"{PA}.resolvers.invoice.readable_doc", return_value=doc),
+			patch(f"{PA}.resolvers.invoice.frappe.get_all", return_value=[]),
+			patch(f"{PA}.resolvers.common.frappe.get_all", return_value=[]),
+		):
+			detail = RESOLVERS["Sales Invoice"](gl, {})
+		labels = {entry["label"]: entry["value"] for entry in detail["summary"]}
+		for label in ("شماره سند", "تاریخ ثبت", "طرف حساب", "شرکت", "ارز", "وضعیت", "برگشتی", "جمع کل", "جمع گردشده", "مانده فاکتور", "مالیات و عوارض", "تخفیف", "مبلغ سوخت (Write Off)"):
+			self.assertIn(label, labels)
+		self.assertEqual((labels["شرکت"], labels["برگشتی"]), ("SP", "خیر"))
+		items = detail["sections"][0]
+		self.assertEqual([column["key"] for column in items["columns"]], ["item_name", "item_code", "qty", "uom", "rate", "amount"])
+		self.assertEqual((items["rows"][0]["item_code"], items["rows"][0]["uom"]), ("I1", "عدد"))
+
+	def test_return_invoice_shows_return_state_and_original(self):
+		doc = TestResolvers().invoice(name="SINV-2", is_return=1, return_against="SINV-1", status="Return", posting_date="2026-05-02")
+		gl = gl_row("G1", credit=100, voucher_type="Sales Invoice", voucher_no="SINV-2")
+		with (
+			patch(f"{PA}.resolvers.invoice.readable_doc", return_value=doc),
+			patch(f"{PA}.resolvers.invoice.frappe.get_all", return_value=[]),
+			patch(f"{PA}.resolvers.common.frappe.get_all", return_value=[]),
+		):
+			detail = RESOLVERS["Sales Invoice"](gl, {})
+		labels = {entry["label"]: entry["value"] for entry in detail["summary"]}
+		self.assertEqual((labels["برگشتی"], labels["برگشت از سند"]), ("بله", "SINV-1"))
+
+
+class TestSmartProcessDialogDetails(unittest.TestCase):
+	def test_payment_posting_opens_the_business_document_and_its_pair(self):
+		gl = gl_row("G1", credit=50, voucher_type="SmartProcess Accounting Posting", voucher_no="SP-POST-2", voucher_detail_no="P1")
+		posting = frappe._dict(name="SP-POST-2", source_document="SP-PAY-1", posting_date="2026-05-03", source_rows=[child(source_pair="P1", pair_index=1)])
+		source = frappe._dict(
+			name="SP-PAY-1",
+			operation_type="Payment",
+			company="SP",
+			docstatus=1,
+			operational_pairs=[child(name="P1", credit_party_type="Customer", credit_party="C1", credit_account="AR", credit_amount=50, credit_account_currency="IRR")],
+		)
+		line = frappe._dict(name="G1", voucher_detail_no="P1", account="AR", party_type="Customer", party="C1", account_currency="IRR", debit=0, credit=50, debit_in_account_currency=0, credit_in_account_currency=50)
+		module = f"{PA}.resolvers.accounting_posting"
+		with (
+			patch(f"{module}.frappe.get_doc", return_value=posting),
+			patch(f"{module}.readable_doc", return_value=source),
+			patch(f"{module}.voucher_lines", return_value=[line]),
+			patch(f"{module}.party_titles", return_value={}),
+			patch(f"{module}.frappe.get_all", return_value=[]),
+		):
+			detail = RESOLVERS["SmartProcess Accounting Posting"](gl, {})
+		self.assertEqual(detail["title"], "پرداخت")
+		self.assertEqual(detail["document"], {"doctype": "SmartProcess Accounting Document", "name": "SP-PAY-1"})
+		focus = {entry["label"]: entry["value"] for entry in detail["focus"]}
+		self.assertEqual((focus["ردیف"], focus["مبلغ"]), (1, 50))
+		self.assertIn({"doctype": "SmartProcess Accounting Posting", "name": "SP-POST-2", "relation": "ثبت حسابداری"}, detail["related"])
+
+	def test_receipt_conversion_shows_its_legs(self):
+		gl = gl_row("G1", debit=10, voucher_type="SmartProcess Receipt Conversion", voucher_no="SP-CONV-1", voucher_detail_no="L1")
+		leg = child(name="L1", idx=1, source_side="Credit", source_party_type="Customer", source_party="C1", source_account="AR", original_amount=900, conversion_amount=900, target_rate=90, posting_exchange_rate=90, target_amount=10, target_currency="USD", target_party_type="Customer", target_party="C1", target_account="AR USD", company_currency="IRR")
+		doc = frappe._dict(name="SP-CONV-1", conversion_mode="Receipt", source_receipt="SP-REC-1", posting_date="2026-05-04", company="SP", target_currency="USD", docstatus=1, legs=[leg])
+		module = f"{PA}.resolvers.receipt_conversion"
+		with (
+			patch(f"{module}.readable_doc", return_value=doc),
+			patch(f"{module}.party_titles", return_value={}),
+			patch(f"{module}.voucher_lines", return_value=[]),
+		):
+			detail = RESOLVERS["SmartProcess Receipt Conversion"](gl, {})
+		self.assertEqual(detail["document"], {"doctype": "SmartProcess Receipt Conversion", "name": "SP-CONV-1"})
+		self.assertEqual(detail["sections"][0]["rows"][0]["target_amount"], 10)
+		self.assertTrue(detail["sections"][0]["rows"][0]["is_current"])
+
+
+class TestSiteLedgerReadOnly(unittest.TestCase):
+	"""Read-only checks against existing site data; skipped when it is absent."""
+
+	def ledger_for(self, voucher_type):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import AccountLedger
+
+		rows = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": voucher_type, "is_cancelled": 0, "party_type": ["in", ["Customer", "Supplier"]]},
+			fields=["company", "party_type", "party", "account", "voucher_no", "name"],
+			limit=1,
+		)
+		if not rows:
+			self.skipTest(f"no {voucher_type} GL rows on this site")
+		row = rows[0]
+		make = lambda **kwargs: AccountLedger(row.company, row.party_type, row.party, row.account, None, frappe.utils.today(), **kwargs)
+		return row, make
+
+	def test_server_search_finds_a_row_beyond_the_first_page(self):
+		row, make = self.ledger_for("Sales Invoice")
+		full = [line["gl_entry"] for page in make().iter_lines() for line in page["rows"]]
+		found = []
+		after = None
+		ledger = make(search=row.voucher_no)
+		self.assertTrue(ledger.page(None, 1)["filtered"])
+		while True:
+			chunk = ledger.page(after, 1)
+			found += [line["gl_entry"] for line in chunk["rows"]]
+			if not chunk["has_more"]:
+				break
+			after = chunk["next_cursor"]
+		self.assertIn(row.name, found)
+		self.assertEqual(found, [name for name in full if name in found], "filtered rows keep the chronological order")
+		self.assertEqual(ledger.filter_totals["row_count"], len(found))
+
+	def test_filtered_balances_equal_the_chronological_balances(self):
+		row, make = self.ledger_for("Sales Invoice")
+		balances = {line["gl_entry"]: line["balance"] for page in make().iter_lines() for line in page["rows"]}
+		for side in ("debit", "credit"):
+			for page in make(side=side).iter_lines():
+				for line in page["rows"]:
+					self.assertTrue(line[side], "the side filter keeps only rows with that side")
+					self.assertAlmostEqual(line["balance"], balances[line["gl_entry"]], places=6)
+
+	def detail(self, row):
+		return document_details.get_document_detail(row.name, row.company, row.party_type, row.party, row.account)
+
+	def test_receipt_posting_dialog_resolves_from_the_gl_row(self):
+		row, _make = self.ledger_for("SmartProcess Accounting Posting")
+		detail = self.detail(row)
+		self.assertEqual(detail["document"]["doctype"], "SmartProcess Accounting Document", "opens the business document")
+		self.assertTrue(detail["summary"])
+
+	def test_invoice_dialog_from_the_gl_row(self):
+		row, _make = self.ledger_for("Sales Invoice")
+		detail = self.detail(row)
+		self.assertEqual(detail["document"], {"doctype": "Sales Invoice", "name": row.voucher_no})
+		self.assertIn("uom", [column["key"] for column in detail["sections"][0]["columns"]])
 
 
 def export_line(**extra):
@@ -384,43 +588,53 @@ class TestExports(unittest.TestCase):
 		with decorated(components=[component, discount]):
 			rows, count = ledger_rows(export_ledger([export_line()]))
 		headers = ledger_headers("IRR", "IRR", False)
-		self.assertEqual(headers[2], "سند")
-		self.assertNotIn("شماره سند", headers)
+		self.assertEqual(headers[2], "نوع برگه")
+		self.assertEqual(headers[VOUCHER], "سند ثبت")
+		self.assertNotIn("کد کالا", headers, "item code stays in the details only")
+		self.assertNotIn("واحد", headers)
 		self.assertEqual(count, 1)
 		self.assertTrue(all(len(row) == len(headers) for row in rows))
-		self.assertEqual([row.kind for row in rows], ["opening", "line", "line", "total", "closing"], "no decorative header row")
-		item, adjustment = rows[1:3]
+		self.assertEqual([row.kind for row in rows], ["line", "line", "opening", "total", "closing"], "summary rows after the lines")
+		item, adjustment = rows[0:2]
 		self.assertEqual([item[0], adjustment[0]], ["1.1", "1.2"])
 		for row in (item, adjustment):
 			self.assertEqual(row[1], "2026-01-02")
 			self.assertEqual(row[2], "فاکتور فروش - SINV-1")
+			self.assertEqual(row[VOUCHER], "SINV-1")
 			self.assertTrue(row[DEBIT] or row[CREDIT], "every line row carries an amount")
 		self.assertEqual(item[4:11], ["I1", 3, 2, 6, "", 16, "بدهکار"])
 		self.assertEqual(adjustment[4], "تخفیف")
-		self.assertEqual(sum(row[DEBIT] or 0 for row in rows[1:3]), 5, "split rows add up to the GL debit")
+		self.assertEqual(sum(row[DEBIT] or 0 for row in rows[0:2]), 5, "split rows add up to the GL debit")
+		self.assertEqual(rows[-3][BALANCE], 10, "opening")
 		self.assertEqual(rows[-2][DEBIT : CREDIT + 1], [5, 0])
-		self.assertEqual(rows[-1][9], 15)
+		self.assertEqual(rows[-1][BALANCE], 15)
 
-	def test_document_cell_links_to_the_business_document_only_when_readable(self):
+	def test_document_and_posting_cells_are_plain_text(self):
 		document = {"doctype": "SmartProcess Accounting Document", "name": "SP-REC-2026-00019"}
-		with decorated(voucher_label="رسید", document_number="SP-REC-2026-00019", document=document):
-			rows, _count = ledger_rows(export_ledger([export_line()]))
-		cell = rows[1][2]
-		self.assertEqual(cell, "رسید - SP-REC-2026-00019")
-		self.assertIn("/smartprocess-accounting-document/SP-REC-2026-00019", cell.url)
+		with decorated(voucher_label="رسید", document_number="SP-REC-2026-00019", document=document, detail_ref="ردیف 1 · پرداخت‌کننده"):
+			rows, _count = ledger_rows(export_ledger([export_line(voucher_type="SmartProcess Accounting Posting", voucher_no="SP-POST-1")]))
+		self.assertEqual(rows[0][2], "رسید - SP-REC-2026-00019")
+		self.assertIs(type(rows[0][2]), str, "no hyperlink object in exports")
+		self.assertEqual(rows[0][VOUCHER], "SP-POST-1 (ردیف 1 · پرداخت‌کننده)")
+		self.assertTrue(all(type(cell) in (str, int, float) for row in rows for cell in row))
+
+	def test_filtered_export_adds_a_filtered_totals_row(self):
+		ledger = export_ledger([export_line()])
+		ledger.filter_totals = {"row_count": 1, "debit": 5, "credit": 0}
 		with decorated():
-			rows, _count = ledger_rows(export_ledger([export_line()]))
-		self.assertEqual(rows[1][2], "فاکتور فروش - SINV-1")
-		self.assertIsNone(rows[1][2].url, "an unreadable document is not linked")
+			rows, _count = ledger_rows(ledger)
+		self.assertEqual([row.kind for row in rows], ["line", "opening", "total", "filtered", "closing"])
+		self.assertEqual(rows[3][2], "جمع 1 ردیف فیلترشده")
+		self.assertEqual(rows[-1][BALANCE], 15, "closing stays the whole ledger's")
 
 	def test_rows_in_another_currency_stay_with_a_visible_note(self):
 		line = export_line(posted_in_other_currency=True, posted_currency="USD", transaction_currency="EUR", transaction_amount=-50)
 		with decorated():
 			rows, count = ledger_rows(export_ledger([line, export_line()]))
 		self.assertEqual(count, 2, "no row is dropped for its currency")
-		self.assertIn("ارز ثبت: USD", rows[1][3])
-		self.assertIn("ارز سند: EUR 50", rows[1][3])
-		self.assertNotIn("ارز", rows[2][3])
+		self.assertIn("ارز ثبت: USD", rows[0][3])
+		self.assertIn("ارز سند: EUR 50", rows[0][3])
+		self.assertNotIn("ارز", rows[1][3])
 
 	def test_foreign_export_keeps_rate_and_company_currency_balance(self):
 		headers = ledger_headers("USD", "IRR", True)
@@ -429,8 +643,8 @@ class TestExports(unittest.TestCase):
 		with decorated():
 			rows, _count = ledger_rows(export_ledger([export_line(rate=600000, balance_base=9_000_000)], is_foreign=True))
 		self.assertTrue(all(len(row) == len(headers) for row in rows))
-		self.assertEqual(rows[1][9], 600000)
-		self.assertEqual(rows[1][-1], 9_000_000)
+		self.assertEqual(rows[0][9], 600000)
+		self.assertEqual(rows[0][-1], 9_000_000)
 		self.assertEqual(rows[-1][-1], 15)
 
 	def test_export_refuses_more_rows_than_the_limit_instead_of_truncating(self):
@@ -443,32 +657,66 @@ class TestExports(unittest.TestCase):
 		self.assertIn("<tr class='strong'><td>جمع دوره</td></tr>", html)
 		content = build_xlsx_bytes(["عنوان"], [["فاکتور فروش"]])
 		with zipfile.ZipFile(BytesIO(content)) as archive:
-			self.assertIn("فاکتور فروش", archive.read("xl/worksheets/sheet1.xml").decode("utf-8"))
-			self.assertNotIn("xl/worksheets/_rels/sheet1.xml.rels", archive.namelist())
+			self.assertIn("فاکتور فروش", archive.read("xl/sharedStrings.xml").decode("utf-8"))
+			self.assertIn('ref="A1:A2"', archive.read("xl/tables/table1.xml").decode("utf-8"))
 
-	def test_xlsx_is_a_formatted_rtl_table_with_widths_and_hyperlinks(self):
-		url = "https://erp.example/desk/sales-invoice/SINV-1"
-		rows = [SheetRow(["1", LinkText("فاکتور فروش - SINV-1", url), 1500, 0.25]), SheetRow(["", "جمع دوره", 1500, ""], "total")]
-		content = build_xlsx_bytes(["ردیف", "سند", "بدهکار", "نرخ"], rows, sheet_name="گزارش", title="گردش حساب", subtitle="شرکت: SP")
+	def xlsx_parts(self):
+		rows = [
+			SheetRow(["1", "فاکتور فروش - SINV-1", 1500, 0.25]),
+			SheetRow(["2", "رسید - SP-REC-1", 0, ""]),
+			SheetRow(["", "مانده اول دوره", "", 10], "opening"),
+			SheetRow(["", "جمع گردش دوره", 1500, ""], "total"),
+			SheetRow(["", "مانده پایان دوره", "", 1510], "closing"),
+		]
+		content = build_xlsx_bytes(["ردیف", "نوع برگه", "بدهکار", "نرخ"], rows, sheet_name="گزارش", title="گردش حساب", subtitle="شرکت: SP")
 		with zipfile.ZipFile(BytesIO(content)) as archive:
 			parts = {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
 		for xml in parts.values():
 			minidom.parseString(xml.encode("utf-8"))
-		sheet = parts["xl/worksheets/sheet1.xml"]
+		return parts
+
+	def test_xlsx_lines_form_a_real_excel_table(self):
+		parts = self.xlsx_parts()
+		sheet, table = parts["xl/worksheets/sheet1.xml"], parts["xl/tables/table1.xml"]
+		self.assertIn("spreadsheetml.table+xml", parts["[Content_Types].xml"])
+		self.assertIn("relationships/table", parts["xl/worksheets/_rels/sheet1.xml.rels"])
+		self.assertIn('<tablePart r:id="rId1"/>', sheet)
+		self.assertIn('ref="A4:D6"', table, "header (row 4) and the two line rows")
+		self.assertIn('<autoFilter ref="A4:D6"/>', table, "AutoFilter belongs to the table")
+		self.assertNotIn("<autoFilter", sheet, "no sheet-level AutoFilter")
+		self.assertIn('<tableStyleInfo name="TableStyleLight15"', table, "standard built-in gray style")
+		names = re.findall(r'<tableColumn id="\d+" name="([^"]+)"/>', table)
+		self.assertEqual(names, ["ردیف", "نوع برگه", "بدهکار", "نرخ"], "column names match the header cells")
 		self.assertIn('rightToLeft="1"', sheet)
-		self.assertIn('ySplit="3"', sheet, "title, subtitle and header stay frozen")
-		self.assertIn('<autoFilter ref="A3:D5"/>', sheet)
+		self.assertIn('ySplit="4"', sheet, "title, subtitle and header stay frozen")
 		self.assertIn('<mergeCell ref="A1:D1"/>', sheet)
-		self.assertIn('<c r="A3" t="inlineStr" s="1">', sheet, "header style")
-		self.assertIn('<c r="C4" s="3"><v>1500</v></c>', sheet, "thousands-separated integer")
-		self.assertIn('<c r="D4" s="4"><v>0.25</v></c>', sheet, "decimal format")
-		self.assertIn('<c r="B5" t="inlineStr" s="5">', sheet, "emphasized totals row")
-		self.assertIn('<hyperlink ref="B4" r:id="rIdLink1"/>', sheet)
-		self.assertIn(f'Target="{url}" TargetMode="External"', parts["xl/worksheets/_rels/sheet1.xml.rels"])
+		self.assertIn('<c r="C5" s="1"><v>1500</v></c>', sheet, "thousands-separated integer")
+		self.assertIn('<c r="D5" s="2"><v>0.25</v></c>', sheet, "decimal format")
+		self.assertNotIn("<fill><patternFill patternType=\"solid\"", parts["xl/styles.xml"], "no custom row colours")
 		widths = [float(width) for width in re.findall(r'<col min="\d+" max="\d+" width="([\d.]+)"', sheet)]
 		self.assertEqual(len(widths), 4)
 		self.assertGreaterEqual(widths[1], len("فاکتور فروش - SINV-1"), "widths follow the content")
 		self.assertLessEqual(max(widths), 60)
+
+	def test_xlsx_totals_are_outside_the_table(self):
+		parts = self.xlsx_parts()
+		sheet = parts["xl/worksheets/sheet1.xml"]
+		strings = re.findall(r"<t xml:space=\"preserve\">([^<]*)</t>", parts["xl/sharedStrings.xml"])
+		self.assertNotIn('<row r="7"', sheet, "one blank row between the table and the totals")
+		labels = {strings[int(index)]: int(row) for row, index in re.findall(r'<c r="B(\d+)" t="s" s="3"><v>(\d+)</v>', sheet)}
+		self.assertEqual(labels, {"مانده اول دوره": 8, "جمع گردش دوره": 9, "مانده پایان دوره": 10}, "bold, after one blank row")
+		self.assertTrue(all(row > 6 for row in labels.values()), "beyond the table range A4:D6")
+
+	def test_xlsx_has_no_hyperlinks(self):
+		parts = self.xlsx_parts()
+		self.assertNotIn("<hyperlink", parts["xl/worksheets/sheet1.xml"])
+		self.assertFalse(any("hyperlink" in xml or "TargetMode" in xml for xml in parts.values()))
+		self.assertNotIn("/desk/", parts["xl/sharedStrings.xml"])
+
+	def test_xlsx_table_names_are_unique_and_never_empty(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import unique_headers
+
+		self.assertEqual(unique_headers(["حساب", "", "حساب"], 4), ["حساب", "ستون 2", "حساب 2", "ستون 4"])
 
 	def test_client_rows_are_not_accepted(self):
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import excel_export
@@ -572,10 +820,27 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertNotIn("sp-back", self.js)
 		self.assertIn("window.history.back()", self.js)
 
-	def test_details_open_inline_without_a_dialog(self):
-		self.assertNotIn("frappe.ui.Dialog", self.js)
-		self.assertIn("sp-detail-row", self.js)
-		self.assertIn("باز کردن سند کامل", self.js)
+	def test_details_open_in_a_dialog_not_inline(self):
+		self.assertIn("new frappe.ui.Dialog(", self.js)
+		self.assertIn('dialog.set_primary_action(__("باز کردن سند کامل")', self.js)
+		self.assertIn('frappe.set_route("Form", detail.document.doctype, detail.document.name)', self.js)
+		self.assertNotIn("sp-detail-row", self.js)
+		self.assertNotIn("toggle_detail", self.js)
+
+	def test_search_and_side_filters_go_to_the_server(self):
+		self.assertIn("search: this.filters.search.trim() || null", self.js)
+		self.assertIn("side: this.filters.side || null", self.js)
+		self.assertNotIn("pae_ledger_rows.view(", self.js, "no client-side filtering of one page")
+		self.assertNotIn("sp-sortable", self.js, "no visual sort that would break the running balance")
+		self.assertIn("args.search = this.filters.search.trim()", self.js, "exports use the same filter")
+
+	def test_compact_row_height_contract(self):
+		with open(PAGE_CSS, encoding="utf-8") as handle:
+			css = handle.read()
+		rule = re.search(r"\.sp-table th,\s*\.sp-party-explorer \.sp-table td \{([^}]*)\}", css).group(1)
+		self.assertIn("padding: 4px 8px;", rule, "about 25% lower than the former 7px 10px rows")
+		self.assertIn("line-height: 1.35;", rule)
+		self.assertNotIn("sp-detail-panel", css)
 
 	def test_column_widths_use_the_standard_user_settings_store(self):
 		self.assertIn("new PaeColumnPrefs(frappe.model.user_settings)", self.js)

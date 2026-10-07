@@ -37,12 +37,14 @@ def export_balance_overview(
 
 
 @frappe.whitelist()
-def export_account_ledger(file_type, company, party_type, party, account, from_date=None, to_date=None, show_items=1):
-	ledger = AccountLedger(company, party_type, party, account, from_date, to_date)
+def export_account_ledger(file_type, company, party_type, party, account, from_date=None, to_date=None, show_items=1, search=None, side=None):
+	ledger = AccountLedger(company, party_type, party, account, from_date, to_date, search, side)
 	context = ledger.context
 	headers = ledger_headers(context["currency"], context["company_currency"], context["is_foreign"])
 	rows, _count = ledger_rows(ledger, include_items=frappe.utils.cint(show_items))
 	subtitle = f"{context['party_name']} ({party}) · {account} · {context['from_date'] or ''} تا {context['to_date']}"
+	if ledger.filters:
+		subtitle += f" · فیلتر: {filter_text(ledger.filters)}"
 	send_file(file_type, headers, rows, f"گردش-{party}-{context['currency']}", "گردش حساب طرف حساب", subtitle)
 
 
@@ -61,6 +63,13 @@ def send_file(file_type, headers, rows, filename, title, subtitle):
 	frappe.response["filename"] = safe_filename(filename) + extension
 	frappe.response["filecontent"] = content
 	frappe.response["type"] = response_type
+
+
+def filter_text(filters):
+	parts = [f"«{filters.search}»"] if filters.search else []
+	if filters.side:
+		parts.append("فقط بدهکار" if filters.side == "debit" else "فقط بستانکار")
+	return " · ".join(parts)
 
 
 def safe_filename(name):

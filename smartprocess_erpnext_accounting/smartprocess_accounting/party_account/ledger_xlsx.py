@@ -5,7 +5,8 @@
 
 Callers must use this instead of reimplementing ledger math. The engine is the
 GL-authoritative AccountLedger of Party Account Explorer; with a currency and no
-account, every same-currency account of the party gets its own section."""
+account, every same-currency account of the party is listed in one table with an
+account column, and each account's opening/totals/closing rows follow the table."""
 
 import re
 
@@ -17,7 +18,7 @@ from .access import ACCOUNT_CURRENCY, GL, GLScope, assert_report_access
 from .excel_bytes import build_xlsx_bytes
 from .gl_period import Period
 from .ledger import AccountLedger
-from .report_tables import MAX_EXPORT_LINES, LedgerColumns, ledger_headers, ledger_rows
+from .report_tables import MAX_EXPORT_LINES, SheetRow, ledger_headers, ledger_rows
 
 # ledger summary key → meta key read by existing callers
 META_KEYS = {
@@ -55,16 +56,17 @@ def build_party_item_ledger_xlsx(company, party_type, party, from_date=None, to_
 	is_foreign = currency != company_currency
 	totals = dict.fromkeys(TOTAL_KEYS, 0.0)
 	rows, line_count = [], 0
+	several = len(accounts) > 1
 	for name in accounts:
 		ledger = AccountLedger(company, party_type, party, name, from_date, to_date)
-		if len(accounts) > 1:
-			rows.append(section_row(f"حساب: {name}", is_foreign))
 		section, count = ledger_rows(ledger, budget=MAX_EXPORT_LINES - line_count)
-		rows += section
+		rows += [with_account(row, name) for row in section] if several else section
 		line_count += count
 		for key in TOTAL_KEYS:
 			totals[key] = flt(totals[key] + ledger.summary[key], 9)
 	headers = ledger_headers(currency, company_currency, is_foreign)
+	if several:
+		headers = ["حساب", *headers]
 	content = build_xlsx_bytes(
 		headers,
 		rows,
@@ -98,10 +100,9 @@ def party_accounts(company, party_type, party, currency, to_date):
 	return [row.account for row in rows]
 
 
-def section_row(text, is_foreign):
-	row = LedgerColumns(is_foreign).blank("section")
-	row[2] = text
-	return row
+def with_account(row, account):
+	"""Several accounts share one table; each row names its account."""
+	return SheetRow([account, *row], row.kind)
 
 
 def ledger_subtitle(company, currency, from_date, to_date):

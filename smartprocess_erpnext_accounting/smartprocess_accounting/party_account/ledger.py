@@ -15,6 +15,7 @@ from frappe.utils import cint, flt
 from .access import GL, PARTY_NAME_FIELD, POSTED_IN_OTHER_CURRENCY, GLScope, assert_report_access
 from .gl_period import Period, balance_columns, balance_values
 from .labels import balance_nature
+from .ledger_filter import LedgerFilter
 from .voucher_links import decorate_lines
 
 PAGE_LENGTH = 100
@@ -56,20 +57,23 @@ def get_account_ledger(
 	after=None,
 	page_length=PAGE_LENGTH,
 	show_items=1,
+	search=None,
+	side=None,
 ):
-	ledger = AccountLedger(company, party_type, party, account, from_date, to_date)
+	ledger = AccountLedger(company, party_type, party, account, from_date, to_date, search, side)
 	page = ledger.page(after, min(max(cint(page_length), 1), MAX_PAGE_LENGTH))
 	decorate_lines(page["rows"], include_items=cint(show_items), context=ledger.context)
-	return {"context": ledger.context, "summary": ledger.summary, **page}
+	return {"context": ledger.context, "summary": ledger.summary, "filter_totals": ledger.filter_totals, **page}
 
 
 class AccountLedger:
-	def __init__(self, company, party_type, party, account, from_date=None, to_date=None):
+	def __init__(self, company, party_type, party, account, from_date=None, to_date=None, search=None, side=None):
 		if not party or not account:
 			frappe.throw(_("طرف حساب و حساب الزامی است."))
 		assert_report_access(company, party_type, party, account)
 		self.period = Period(from_date, to_date)
 		self.scope = GLScope(company, party_type, party=party, account=account)
+		self.filters = LedgerFilter(search, side)
 		self.currency = frappe.get_cached_value("Account", account, "account_currency")
 		self.company_currency = frappe.get_cached_value("Company", company, "default_currency")
 		self.context = {
@@ -90,7 +94,23 @@ class AccountLedger:
 		row = self.scope.query(f"{balance_columns()}, {other_currency}", self.period.until, **self.period.params)[0]
 		return {**balance_values(row), "other_currency_rows": cint(row.other_currency_rows)}
 
+	@cached_property
+	def filter_totals(self):
+		"""Count and sums of the rows the filter shows; None without a filter."""
+		if not self.filters:
+			return None
+		condition, params = self.filters.condition(GL)
+		row = self.scope.query(
+			f"count(*) as row_count, sum({GL}.debit_in_account_currency) as debit, sum({GL}.credit_in_account_currency) as credit",
+			f"{self.period.inside} and {condition}",
+			**self.period.params,
+			**params,
+		)[0]
+		return {"row_count": cint(row.row_count), "debit": flt(row.debit), "credit": flt(row.credit)}
+
 	def page(self, after=None, page_length=PAGE_LENGTH):
+		if self.filters:
+			return self.filtered_page(after, page_length)
 		params = {**self.period.params, "limit": page_length + 1}
 		extra = self.period.inside
 		opening, opening_base = self.summary["opening"], self.summary["opening_base"]
@@ -115,6 +135,47 @@ class AccountLedger:
 			"rows": running_lines(rows, opening, opening_base, self.context["is_foreign"], self.currency),
 			"has_more": has_more,
 			"next_cursor": rows[-1].name if has_more else None,
+			"filtered": False,
+		}
+
+	def filtered_page(self, after, page_length):
+		"""Matching rows only. The running sum is a window over every row of the
+		period, taken before the filter, so each balance stays the real ledger
+		balance after that GL line in (posting_date, creation, name) order."""
+		condition, filter_params = self.filters.condition("ledger_rows")
+		params = {**self.scope.params, **self.period.params, **filter_params, "limit": page_length + 1}
+		tail = ""
+		if after:
+			params.update(self.cursor(after))
+			tail = f" and (ledger_rows.posting_date, ledger_rows.creation, ledger_rows.name) > {CURSOR}"
+		window = f"over (order by {GL}.posting_date, {GL}.creation, {GL}.name rows between unbounded preceding and current row)"
+		inner = self.scope.sql(
+			f"{ROW_FIELDS}, {GL}.creation, "
+			f"sum({GL}.debit_in_account_currency - {GL}.credit_in_account_currency) {window} as running, "
+			f"sum({GL}.debit - {GL}.credit) {window} as running_base",
+			self.period.inside,
+		)
+		rows = frappe.db.sql(
+			f"select * from ({inner}) ledger_rows where {condition}{tail} "
+			"order by ledger_rows.posting_date, ledger_rows.creation, ledger_rows.name limit %(limit)s",
+			params,
+			as_dict=True,
+		)
+		has_more = len(rows) > page_length
+		rows = rows[:page_length]
+		opening, opening_base = self.summary["opening"], self.summary["opening_base"]
+		lines = [
+			ledger_line(row, flt(opening + flt(row.running), 9), flt(opening_base + flt(row.running_base), 9), self.context["is_foreign"], self.currency)
+			for row in rows
+		]
+		return {
+			"opening": opening,
+			"opening_base": opening_base,
+			"opening_nature": balance_nature(opening),
+			"rows": lines,
+			"has_more": has_more,
+			"next_cursor": rows[-1].name if has_more else None,
+			"filtered": True,
 		}
 
 	def cursor(self, after):
@@ -144,32 +205,32 @@ def running_lines(rows, opening, opening_base, is_foreign, currency=None):
 	balance, balance_base = flt(opening), flt(opening_base)
 	lines = []
 	for row in rows:
-		debit = flt(row.debit_in_account_currency)
-		credit = flt(row.credit_in_account_currency)
-		balance = flt(balance + debit - credit, 9)
+		balance = flt(balance + flt(row.debit_in_account_currency) - flt(row.credit_in_account_currency), 9)
 		balance_base = flt(balance_base + flt(row.debit) - flt(row.credit), 9)
-		lines.append(
-			{
-				**currency_flags(row, currency),
-				"gl_entry": row.name,
-				"posting_date": row.posting_date,
-				"voucher_type": row.voucher_type,
-				"voucher_no": row.voucher_no,
-				"voucher_detail_no": row.voucher_detail_no,
-				"against_voucher_type": row.against_voucher_type,
-				"against_voucher": row.against_voucher,
-				"remarks": row.remarks,
-				"debit": debit,
-				"credit": credit,
-				"debit_base": flt(row.debit),
-				"credit_base": flt(row.credit),
-				"rate": posting_rate(row) if is_foreign else None,
-				"balance": balance,
-				"balance_base": balance_base,
-				"nature": balance_nature(balance),
-			}
-		)
+		lines.append(ledger_line(row, balance, balance_base, is_foreign, currency))
 	return lines
+
+
+def ledger_line(row, balance, balance_base, is_foreign, currency):
+	return {
+		**currency_flags(row, currency),
+		"gl_entry": row.name,
+		"posting_date": row.posting_date,
+		"voucher_type": row.voucher_type,
+		"voucher_no": row.voucher_no,
+		"voucher_detail_no": row.voucher_detail_no,
+		"against_voucher_type": row.against_voucher_type,
+		"against_voucher": row.against_voucher,
+		"remarks": row.remarks,
+		"debit": flt(row.debit_in_account_currency),
+		"credit": flt(row.credit_in_account_currency),
+		"debit_base": flt(row.debit),
+		"credit_base": flt(row.credit),
+		"rate": posting_rate(row) if is_foreign else None,
+		"balance": balance,
+		"balance_base": balance_base,
+		"nature": balance_nature(balance),
+	}
 
 
 def currency_flags(row, currency):

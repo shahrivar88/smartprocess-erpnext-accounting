@@ -35,6 +35,8 @@ function invoice_line(extra) {
 		voucher_label: "فاکتور فروش",
 		document_number: "ACC-SINV-2026-00012",
 		document: { doctype: "Sales Invoice", name: "ACC-SINV-2026-00012" },
+		voucher_no: "ACC-SINV-2026-00012",
+		voucher: { doctype: "Sales Invoice", name: "ACC-SINV-2026-00012" },
 		remarks: "No Remarks",
 		debit: 215000000,
 		credit: 0,
@@ -74,15 +76,63 @@ function invoice_line(extra) {
 	const total = group.rows.reduce((sum, row) => sum + row.debit, 0);
 	assert.equal(total, 215000000, "split rows add up to the GL line");
 	assert.equal(group.rows[0].title, "DS-2CD2347G2-L (2.8mm)", "the item name only");
-	assert.equal(group.rows[0].item_code, "CAM-1", "the item code stays in the row data");
 	assert.equal(group.rows[0].qty * group.rows[0].rate, group.rows[0].debit);
 	assert.deepEqual([group.rows[0].first, group.rows[1].last], [true, true]);
 
-	const html = pae_ledger_view.group_rows(group, pae_ledger_view.columns(CONTEXT), CONTEXT, false);
-	assert.equal((html.match(/class="sp-doc-link"/g) || []).length, 2, "the document link repeats on every row");
+	const html = pae_ledger_view.group_rows(group, pae_ledger_view.columns(CONTEXT), CONTEXT);
+	assert.equal((html.match(/href="\/desk\/sales-invoice\/ACC-SINV-2026-00012"/g) || []).length, 4, "document and posting links repeat on every row");
 	assert.equal((html.match(/sp-detail-btn/g) || []).length, 1, "one details button per GL line");
 	assert.equal(html.includes("CAM-1"), false, "no item code in the main table");
-	assert.equal(html.includes("uom"), false);
+	assert.equal(html.includes("عدد"), false, "no unit of measure in the main table");
+	assert.equal(html.includes("aria-expanded"), false, "no inline expansion");
+}
+
+// «نوع برگه» column: «رسید - SP-REC-…» where only the number links.
+{
+	const columns = pae_ledger_view.columns(CONTEXT);
+	assert.equal(columns.find((column) => column.key === "document").label, "نوع برگه");
+	assert.equal(columns.some((column) => column.key === "detail_ref"), false);
+	assert.equal(columns.some((column) => column.sort), false, "no visual sort: rows stay chronological");
+	assert.equal(pae_ledger_view.head(columns).includes("data-sort"), false);
+}
+
+// «سند ثبت»: the GL voucher (SP-POST / JE / invoice), linked when readable, with the row reference below.
+{
+	const receipt = {
+		gl_entry: "GL-9",
+		posting_date: "2026-05-02",
+		voucher_label: "رسید",
+		document_number: "SP-REC-2026-00019",
+		document: { doctype: "SmartProcess Accounting Document", name: "SP-REC-2026-00019" },
+		voucher_no: "SP-POST-2026-00007",
+		voucher: { doctype: "SmartProcess Accounting Posting", name: "SP-POST-2026-00007" },
+		detail_ref: "ردیف 1 · پرداخت‌کننده",
+		debit: 0,
+		credit: 700000000,
+		balance: -700000000,
+		components: [],
+	};
+	const [group] = pae_ledger_rows.groups([receipt], 0, true);
+	const cell = pae_ledger_view.cell("voucher", group.rows[0], CONTEXT);
+	assert.match(cell, /href="\/desk\/smartprocess-accounting-posting\/SP-POST-2026-00007"[^>]*>SP-POST-2026-00007<\/a>/);
+	assert.match(cell, /sp-voucher-detail">ردیف 1 · پرداخت‌کننده/);
+	const hidden = pae_ledger_rows.groups([{ ...receipt, voucher: null }], 0, true)[0];
+	const plain = pae_ledger_view.cell("voucher", hidden.rows[0], CONTEXT);
+	assert.equal(plain.includes("<a "), false, "an unreadable posting stays plain text");
+	assert.match(plain, /SP-POST-2026-00007/);
+	assert.match(pae_ledger_view.cell("document", group.rows[0], CONTEXT), /رسید<\/span> - <a [^>]*>SP-REC-2026-00019<\/a>/);
+}
+
+// Server filters: the status line reports the server totals and keeps the chronological balance note.
+{
+	assert.equal(pae_ledger_rows.is_filtered({ search: " ", side: "" }), false);
+	assert.equal(pae_ledger_rows.is_filtered({ search: "", side: "debit" }), true);
+	assert.equal(pae_ledger_view.status({ search: "", side: "" }, null, "IRR"), "");
+	const status = pae_ledger_view.status({ search: "2CD", side: "" }, { row_count: 3, debit: 215, credit: 0 }, "IRR");
+	assert.match(status, /3 ردیف دفتر کل مطابق فیلتر/);
+	assert.match(status, />215</);
+	assert.match(status, /به ترتیب زمانی/);
+	assert.equal(pae_ledger_view.toolbar({ search: "a\"b", side: "credit" }).includes('value="a&quot;b"'), true);
 }
 
 // Without item split a line is one row with its own amount.
@@ -102,33 +152,11 @@ function invoice_line(extra) {
 		{ type: "posted", currency: "USD" },
 		{ type: "transaction", currency: "EUR", amount: 50 },
 	]);
-	const html = pae_ledger_view.cell("description", group.rows[0], CONTEXT, false);
+	const html = pae_ledger_view.cell("description", group.rows[0], CONTEXT);
 	assert.match(html, /ارز ثبت: USD/);
 	assert.match(html, /ارز سند: EUR/);
 	assert.match(pae_ledger_view.currency_cell("IRR", 3), /3 ردیف با ارز دیگر/);
 	assert.equal(pae_ledger_view.currency_cell("IRR", 0), "IRR");
-}
-
-// Filtering and sorting keep groups whole and never touch amounts.
-{
-	const lines = [
-		invoice_line(),
-		{ ...invoice_line({ gl_entry: "GL-2", document_number: "SP-REC-2026-00019", voucher_label: "رسید", components: [], debit: 0, credit: 700000000 }) },
-	];
-	const groups = pae_ledger_rows.groups(lines, 0, true);
-	const by_item = pae_ledger_rows.view(groups, { query: "ds-2cd" });
-	assert.equal(by_item.length, 1);
-	assert.equal(by_item[0].rows.length, 2, "a matching item keeps its whole invoice");
-	assert.deepEqual(pae_ledger_rows.view(groups, { side: "credit" }).map((group) => group.gl_entry), ["GL-2"]);
-	assert.deepEqual(pae_ledger_rows.view(groups, { sort_key: "credit", sort_dir: "desc" }).map((group) => group.gl_entry), ["GL-2", "GL-1"]);
-	assert.deepEqual(pae_ledger_rows.view(groups, {}).map((group) => group.gl_entry), ["GL-1", "GL-2"]);
-	assert.equal(groups[0].rows[0].balance, -490000000, "the view never recomputes balances");
-	assert.deepEqual(pae_ledger_rows.next_sort({}, "debit"), { sort_key: "debit", sort_dir: "asc" });
-	assert.deepEqual(pae_ledger_rows.next_sort({ sort_key: "debit", sort_dir: "asc" }, "debit"), { sort_key: "debit", sort_dir: "desc" });
-	assert.deepEqual(pae_ledger_rows.next_sort({ sort_key: "debit", sort_dir: "desc" }, "debit"), { sort_key: null, sort_dir: null });
-	assert.equal(pae_ledger_rows.is_filtered({ query: " " }), false);
-	assert.equal(pae_ledger_rows.is_filtered({ side: "debit" }), true);
-	assert.match(pae_ledger_view.status({ side: "debit" }, 1, 2), /1 از 2/);
 }
 
 // Opening and totals rows put the label in the document column.
@@ -183,20 +211,38 @@ function invoice_line(extra) {
 	assert.equal(broken.width("ledger", "debit", 140), 140, "a failed load keeps the defaults");
 })();
 
-// Inline details: read-only summary plus a link to the full document.
+// Details dialog body: read-only summary; item code and unit live here, not in the table.
 {
-	const html = pae_detail_view.html({
+	const detail = {
 		title: "فاکتور فروش",
 		document: { doctype: "Sales Invoice", name: "ACC-SINV-2026-00012" },
-		summary: [{ label: "مبلغ کل", kind: "amount", value: 210000000, currency: "IRR" }],
-		sections: [{ title: "اقلام", columns: [{ key: "item_code", label: "کد کالا", kind: "text" }], rows: [{ item_code: "CAM-1" }] }],
+		summary: [
+			{ label: "مبلغ کل", kind: "amount", value: 210000000, currency: "IRR" },
+			{ label: "برگشت از سند", kind: "link", value: "ACC-SINV-2026-00001", doctype: "Sales Invoice" },
+		],
+		sections: [
+			{
+				title: "اقلام",
+				columns: [
+					{ key: "item_name", label: "نام کالا", kind: "text" },
+					{ key: "item_code", label: "کد کالا", kind: "text" },
+					{ key: "qty", label: "مقدار", kind: "number" },
+					{ key: "uom", label: "واحد", kind: "text" },
+				],
+				rows: [{ item_name: "DS-2CD2347G2-L (2.8mm)", item_code: "CAM-1", qty: 10, uom: "عدد" }],
+			},
+		],
 		related: [],
 		technical: [],
-	});
-	assert.match(html, /href="\/desk\/sales-invoice\/ACC-SINV-2026-00012"[^>]*>باز کردن سند کامل/);
+	};
+	const html = pae_detail_view.html(detail);
+	assert.equal(pae_detail_view.title(detail), "فاکتور فروش — ACC-SINV-2026-00012");
 	assert.match(html, /CAM-1/, "the item code appears in the details");
+	assert.match(html, /عدد/, "the unit appears in the details");
+	assert.match(html, /href="\/desk\/sales-invoice\/ACC-SINV-2026-00001"/);
+	assert.equal(html.includes("باز کردن سند کامل"), false, "the dialog's primary action opens the document");
 	assert.equal(html.includes("<input"), false, "details are read-only");
-	assert.match(pae_ledger_view.detail_row("GL-1", pae_ledger_view.columns(CONTEXT), html), /colspan="\d+"/);
+	assert.equal("detail_row" in pae_ledger_view, false, "no inline detail rows");
 }
 
 console.log("party account explorer UI tests passed");

@@ -1,17 +1,18 @@
-// HTML for the two explorer tables. Every column has a stable key, a default width
-// (overridable per user) and, when it can be sorted, a sort key.
+// HTML for the two explorer tables. Every column has a stable key and a default
+// width (overridable per user). Ledger rows stay in chronological order: no column
+// sorts, because the running balance only holds in that order.
 const pae_ledger_view = {
 	columns(context) {
 		const columns = [
-			{ key: "number", label: "#", width: 64, sort: "number" },
-			{ key: "date", label: __("تاریخ"), width: 104, sort: "date" },
-			{ key: "document", label: __("سند"), width: 250, sort: "document" },
+			{ key: "number", label: "#", width: 64 },
+			{ key: "date", label: __("تاریخ"), width: 104 },
+			{ key: "document", label: __("نوع برگه"), width: 250 },
 			{ key: "description", label: __("شرح"), width: 240 },
 			{ key: "title", label: __("عنوان قلم"), width: 220 },
 			{ key: "qty", label: __("مقدار"), width: 80, numeric: true },
 			{ key: "rate", label: __("فی"), width: 130, numeric: true },
-			{ key: "debit", label: __("بدهکار"), width: 140, sort: "debit", numeric: true },
-			{ key: "credit", label: __("بستانکار"), width: 140, sort: "credit", numeric: true },
+			{ key: "debit", label: __("بدهکار"), width: 140, numeric: true },
+			{ key: "credit", label: __("بستانکار"), width: 140, numeric: true },
 		];
 		if (context.is_foreign) {
 			columns.push({ key: "posting_rate", label: __("نرخ ثبت"), width: 110, numeric: true });
@@ -19,7 +20,7 @@ const pae_ledger_view = {
 		columns.push(
 			{ key: "balance", label: __("مانده"), width: 150, numeric: true },
 			{ key: "nature", label: __("ماهیت"), width: 90 },
-			{ key: "detail_ref", label: __("ردیف سند"), width: 170 }
+			{ key: "voucher", label: __("سند ثبت"), width: 190, help: __("سندی که این ردیف دفتر کل را ثبت کرده است (ثبت حسابداری SP-POST، سند روزنامه، یا خود فاکتور/سند)") }
 		);
 		if (context.is_foreign) {
 			columns.push({ key: "balance_base", label: __("مانده {0}", [context.company_currency]), width: 160, numeric: true });
@@ -64,10 +65,10 @@ const pae_ledger_view = {
 		</div>`;
 	},
 
-	toolbar(state) {
-		const side = (value, label) => `<option value="${value}" ${state.side === value ? "selected" : ""}>${label}</option>`;
+	toolbar(filters) {
+		const side = (value, label) => `<option value="${value}" ${filters.side === value ? "selected" : ""}>${label}</option>`;
 		return `<div class="sp-ledger-toolbar">
-			<input type="search" class="form-control input-xs sp-ledger-search" value="${pae_format.text(state.query || "")}" placeholder="${__("جستجو در سند، شرح، قلم…")}">
+			<input type="search" class="form-control input-xs sp-ledger-search" value="${pae_format.text(filters.search || "")}" placeholder="${__("جستجو در شماره، نوع برگه، شرح، کالا، سند ثبت…")}">
 			<select class="form-control input-xs sp-ledger-side">
 				${side("", __("همه ردیف‌ها"))}${side("debit", __("فقط بدهکار"))}${side("credit", __("فقط بستانکار"))}
 			</select>
@@ -75,31 +76,39 @@ const pae_ledger_view = {
 		</div>`;
 	},
 
-	status(state, shown, total) {
-		if (!pae_ledger_rows.is_filtered(state)) {
+	// Filtering runs on the whole period server-side; shown balances remain the real
+	// chronological balances after each row.
+	status(filters, totals, currency) {
+		if (!pae_ledger_rows.is_filtered(filters) || !totals) {
 			return "";
 		}
-		return `${__("{0} از {1} سند این صفحه", [shown, total])} · ${__("مانده‌ها به ترتیب زمانی ثبت است")}
-			<button class="btn btn-link btn-xs sp-clear-view">${__("حذف فیلتر و مرتب‌سازی")}</button>`;
+		return `${__("{0} ردیف دفتر کل مطابق فیلتر", [totals.row_count])} ·
+			${__("بدهکار")} ${pae_format.amount(totals.debit, currency, true)} ·
+			${__("بستانکار")} ${pae_format.amount(totals.credit, currency, true)} ·
+			${__("مانده هر ردیف، مانده واقعی حساب پس از آن ردیف به ترتیب زمانی است")}
+			<button class="btn btn-link btn-xs sp-clear-view">${__("حذف فیلتر")}</button>`;
 	},
 
 	colgroup(columns, prefs, table) {
 		return `<colgroup>${columns.map((column) => `<col data-col="${column.key}" style="width:${prefs.width(table, column.key, column.width)}px">`).join("")}</colgroup>`;
 	},
 
-	head(columns, state) {
+	head(columns) {
 		return columns
 			.map((column) => {
-				const sorted = column.sort && state && state.sort_key === column.sort;
-				const arrow = sorted ? (state.sort_dir === "desc" ? " ▼" : " ▲") : "";
-				const sort_attr = column.sort ? ` data-sort="${column.sort}"` : "";
-				const css = [column.sort ? "sp-sortable" : "", sorted ? "sp-sorted" : ""].join(" ");
-				return `<th data-col="${column.key}" data-default-width="${column.width}"${sort_attr} class="${css}">${pae_format.text(column.label)}${arrow}</th>`;
+				const help = column.help ? ` title="${pae_format.text(column.help)}"` : "";
+				return `<th data-col="${column.key}" data-default-width="${column.width}"${help}>${pae_format.text(column.label)}</th>`;
 			})
 			.join("");
 	},
 
-	cell(key, row, context, open) {
+	voucher(voucher) {
+		const number = pae_format.link(voucher.doctype, voucher.name, voucher.number);
+		const detail = voucher.detail ? `<span class="sp-voucher-detail">${pae_format.text(voucher.detail)}</span>` : "";
+		return `${number}${detail}`;
+	},
+
+	cell(key, row, context) {
 		const currency = context.currency;
 		switch (key) {
 			case "number":
@@ -126,14 +135,12 @@ const pae_ledger_view = {
 				return `<td class="sp-strong">${pae_format.amount(row.balance, currency, true)}</td>`;
 			case "nature":
 				return `<td>${pae_format.text(row.nature)}</td>`;
-			case "detail_ref":
-				return `<td class="small">${pae_format.text(row.detail_ref)}</td>`;
+			case "voucher":
+				return `<td class="sp-voucher" title="${pae_format.text([row.voucher.number, row.voucher.detail].filter(Boolean).join(" · "))}">${pae_ledger_view.voucher(row.voucher)}</td>`;
 			case "balance_base":
 				return `<td class="text-muted">${pae_format.amount(row.balance_base, context.company_currency, true)}</td>`;
 			case "actions":
-				return row.first
-					? `<td><button class="btn btn-default btn-xs sp-detail-btn" aria-expanded="${open ? "true" : "false"}">${open ? __("بستن") : __("جزئیات")}</button></td>`
-					: "<td></td>";
+				return row.first ? `<td><button class="btn btn-default btn-xs sp-detail-btn">${__("جزئیات")}</button></td>` : "<td></td>";
 			default:
 				return "<td></td>";
 		}
@@ -149,11 +156,11 @@ const pae_ledger_view = {
 			.join("");
 	},
 
-	group_rows(group, columns, context, open) {
+	group_rows(group, columns, context) {
 		return group.rows
 			.map((row) => {
 				const css = ["sp-gl-row", `sp-kind-${row.kind}`, row.first ? "sp-group-first" : "", row.last ? "sp-group-last" : ""].join(" ");
-				return `<tr class="${css}" data-gl="${pae_format.text(row.gl_entry)}">${columns.map((column) => pae_ledger_view.cell(column.key, row, context, open)).join("")}</tr>`;
+				return `<tr class="${css}" data-gl="${pae_format.text(row.gl_entry)}">${columns.map((column) => pae_ledger_view.cell(column.key, row, context)).join("")}</tr>`;
 			})
 			.join("");
 	},
@@ -179,10 +186,6 @@ const pae_ledger_view = {
 			return "<td></td>";
 		});
 		return `<tr class="${css}">${cells.join("")}</tr>`;
-	},
-
-	detail_row(gl_entry, columns, html) {
-		return `<tr class="sp-detail-row" data-gl="${pae_format.text(gl_entry)}"><td colspan="${columns.length}"><div class="sp-detail-panel sp-detail">${html}</div></td></tr>`;
 	},
 
 	overview_columns(show_base, company_currency) {

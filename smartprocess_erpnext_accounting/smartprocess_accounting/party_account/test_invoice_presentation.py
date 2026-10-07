@@ -287,7 +287,8 @@ class TestLedgerReconciliation(unittest.TestCase):
 			patch(f"{PA}.voucher_links.frappe.get_precision", return_value=PRECISION),
 		):
 			rows, _count = ledger_rows(ledger)
-		body = rows[1:-2]
+		body = [row for row in rows if row.kind == "line"]
+		self.assertEqual([row.kind for row in rows[len(body) :]], ["opening", "total", "closing"])
 		self.assertTrue(all(row[7] or row[8] for row in body), "every body row carries an amount")
 		self.assertEqual(sum(row[7] or 0 for row in body), 174_000_000)
 		self.assertEqual(sum(row[8] or 0 for row in body), 20_000_000)

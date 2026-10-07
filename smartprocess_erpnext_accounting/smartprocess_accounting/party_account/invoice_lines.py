@@ -8,9 +8,8 @@ import re
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.labels import doc_get
 
 ITEM_COLUMNS = [
-	{"key": "item_code", "label": "کد کالا", "kind": "text"},
 	{"key": "item_name", "label": "نام کالا", "kind": "text"},
-	{"key": "description", "label": "شرح", "kind": "text"},
+	{"key": "item_code", "label": "کد کالا", "kind": "text"},
 	{"key": "qty", "label": "مقدار", "kind": "number"},
 	{"key": "uom", "label": "واحد", "kind": "text"},
 	{"key": "rate", "label": "فی", "kind": "amount"},

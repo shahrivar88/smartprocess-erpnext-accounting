@@ -154,7 +154,8 @@
 
 .sp-party-explorer .sp-table th,
 .sp-party-explorer .sp-table td {
-	padding: 7px 10px;
+	padding: 4px 8px;
+	line-height: 1.35;
 	border: 0;
 	border-bottom: 1px solid var(--border-color, #eef0f2);
 	overflow-wrap: anywhere;
@@ -173,14 +174,6 @@
 	text-overflow: ellipsis;
 	user-select: none;
 	border-bottom: 1px solid var(--border-color, #d1d8dd);
-}
-
-.sp-party-explorer .sp-table th.sp-sortable {
-	cursor: pointer;
-}
-
-.sp-party-explorer .sp-table th.sp-sorted {
-	color: var(--text-color, #1f272e);
 }
 
 .sp-party-explorer .sp-col-resizer {
@@ -260,6 +253,25 @@ body.sp-col-resizing {
 	text-decoration: underline;
 }
 
+.sp-party-explorer .sp-table td.sp-voucher {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	overflow-wrap: normal;
+}
+
+.sp-party-explorer .sp-voucher-detail {
+	margin-inline-start: 6px;
+	color: var(--text-muted, #6c7680);
+	font-size: 0.72rem;
+}
+
+.sp-party-explorer .sp-detail-btn {
+	padding: 0 8px;
+	font-size: 0.75rem;
+	line-height: 1.5;
+}
+
 .sp-party-explorer .sp-badge {
 	display: inline-block;
 	margin-inline-start: 6px;
@@ -289,31 +301,10 @@ body.sp-col-resizing {
 	margin: 8px 0;
 }
 
-/* ---- inline details ---- */
+/* ---- details dialog ---- */
 
-.sp-party-explorer tr.sp-detail-row > td {
+.sp-party-explorer.sp-detail {
 	padding: 0;
-	background: var(--subtle-accent, #fafbfc);
-}
-
-.sp-party-explorer .sp-detail-panel {
-	position: sticky;
-	inset-inline-start: 0;
-	box-sizing: border-box;
-	max-width: 100%;
-	padding: 12px 14px;
-}
-
-.sp-detail .sp-detail-head {
-	display: flex;
-	gap: 12px;
-	align-items: center;
-	justify-content: space-between;
-	margin-bottom: 10px;
-}
-
-.sp-detail .sp-detail-heading {
-	font-weight: 600;
 }
 
 .sp-detail .sp-detail-grid {

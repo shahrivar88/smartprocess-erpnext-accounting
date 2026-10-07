@@ -1,14 +1,13 @@
-// Read-only document summary shown inline under a ledger line.
+// Read-only document summary shown in the ledger's details dialog; the dialog's
+// primary action opens the full document.
 const pae_detail_view = {
+	title(detail) {
+		const heading = detail.title || __("جزئیات سند");
+		return detail.document ? `${heading} — ${detail.document.name}` : heading;
+	},
+
 	html(detail) {
-		const open = detail.document
-			? `<a class="btn btn-default btn-xs sp-doc-link sp-open-document" href="${frappe.utils.get_form_link(detail.document.doctype, detail.document.name)}"
-				data-doctype="${pae_format.text(detail.document.doctype)}" data-name="${pae_format.text(detail.document.name)}">${__("باز کردن سند کامل")}</a>`
-			: "";
 		return [
-			`<div class="sp-detail-head"><span class="sp-detail-heading">${pae_format.text(detail.title || __("جزئیات سند"))}${
-				detail.document ? ` — ${pae_format.text(detail.document.name)}` : ""
-			}</span>${open}</div>`,
 			pae_detail_view.items(detail.summary),
 			detail.focus && detail.focus.length ? `<h6 class="sp-detail-title">${__("ردیف انتخاب‌شده")}</h6>${pae_detail_view.items(detail.focus, "sp-focus")}` : "",
 			...(detail.sections || []).map((section) => pae_detail_view.section(section)),

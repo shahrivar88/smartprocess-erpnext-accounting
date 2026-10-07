@@ -5,6 +5,7 @@
 ledger amount always comes from the GL line."""
 
 import frappe
+from frappe import _
 
 from ..invoice_lines import ITEM_COLUMNS, TAX_COLUMNS, invoice_item_rows, invoice_tax_rows
 from ..labels import docstatus_label, voucher_label
@@ -34,6 +35,9 @@ def resolve_invoice(gl, context):
 			item("نوع سند", label),
 			item("تاریخ ثبت", doc.get("posting_date"), "date"),
 			item("طرف حساب", party_title(titles, party_type, doc.get(party_field))),
+			item("شرکت", doc.get("company")),
+			item("وضعیت", _(doc.get("status")) if doc.get("status") else None),
+			item("برگشتی", "بله" if doc.get("is_return") else "خیر"),
 			item("ارز", currency),
 			item("نرخ تبدیل", doc.get("conversion_rate"), "rate"),
 			item("جمع", doc.get("total"), "amount", currency=currency),

@@ -5,7 +5,7 @@
 
 from xml.sax.saxutils import escape
 
-STRONG_KINDS = {"opening", "total", "closing", "section"}
+STRONG_KINDS = {"opening", "total", "filtered", "closing", "section"}
 
 
 def build_pdf_html(title, subtitle, headers, rows):

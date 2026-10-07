@@ -3,13 +3,18 @@
 
 """Build a real .xlsx (Office Open XML) without Frappe imports.
 
-One right-to-left sheet: optional title rows, a frozen and filterable header, bordered
-body cells with thousands-separated numbers, emphasized balance/total rows, column
-widths from the content, and external hyperlinks for cells that carry a `url`."""
+One right-to-left sheet: optional title rows, then a standard Excel Table (built-in
+neutral style, its own AutoFilter) holding the data rows, then — outside the table —
+the summary rows (opening, totals, closing) so sorting the table never moves them.
+Cells are plain values: no hyperlinks and no custom fills."""
 
 import zipfile
 from io import BytesIO
-from xml.sax.saxutils import escape, quoteattr
+from xml.sax.saxutils import escape
+
+TABLE_STYLE = "TableStyleLight15"
+SUMMARY_KINDS = {"opening", "total", "filtered", "closing", "section"}
+MIN_WIDTH, MAX_WIDTH = 6, 60
 
 CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -18,6 +23,8 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
 <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+<Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>
 </Types>"""
 
 RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -29,49 +36,40 @@ WB_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
 <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 </Relationships>"""
 
-HYPERLINK_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+SHEET_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/>
+</Relationships>"""
 
-# cellXfs indexes below; numFmt 3 is the built-in "#,##0".
+# cellXfs indexes below; numFmt 3 is the built-in "#,##0". No fills, no borders:
+# the table style draws the table.
 STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.#########"/></numFmts>
-<fonts count="5">
+<fonts count="4">
 <font><sz val="11"/><name val="Calibri"/></font>
 <font><b/><sz val="11"/><name val="Calibri"/></font>
-<font><u/><sz val="11"/><color rgb="FF0563C1"/><name val="Calibri"/></font>
 <font><b/><sz val="14"/><name val="Calibri"/></font>
 <font><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font>
 </fonts>
-<fills count="4">
-<fill><patternFill patternType="none"/></fill>
-<fill><patternFill patternType="gray125"/></fill>
-<fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/><bgColor indexed="64"/></patternFill></fill>
-<fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill>
-</fills>
-<borders count="2">
-<border><left/><right/><top/><bottom/><diagonal/></border>
-<border><left style="thin"><color rgb="FFD1D5DB"/></left><right style="thin"><color rgb="FFD1D5DB"/></right><top style="thin"><color rgb="FFD1D5DB"/></top><bottom style="thin"><color rgb="FFD1D5DB"/></bottom><diagonal/></border>
-</borders>
+<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="11">
+<cellXfs count="8">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
-<xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
-<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
-<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
-<xf numFmtId="3" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
-<xf numFmtId="164" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
-<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top"/></xf>
+<xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="3" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
+<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 </cellXfs>
 </styleSheet>"""
-HEADER, TEXT, INTEGER, DECIMAL, STRONG_TEXT, STRONG_INTEGER, STRONG_DECIMAL, LINK, TITLE, SUBTITLE = range(1, 11)
-STRONG_KINDS = {"opening", "total", "closing", "section"}
-MIN_WIDTH, MAX_WIDTH = 6, 60
+TEXT, INTEGER, DECIMAL, STRONG_TEXT, STRONG_INTEGER, STRONG_DECIMAL, TITLE, SUBTITLE = range(8)
 
 
 def _col_letter(index):
@@ -93,22 +91,29 @@ def _style(value, strong):
 		if strong:
 			return STRONG_DECIMAL if decimal else STRONG_INTEGER
 		return DECIMAL if decimal else INTEGER
-	if getattr(value, "url", None) and not strong:
-		return LINK
 	return STRONG_TEXT if strong else TEXT
 
 
-def _cell(ref, value, style):
-	if _is_number(value):
-		return f'<c r="{ref}" s="{style}"><v>{value}</v></c>'
-	text = "" if value is None else str(value)
-	return f'<c r="{ref}" t="inlineStr" s="{style}"><is><t xml:space="preserve">{escape(text)}</t></is></c>'
+class SharedStrings:
+	def __init__(self):
+		self.index = {}
+		self.count = 0
+
+	def add(self, text):
+		self.count += 1
+		return self.index.setdefault(text, len(self.index))
+
+	def xml(self):
+		items = "".join(f'<si><t xml:space="preserve">{escape(text)}</t></si>' for text in self.index)
+		return (
+			'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+			f'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="{self.count}" uniqueCount="{len(self.index)}">{items}</sst>'
+		)
 
 
 def _sheet_name(name):
-	cleaned = "".join(ch for ch in str(name or "Report") if ch not in r"[]:*?/\\")
-	cleaned = cleaned.strip()[:31] or "Report"
-	return escape(cleaned)
+	cleaned = "".join(ch for ch in str(name or "Report") if ch not in "[]:*?/\\'")
+	return escape(cleaned.strip()[:31] or "Report")
 
 
 def _display_length(value):
@@ -128,74 +133,103 @@ def auto_widths(table):
 	return widths
 
 
-def _cols_xml(column_widths, column_count):
-	if not column_widths:
-		return ""
-	parts = []
-	for idx in range(column_count):
-		width = column_widths[idx] if idx < len(column_widths) else column_widths[-1]
-		try:
-			width = float(width)
-		except (TypeError, ValueError):
-			width = 14.0
-		parts.append(f'<col min="{idx + 1}" max="{idx + 1}" width="{width}" customWidth="1"/>')
-	return f"<cols>{''.join(parts)}</cols>"
+def unique_headers(headers, column_count):
+	"""Table column names must be distinct, non-empty text."""
+	names, seen = [], set()
+	for index in range(column_count):
+		base = str(headers[index]).strip() if index < len(headers) and headers[index] not in (None, "") else f"ستون {index + 1}"
+		name, suffix = base, 2
+		while name in seen:
+			name, suffix = f"{base} {suffix}", suffix + 1
+		seen.add(name)
+		names.append(name)
+	return names
+
+
+def is_summary(row):
+	return getattr(row, "kind", None) in SUMMARY_KINDS
+
+
+class SheetWriter:
+	def __init__(self):
+		self.strings = SharedStrings()
+		self.rows = []
+		self.row_number = 0
+
+	def add(self, values, style=None, strong=False):
+		self.row_number += 1
+		cells = []
+		for col_idx, value in enumerate(values):
+			if value is None or value == "":
+				continue
+			ref = f"{_col_letter(col_idx)}{self.row_number}"
+			cell_style = style if style is not None else _style(value, strong)
+			if _is_number(value):
+				cells.append(f'<c r="{ref}" s="{cell_style}"><v>{value}</v></c>')
+			else:
+				cells.append(f'<c r="{ref}" t="s" s="{cell_style}"><v>{self.strings.add(str(value))}</v></c>')
+		self.rows.append(f'<row r="{self.row_number}">{"".join(cells)}</row>')
+
+	def skip(self):
+		self.row_number += 1
 
 
 def build_xlsx_bytes(headers, rows, sheet_name="Report", column_widths=None, title=None, subtitle=None):
-	"""Rows may be plain lists; a row with `kind` opening/total/closing/section is
-	emphasized and a cell with a `url` attribute becomes a hyperlink."""
-	headers = list(headers or [])
-	rows = [row for row in rows or []]
-	column_count = max([len(headers), *(len(row) for row in rows)], default=0)
-	last_column = _col_letter(max(column_count - 1, 0))
-	body, merges, links = [], [], []
-	row_number = 0
+	"""Rows without a summary `kind` form the table body; opening/total/filtered/
+	closing/section rows are written after the table, outside it."""
+	rows = list(rows or [])
+	body = [row for row in rows if not is_summary(row)]
+	summary = [row for row in rows if is_summary(row)]
+	column_count = max([len(headers or []), *(len(row) for row in rows), 1])
+	names = unique_headers(list(headers or []), column_count)
+	last_column = _col_letter(column_count - 1)
+	writer = SheetWriter()
+	merges = []
 	for text, style in ((title, TITLE), (subtitle, SUBTITLE)):
 		if text:
-			row_number += 1
-			body.append(f'<row r="{row_number}">{_cell(f"A{row_number}", text, style)}</row>')
+			writer.add([text], style)
 			if column_count > 1:
-				merges.append(f'<mergeCell ref="A{row_number}:{last_column}{row_number}"/>')
-	if headers:
-		row_number += 1
-		cells = "".join(_cell(f"{_col_letter(i)}{row_number}", value, HEADER) for i, value in enumerate(headers))
-		body.append(f'<row r="{row_number}">{cells}</row>')
-	header_row = row_number
-	for row in rows:
-		row_number += 1
-		strong = getattr(row, "kind", None) in STRONG_KINDS
-		cells = []
-		for col_idx, value in enumerate(row):
-			ref = f"{_col_letter(col_idx)}{row_number}"
-			cells.append(_cell(ref, value, _style(value, strong)))
-			if getattr(value, "url", None):
-				links.append((ref, value.url))
-		body.append(f'<row r="{row_number}">{"".join(cells)}</row>')
-	widths = column_widths or auto_widths([headers, *rows])
-	pane = (
-		f'<pane ySplit="{header_row}" topLeftCell="A{header_row + 1}" activePane="bottomLeft" state="frozen"/>'
-		if header_row
-		else ""
+				merges.append(f'<mergeCell ref="A{writer.row_number}:{last_column}{writer.row_number}"/>')
+	if title or subtitle:
+		writer.skip()
+	writer.add(names, TEXT)
+	header_row = writer.row_number
+	for row in body or [[]]:
+		writer.add(row)
+	table_ref = f"A{header_row}:{last_column}{writer.row_number}"
+	if summary:
+		writer.skip()
+		for row in summary:
+			writer.add(row, strong=True)
+	widths = column_widths or auto_widths([names, *rows])
+	cols = "".join(
+		f'<col min="{index + 1}" max="{index + 1}" width="{float(widths[min(index, len(widths) - 1)])}" customWidth="1"/>'
+		for index in range(column_count)
 	)
-	auto_filter = f'<autoFilter ref="A{header_row}:{last_column}{row_number}"/>' if headers and rows else ""
 	merge_xml = f'<mergeCells count="{len(merges)}">{"".join(merges)}</mergeCells>' if merges else ""
-	link_xml = (
-		"<hyperlinks>"
-		+ "".join(f'<hyperlink ref="{ref}" r:id="rIdLink{index}"/>' for index, (ref, _url) in enumerate(links, start=1))
-		+ "</hyperlinks>"
-		if links
-		else ""
-	)
 	sheet = (
 		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 		'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
 		'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-		f'<sheetViews><sheetView workbookViewId="0" rightToLeft="1">{pane}</sheetView></sheetViews>'
-		f"{_cols_xml(widths, column_count)}"
-		f"<sheetData>{''.join(body)}</sheetData>"
-		f"{auto_filter}{merge_xml}{link_xml}"
+		'<sheetViews><sheetView workbookViewId="0" rightToLeft="1">'
+		f'<pane ySplit="{header_row}" topLeftCell="A{header_row + 1}" activePane="bottomLeft" state="frozen"/>'
+		"</sheetView></sheetViews>"
+		f"<cols>{cols}</cols>"
+		f"<sheetData>{''.join(writer.rows)}</sheetData>"
+		f"{merge_xml}"
+		'<tableParts count="1"><tablePart r:id="rId1"/></tableParts>'
 		"</worksheet>"
+	)
+	table = (
+		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+		'<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+		f'id="1" name="Table1" displayName="Table1" ref="{table_ref}" totalsRowShown="0">'
+		f'<autoFilter ref="{table_ref}"/>'
+		f'<tableColumns count="{column_count}">'
+		+ "".join(f'<tableColumn id="{index + 1}" name="{escape(name, {chr(34): "&quot;"})}"/>' for index, name in enumerate(names))
+		+ "</tableColumns>"
+		f'<tableStyleInfo name="{TABLE_STYLE}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>'
+		"</table>"
 	)
 	workbook = (
 		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -211,18 +245,8 @@ def build_xlsx_bytes(headers, rows, sheet_name="Report", column_widths=None, tit
 		archive.writestr("xl/workbook.xml", workbook)
 		archive.writestr("xl/_rels/workbook.xml.rels", WB_RELS)
 		archive.writestr("xl/styles.xml", STYLES)
+		archive.writestr("xl/sharedStrings.xml", writer.strings.xml())
 		archive.writestr("xl/worksheets/sheet1.xml", sheet)
-		if links:
-			archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", _sheet_rels(links))
+		archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", SHEET_RELS)
+		archive.writestr("xl/tables/table1.xml", table)
 	return buffer.getvalue()
-
-
-def _sheet_rels(links):
-	relations = "".join(
-		f'<Relationship Id="rIdLink{index}" Type="{HYPERLINK_TYPE}" Target={quoteattr(url)} TargetMode="External"/>'
-		for index, (_ref, url) in enumerate(links, start=1)
-	)
-	return (
-		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-		f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relations}</Relationships>'
-	)

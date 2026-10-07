@@ -679,8 +679,8 @@ test("the Workspace and sidebar open the Receipt Conversion as «تبدیل ار
 		[["DocType", "SmartProcess Receipt Conversion"]],
 	);
 	assert.ok(!links.some((link) => link.link_to === "SmartProcess Currency Conversion"));
-	const install = read(path.join(__dirname, "..", "..", "install.py"));
-	assert.match(install, /\("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None\)/);
+	const navigation = read(path.join(__dirname, "..", "..", "navigation.py"));
+	assert.match(navigation, /\("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None\)/);
 });
 
 test("choosing a Receipt directly loads its rows once the target currency is known", async () => {

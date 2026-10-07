@@ -1,8 +1,12 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Batch display data for ledger lines: label, openable document, Pair/leg and
-invoice presentation rows.
+"""Batch display data for ledger lines: label, openable business document, the GL
+voucher that posted the line, Pair/leg and invoice presentation rows.
+
+`document` is the business document the user works with (a Receipt, an invoice);
+`voucher` is GL Entry.voucher_type / voucher_no — the document that wrote the GL
+row (a SmartProcess Accounting Posting, or the native document itself).
 
 One query per voucher type, never per line. Documents the user cannot read stay
 as plain text. Nothing here changes a GL amount: invoice rows only split it."""
@@ -32,7 +36,7 @@ def decorate_lines(lines, include_items=True, context=None):
 	lines are split into presentation rows only when it is given."""
 	groups = defaultdict(list)
 	for line in lines:
-		line.update(voucher_label=voucher_label(line["voucher_type"]) or _(line["voucher_type"]), document=None, document_number=line["voucher_no"], detail_ref=None, components=[])
+		line.update(voucher_label=voucher_label(line["voucher_type"]) or _(line["voucher_type"]), document=None, document_number=line["voucher_no"], voucher=None, detail_ref=None, components=[])
 		groups[line["voucher_type"]].append(line)
 	for voucher_type, group in groups.items():
 		describe = DESCRIBERS.get(voucher_type, describe_generic)
@@ -44,11 +48,19 @@ def describe_generic(voucher_type, lines, include_items, context=None):
 	readable = set(readable_rows(voucher_type, voucher_numbers(lines)))
 	for line in lines:
 		if line["voucher_no"] in readable:
-			line["document"] = {"doctype": voucher_type, "name": line["voucher_no"]}
+			line["document"] = line["voucher"] = own_voucher(line)
+
+
+def own_voucher(line):
+	return {"doctype": line["voucher_type"], "name": line["voucher_no"]}
 
 
 def describe_posting(voucher_type, lines, include_items, context=None):
 	sources = dict(frappe.get_all(ACCOUNTING_POSTING, filters={"name": ["in", voucher_numbers(lines)]}, fields=["name", "source_document"], as_list=True))
+	readable_postings = set(readable_rows(ACCOUNTING_POSTING, voucher_numbers(lines)))
+	for line in lines:
+		if line["voucher_no"] in readable_postings:
+			line["voucher"] = own_voucher(line)
 	operations = readable_rows(ACCOUNTING_DOCUMENT, set(sources.values()), ["name", "operation_type"])
 	pair_numbers = dict(
 		frappe.get_all(
@@ -85,7 +97,7 @@ def describe_conversion(voucher_type, lines, include_items, context=None):
 		if line["voucher_no"] not in readable:
 			continue
 		role = "برگشت از مبدا" if line["against_voucher_type"] == ACCOUNTING_POSTING else "مقصد"
-		line["document"] = {"doctype": voucher_type, "name": line["voucher_no"]}
+		line["document"] = line["voucher"] = own_voucher(line)
 		line["detail_ref"] = row_reference(legs.get(line["voucher_detail_no"]), role)
 
 
@@ -98,7 +110,7 @@ def describe_invoice(voucher_type, lines, include_items, context=None):
 		if not invoice:
 			continue
 		line["voucher_label"] = voucher_label(voucher_type, invoice.is_return)
-		line["document"] = {"doctype": voucher_type, "name": invoice.name}
+		line["document"] = line["voucher"] = own_voucher(line)
 		if sources and invoice.name not in split:
 			rows = invoice_line_components(line, voucher_type, invoice, sources, context)
 			if rows:
