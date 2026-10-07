@@ -55,7 +55,7 @@ def get_account_ledger(
 ):
 	ledger = AccountLedger(company, party_type, party, account, from_date, to_date)
 	page = ledger.page(after, min(max(cint(page_length), 1), MAX_PAGE_LENGTH))
-	decorate_lines(page["rows"], include_items=cint(show_items))
+	decorate_lines(page["rows"], include_items=cint(show_items), context=ledger.context)
 	return {"context": ledger.context, "summary": ledger.summary, **page}
 
 

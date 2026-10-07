@@ -312,17 +312,16 @@ class TestVoucherLinks(unittest.TestCase):
 			"credit_base": credit,
 		}
 
-	def test_items_attach_once_and_never_change_gl_amounts(self):
+	def test_invoice_lines_keep_gl_amounts_and_split_only_with_a_ledger_context(self):
 		lines = [self.line("G1", "SINV-1", debit=297), self.line("G2", "SINV-1", credit=100), self.line("G3", "SINV-X", debit=5)]
 		invoices = {"SINV-1": frappe._dict(name="SINV-1", is_return=0)}
-		items = {"SINV-1": [{"item_code": "I1", "qty": 2}, {"item_code": "I2", "qty": 1}]}
 		with (
 			patch(f"{PA}.voucher_links.readable_rows", return_value=invoices),
-			patch(f"{PA}.voucher_links.invoice_items", return_value=items),
+			patch(f"{PA}.voucher_links.invoice_items") as invoice_items,
 		):
 			voucher_links.decorate_lines(lines)
-		self.assertEqual(len(lines[0]["items"]), 2)
-		self.assertEqual(lines[1]["items"], [])
+		invoice_items.assert_not_called()
+		self.assertEqual([line["components"] for line in lines], [[], [], []])
 		self.assertEqual([line["debit"] for line in lines], [297, 0, 5])
 		self.assertEqual(lines[1]["credit"], 100)
 		self.assertEqual(lines[0]["document"], {"doctype": "Sales Invoice", "name": "SINV-1"})
@@ -331,7 +330,7 @@ class TestVoucherLinks(unittest.TestCase):
 
 
 class TestExports(unittest.TestCase):
-	def test_ledger_export_item_rows_carry_no_amounts(self):
+	def test_ledger_export_moves_split_invoice_amounts_to_component_rows(self):
 		ledger = SimpleNamespace(
 			context={"is_foreign": False},
 			period=SimpleNamespace(from_date="2026-01-01", to_date="2026-01-31"),
@@ -361,14 +360,19 @@ class TestExports(unittest.TestCase):
 				]
 			),
 		)
-		with patch(f"{PA}.report_tables.decorate_lines", side_effect=lambda rows, include: [dict(row, voucher_label="فاکتور فروش", document_number="SINV-1", detail_ref=None, items=[{"item_code": "I1", "qty": 3, "rate": 2}]) for row in rows]):
+		component = {"kind": "item", "title": "I1", "description": "", "qty": 3, "rate": 2, "debit": 6, "credit": 0, "balance": 16, "nature": "بدهکار", "balance_base": 16}
+		discount = {"kind": "discount", "title": "تخفیف", "description": "", "qty": None, "rate": None, "debit": -1, "credit": 0, "balance": 15, "nature": "بدهکار", "balance_base": 15}
+		with patch(f"{PA}.report_tables.decorate_lines", side_effect=lambda rows, include, context: [dict(row, voucher_label="فاکتور فروش", document_number="SINV-1", detail_ref=None, components=[component, discount]) for row in rows]):
 			rows, count = ledger_rows(ledger)
 		headers = ledger_headers("IRR", "IRR", False)
 		self.assertEqual(count, 1)
 		self.assertTrue(all(len(row) == len(headers) for row in rows))
-		item = rows[2]
-		self.assertEqual(item[6], 3)
-		self.assertEqual(item[8:12], ["", "", "", ""])
+		header, item, adjustment = rows[1:4]
+		self.assertEqual(header[3], "SINV-1")
+		self.assertEqual(header[8:12], ["", "", "", ""], "the invoice header repeats no amount")
+		self.assertEqual(item[5:12], ["I1", 3, 2, 6, "", 16, "بدهکار"])
+		self.assertEqual(adjustment[5], "تخفیف")
+		self.assertEqual(sum(row[8] or 0 for row in rows[1:4]), 5, "split rows add up to the GL debit")
 		self.assertEqual(rows[-2][8:10], [5, 0])
 		self.assertEqual(rows[-1][10], 15)
 
@@ -407,6 +411,12 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertIn("excel_export.export_account_ledger", self.js)
 		self.assertNotIn("export_explorer_xlsx", self.js)
 		self.assertNotIn("get_party_item_ledger", self.js)
+
+	def test_main_ledger_shows_no_uom_and_split_headers_repeat_no_amount(self):
+		self.assertNotIn(".uom", self.js)
+		self.assertIn("component_row_html", self.js)
+		self.assertIn('header ? "" : pae_format.amount(line.debit, currency)', self.js)
+		self.assertIn('header ? "" : pae_format.amount(line.credit, currency)', self.js)
 
 
 class TestFiscalYearPeriodRange(unittest.TestCase):

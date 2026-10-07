@@ -167,7 +167,7 @@ class PartyAccountExplorer {
 			label: __("نمایش اقلام فاکتور"),
 			fieldtype: "Check",
 			default: 1,
-			change: () => this.$ledger.toggleClass("sp-hide-items", !this.show_items.get_value()),
+			change: () => this.mode === "ledger" && this.ledger && this.render_ledger(),
 		});
 	}
 
@@ -505,7 +505,6 @@ class PartyAccountExplorer {
 		const base_line = foreign
 			? `<div class="text-muted small sp-base-line">${__("معادل {0}", [base])}: ${__("اول دوره")} ${pae_format.amount(summary.opening_base, base, true)} · ${__("بدهکار")} ${pae_format.amount(summary.period_debit_base, base, true)} · ${__("بستانکار")} ${pae_format.amount(summary.period_credit_base, base, true)} · ${__("پایان دوره")} ${pae_format.amount(summary.closing_base, base, true)}</div>`
 			: "";
-		this.$ledger.toggleClass("sp-hide-items", !this.show_items.get_value());
 		this.$ledger.html(`
 			<div class="sp-ledger-summary">
 				<div class="sp-ledger-head">
@@ -528,7 +527,7 @@ class PartyAccountExplorer {
 			</div>
 			<div class="sp-table-wrap">${this.ledger_table_html()}</div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
-			<p class="text-muted small">${__("ردیف‌های کم‌رنگ اقلام فاکتورند و فقط توضیحی‌اند؛ در مانده و جمع‌ها اثری ندارند.")}</p>
+			<p class="text-muted small">${__("مبلغ هر فاکتور روی ردیف‌های اقلام و تعدیلات آن آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}</p>
 		`);
 	}
 
@@ -557,7 +556,6 @@ class PartyAccountExplorer {
 			headers.push(__("مانده {0}", [base]));
 		}
 		headers.push("");
-		const width = headers.length;
 		const balance_cells = (balance, nature, balance_base) => {
 			const cells = [`<td class="sp-strong">${pae_format.amount(balance, currency, true)}</td>`, `<td>${pae_format.text(nature)}</td>`, "<td></td>"];
 			if (foreign) {
@@ -569,7 +567,11 @@ class PartyAccountExplorer {
 		const opening_label = this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره");
 		const rows = [`<tr class="sp-opening-row">${lead(opening_label)}${balance_cells(data.opening, data.opening_nature, data.opening_base)}<td></td></tr>`];
 		const offset = this.page_index * PAE_PAGE_LENGTH;
+		const split = this.show_items.get_value();
 		data.rows.forEach((line, index) => {
+			// A split invoice line is a header: its amounts live on its component rows.
+			const components = split ? line.components || [] : [];
+			const header = components.length > 0;
 			const number = line.document
 				? pae_format.link(line.document.doctype, line.document.name, line.document_number)
 				: pae_format.text(line.document_number);
@@ -580,21 +582,21 @@ class PartyAccountExplorer {
 				`<td>${number}</td>`,
 				`<td class="sp-remarks">${pae_format.text(line.remarks)}</td>`,
 				"<td></td><td></td><td></td>",
-				`<td>${pae_format.amount(line.debit, currency)}</td>`,
-				`<td>${pae_format.amount(line.credit, currency)}</td>`,
+				`<td>${header ? "" : pae_format.amount(line.debit, currency)}</td>`,
+				`<td>${header ? "" : pae_format.amount(line.credit, currency)}</td>`,
 			];
 			if (foreign) {
 				cells.push(`<td>${pae_format.rate(line.rate)}</td>`);
 			}
-			cells.push(`<td class="sp-strong">${pae_format.amount(line.balance, currency, true)}</td>`);
-			cells.push(`<td>${pae_format.text(line.nature)}</td>`);
+			cells.push(`<td class="sp-strong">${header ? "" : pae_format.amount(line.balance, currency, true)}</td>`);
+			cells.push(`<td>${header ? "" : pae_format.text(line.nature)}</td>`);
 			cells.push(`<td class="small">${pae_format.text(line.detail_ref)}</td>`);
 			if (foreign) {
-				cells.push(`<td class="text-muted">${pae_format.amount(line.balance_base, base, true)}</td>`);
+				cells.push(`<td class="text-muted">${header ? "" : pae_format.amount(line.balance_base, base, true)}</td>`);
 			}
 			cells.push(`<td><button class="btn btn-default btn-xs sp-detail-btn">${__("جزئیات")}</button></td>`);
-			rows.push(`<tr class="sp-gl-row" data-gl="${pae_format.text(line.gl_entry)}">${cells.join("")}</tr>`);
-			(line.items || []).forEach((entry) => rows.push(this.item_row_html(entry, width)));
+			rows.push(`<tr class="sp-gl-row${header ? " sp-group-row" : ""}" data-gl="${pae_format.text(line.gl_entry)}">${cells.join("")}</tr>`);
+			components.forEach((entry) => rows.push(this.component_row_html(entry, currency, base, foreign)));
 		});
 		const total_cells = [`<td>${pae_format.amount(data.summary.period_debit, currency, true)}</td>`, `<td>${pae_format.amount(data.summary.period_credit, currency, true)}</td>`];
 		if (foreign) {
@@ -608,18 +610,26 @@ class PartyAccountExplorer {
 		</table>`;
 	}
 
-	item_row_html(entry, width) {
-		const title = [entry.item_code, entry.item_name].filter(Boolean).join(" - ");
-		const qty = pae_format.number(entry.qty) + (entry.uom ? ` <span class="text-muted">${pae_format.text(entry.uom)}</span>` : "");
-		const trailing = width - 8;
-		return `<tr class="sp-item-row">
-			<td></td><td></td><td></td><td></td>
-			<td>${pae_format.text(entry.description)}</td>
-			<td>${pae_format.text(title)}</td>
-			<td>${qty}</td>
-			<td>${pae_format.rate(entry.rate)}</td>
-			${"<td></td>".repeat(trailing)}
-		</tr>`;
+	component_row_html(entry, currency, base, foreign) {
+		const cells = [
+			"<td></td><td></td><td></td><td></td>",
+			`<td class="sp-remarks">${pae_format.text(entry.description)}</td>`,
+			`<td class="sp-component-title">${pae_format.text(entry.title)}</td>`,
+			`<td>${pae_format.number(entry.qty)}</td>`,
+			`<td>${pae_format.amount(entry.rate, currency)}</td>`,
+			`<td>${pae_format.amount(entry.debit, currency)}</td>`,
+			`<td>${pae_format.amount(entry.credit, currency)}</td>`,
+		];
+		if (foreign) {
+			cells.push("<td></td>");
+		}
+		cells.push(`<td class="sp-strong">${pae_format.amount(entry.balance, currency, true)}</td>`);
+		cells.push(`<td>${pae_format.text(entry.nature)}</td>`, "<td></td>");
+		if (foreign) {
+			cells.push(`<td class="text-muted">${pae_format.amount(entry.balance_base, base, true)}</td>`);
+		}
+		cells.push("<td></td>");
+		return `<tr class="sp-component-row sp-component-${pae_format.text(entry.kind)}">${cells.join("")}</tr>`;
 	}
 
 	// ---- drill-down ----

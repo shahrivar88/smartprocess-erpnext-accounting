@@ -1,44 +1,53 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Batch display data for ledger lines: label, openable document, Pair/leg and item details.
+"""Batch display data for ledger lines: label, openable document, Pair/leg and
+invoice presentation rows.
 
 One query per voucher type, never per line. Documents the user cannot read stay
-as plain text. Nothing here changes a GL amount."""
+as plain text. Nothing here changes a GL amount: invoice rows only split it."""
 
 from collections import defaultdict
 
 import frappe
 from frappe import _
+from frappe.query_builder.functions import Count
 
 from .invoice_lines import plain_text
+from .invoice_presentation import amount_basis, invoice_components, with_running_balance
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, RECEIPT_CONVERSION, voucher_label
 
 POSTING_ROW = "SmartProcess Accounting Posting Row"
 CONVERSION_LEG = "SmartProcess Receipt Conversion Leg"
 INVOICE_TYPES = ("Sales Invoice", "Purchase Invoice")
-ITEM_FIELDS = ["parent", "item_code", "item_name", "description", "qty", "uom", "rate", "amount"]
+ITEM_FIELDS = ["parent", "item_code", "item_name", "description", "qty", "rate", "amount", "base_rate", "base_amount"]
+INVOICE_AMOUNTS = ("total", "net_total", "grand_total", "rounding_adjustment", "rounded_total", "discount_amount", "write_off_amount", "paid_amount")
+INVOICE_FIELDS = ["name", "is_return", "currency"] + [f"{basis}{field}" for basis in ("", "base_") for field in INVOICE_AMOUNTS]
+PAYMENT_FLAG = {"Sales Invoice": "is_pos", "Purchase Invoice": "is_paid"}
+TAX_DOCTYPE = {"Sales Invoice": "Sales Taxes and Charges", "Purchase Invoice": "Purchase Taxes and Charges"}
 
 
-def decorate_lines(lines, include_items=True):
+def decorate_lines(lines, include_items=True, context=None):
+	"""`context` is the ledger context (company, party, account, currencies); invoice
+	lines are split into presentation rows only when it is given."""
 	groups = defaultdict(list)
 	for line in lines:
-		line.update(voucher_label=voucher_label(line["voucher_type"]) or _(line["voucher_type"]), document=None, document_number=line["voucher_no"], detail_ref=None, items=[])
+		line.update(voucher_label=voucher_label(line["voucher_type"]) or _(line["voucher_type"]), document=None, document_number=line["voucher_no"], detail_ref=None, components=[])
 		groups[line["voucher_type"]].append(line)
 	for voucher_type, group in groups.items():
 		describe = DESCRIBERS.get(voucher_type, describe_generic)
-		describe(voucher_type, group, include_items)
+		describe(voucher_type, group, include_items, context)
 	return lines
 
 
-def describe_generic(voucher_type, lines, include_items):
+def describe_generic(voucher_type, lines, include_items, context=None):
 	readable = set(readable_rows(voucher_type, voucher_numbers(lines)))
 	for line in lines:
 		if line["voucher_no"] in readable:
 			line["document"] = {"doctype": voucher_type, "name": line["voucher_no"]}
 
 
-def describe_posting(voucher_type, lines, include_items):
+def describe_posting(voucher_type, lines, include_items, context=None):
 	sources = dict(frappe.get_all(ACCOUNTING_POSTING, filters={"name": ["in", voucher_numbers(lines)]}, fields=["name", "source_document"], as_list=True))
 	operations = readable_rows(ACCOUNTING_DOCUMENT, set(sources.values()), ["name", "operation_type"])
 	pair_numbers = dict(
@@ -62,7 +71,7 @@ def describe_posting(voucher_type, lines, include_items):
 		)
 
 
-def describe_conversion(voucher_type, lines, include_items):
+def describe_conversion(voucher_type, lines, include_items, context=None):
 	readable = set(readable_rows(voucher_type, voucher_numbers(lines)))
 	legs = dict(
 		frappe.get_all(
@@ -80,19 +89,48 @@ def describe_conversion(voucher_type, lines, include_items):
 		line["detail_ref"] = row_reference(legs.get(line["voucher_detail_no"]), role)
 
 
-def describe_invoice(voucher_type, lines, include_items):
-	invoices = readable_rows(voucher_type, voucher_numbers(lines), ["name", "is_return"])
-	items = invoice_items(voucher_type, list(invoices)) if include_items else {}
-	shown = set()
+def describe_invoice(voucher_type, lines, include_items, context=None):
+	invoices = readable_rows(voucher_type, voucher_numbers(lines), [*INVOICE_FIELDS, PAYMENT_FLAG[voucher_type]])
+	sources = invoice_sources(voucher_type, list(invoices), context) if include_items and context else None
+	split = set()
 	for line in lines:
 		invoice = invoices.get(line["voucher_no"])
 		if not invoice:
 			continue
 		line["voucher_label"] = voucher_label(voucher_type, invoice.is_return)
 		line["document"] = {"doctype": voucher_type, "name": invoice.name}
-		if invoice.name not in shown:
-			line["items"] = items.get(invoice.name, [])
-			shown.add(invoice.name)
+		if sources and invoice.name not in split:
+			rows = invoice_line_components(line, voucher_type, invoice, sources, context)
+			if rows:
+				line["components"] = with_running_balance(line, rows)
+				split.add(invoice.name)
+
+
+def invoice_sources(voucher_type, names, context):
+	if not names:
+		return None
+	return {
+		"items": invoice_items(voucher_type, names),
+		"inclusive_tax": inclusive_tax_invoices(voucher_type, names),
+		"party_lines": party_line_counts(voucher_type, names, context),
+		"precision": frappe.get_precision("GL Entry", "debit_in_account_currency", currency=context["currency"]),
+	}
+
+
+def invoice_line_components(line, voucher_type, invoice, sources, context):
+	basis = amount_basis(invoice.currency, context["currency"], context["company_currency"])
+	if basis is None:
+		return None
+	return invoice_components(
+		line,
+		voucher_type,
+		invoice,
+		sources["items"].get(invoice.name, []),
+		basis,
+		sources["precision"],
+		inclusive_tax=invoice.name in sources["inclusive_tax"],
+		only_line=sources["party_lines"].get(invoice.name) == 1,
+	)
 
 
 def invoice_items(voucher_type, names):
@@ -108,6 +146,38 @@ def invoice_items(voucher_type, names):
 		row.description = plain_text(row.description)
 		items[row.pop("parent")].append(row)
 	return items
+
+
+def inclusive_tax_invoices(voucher_type, names):
+	return set(
+		frappe.get_all(
+			TAX_DOCTYPE[voucher_type],
+			filters={"parenttype": voucher_type, "parent": ["in", names], "included_in_print_rate": 1},
+			pluck="parent",
+			distinct=True,
+		)
+	)
+
+
+def party_line_counts(voucher_type, names, context):
+	"""Live GL lines per invoice on this exact Company + Party + Account."""
+	gle = frappe.qb.DocType("GL Entry")
+	rows = (
+		frappe.qb.from_(gle)
+		.select(gle.voucher_no, Count(gle.name))
+		.where(
+			(gle.voucher_type == voucher_type)
+			& gle.voucher_no.isin(names)
+			& (gle.company == context["company"])
+			& (gle.party_type == context["party_type"])
+			& (gle.party == context["party"])
+			& (gle.account == context["account"])
+			& (gle.is_cancelled == 0)
+		)
+		.groupby(gle.voucher_no)
+		.run()
+	)
+	return dict(rows)
 
 
 def readable_rows(doctype, names, fields=None):

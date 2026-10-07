@@ -1,2 +1,2 @@
 def get_context(context):
-	context.brand_html = "حسابداری اسمارت پروسس"
+	context.brand_html = "رسید هوشمند"

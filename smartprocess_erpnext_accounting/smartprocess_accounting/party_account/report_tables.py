@@ -3,7 +3,8 @@
 
 """Export tables rebuilt on the server from the same GL queries as the page.
 
-Item rows are descriptive and carry no debit, credit or balance."""
+An invoice line split into item/adjustment rows becomes a header without amounts;
+its rows carry the debit, credit and balance, adding up exactly to the GL line."""
 
 import frappe
 from frappe import _
@@ -59,7 +60,7 @@ def ledger_headers(currency, company_currency, is_foreign):
 
 
 def ledger_rows(ledger, include_items=True, budget=MAX_EXPORT_LINES):
-	"""Rows of one account ledger: opening, GL lines (+ item details), period totals."""
+	"""Rows of one account ledger: opening, GL lines (+ invoice rows), period totals."""
 	is_foreign = ledger.context["is_foreign"]
 	summary = ledger.summary
 	width = len(ledger_headers("", "", is_foreign))
@@ -69,9 +70,9 @@ def ledger_rows(ledger, include_items=True, budget=MAX_EXPORT_LINES):
 		count += len(page["rows"])
 		if count > budget:
 			too_large()
-		for line in decorate_lines(page["rows"], include_items):
+		for line in decorate_lines(page["rows"], include_items, ledger.context):
 			rows.append(line_row(line, is_foreign))
-			rows += [item_row(entry, width) for entry in line["items"]]
+			rows += [component_row(entry, width, is_foreign) for entry in line["components"]]
 	totals = [""] * width
 	totals[2] = "جمع دوره"
 	totals[8], totals[9] = number(summary["period_debit"]), number(summary["period_credit"])
@@ -81,6 +82,7 @@ def ledger_rows(ledger, include_items=True, budget=MAX_EXPORT_LINES):
 
 
 def line_row(line, is_foreign):
+	header = bool(line["components"])
 	row = [
 		"",
 		date_text(line["posting_date"]),
@@ -90,22 +92,30 @@ def line_row(line, is_foreign):
 		"",
 		"",
 		"",
-		number(line["debit"]),
-		number(line["credit"]),
+		"" if header else number(line["debit"]),
+		"" if header else number(line["credit"]),
 	]
 	if is_foreign:
 		row.append(number(line["rate"]))
-	row += [number(line["balance"]), line["nature"], line["detail_ref"] or ""]
+	row += ["", "", line["detail_ref"] or ""] if header else [number(line["balance"]), line["nature"], line["detail_ref"] or ""]
 	if is_foreign:
-		row.append(number(line["balance_base"]))
+		row.append("" if header else number(line["balance_base"]))
 	return row
 
 
-def item_row(entry, width):
+def component_row(entry, width, is_foreign):
 	row = [""] * width
-	title = " - ".join(part for part in (entry.get("item_code"), entry.get("item_name")) if part)
-	row[4], row[5], row[6], row[7] = entry.get("description") or "", title, number(entry.get("qty")), number(entry.get("rate"))
+	row[4], row[5], row[6], row[7] = entry["description"], entry["title"], number(entry["qty"]), number(entry["rate"])
+	row[8], row[9] = side_amount(entry["debit"]), side_amount(entry["credit"])
+	balance_column = 11 if is_foreign else 10
+	row[balance_column], row[balance_column + 1] = number(entry["balance"]), entry["nature"]
+	if is_foreign:
+		row[-1] = number(entry["balance_base"])
 	return row
+
+
+def side_amount(value):
+	return number(value) if value else ""
 
 
 def labelled_row(width, is_foreign, label, date, balance, balance_base):

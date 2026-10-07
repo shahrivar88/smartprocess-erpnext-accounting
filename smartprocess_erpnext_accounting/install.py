@@ -1,7 +1,13 @@
 import frappe
 
-# Kept as DocTypes for history only; never offered in navigation.
-RETIRED_DOCTYPES = ("SmartProcess Currency Conversion", "SmartProcess Party Currency Account")
+from smartprocess_erpnext_accounting.navigation import (
+	APP_HOME_ROUTE,
+	MODULE_LABEL,
+	OLD_MODULE_LABELS,
+	WORKSPACE,
+	ordered_sidebar_items,
+	sidebar_signature,
+)
 
 
 def after_migrate():
@@ -9,6 +15,7 @@ def after_migrate():
 	_ensure_workspace()
 	_ensure_workspace_sidebar()
 	_ensure_workspace_settings_link()
+	_ensure_desktop_icon_label()
 	_ensure_doctype_app()
 	_ensure_financial_intermediary_party_type()
 	_ensure_number_separator_defaults()
@@ -51,8 +58,8 @@ def _ensure_workspace():
 	if not frappe.db.exists("Workspace", "SmartProcess Accounting"):
 		return
 	values = {
-		"label": "حسابداری اسمارت پروسس",
-		"title": "حسابداری اسمارت پروسس",
+		"label": MODULE_LABEL,
+		"title": MODULE_LABEL,
 		"module": "SmartProcess Accounting",
 		"public": 1,
 		"is_hidden": 0,
@@ -99,32 +106,33 @@ def _ensure_workspace_settings_link():
 
 
 def _ensure_workspace_sidebar():
-	name = "SmartProcess Accounting"
-	if not frappe.db.exists("Workspace Sidebar", name):
-		return
-	doc = frappe.get_doc("Workspace Sidebar", name)
-	retired = [row for row in doc.items if (row.link_to or "") in RETIRED_DOCTYPES]
-	for row in retired:
-		doc.remove(row)
-	changed = bool(retired)
 	# The module's right-hand sidebar is built from the Workspace Sidebar doc
 	# (frappe/desk/doctype/workspace_sidebar), not from the Workspace links table.
 	# Frappe's get_can_read_items() permission-filters each item by the linked
 	# doctype, so the Settings item follows the Settings doctype's own permission.
-	for label, link_type, link_to, icon in (
-		("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None),
-		("گردش و مانده طرف حساب", "Page", "party-account-explorer", "list"),
-		("تنظیمات حسابداری هوشمند", "DocType", "SmartProcess Accounting Settings", None),
-	):
-		if any((row.link_to or "") == link_to for row in doc.items):
-			continue
-		item = {"label": label, "type": "Link", "link_type": link_type, "link_to": link_to}
-		if icon:
-			item["icon"] = icon
-		doc.append("items", item)
-		changed = True
-	if changed:
+	if not frappe.db.exists("Workspace Sidebar", WORKSPACE):
+		return
+	doc = frappe.get_doc("Workspace Sidebar", WORKSPACE)
+	before = sidebar_signature(doc.items)
+	doc.set("items", ordered_sidebar_items(doc.items))
+	for idx, row in enumerate(doc.items, start=1):
+		row.idx = idx
+	if sidebar_signature(doc.items) != before:
 		doc.save()
+
+
+def _ensure_desktop_icon_label():
+	# A Desktop Icon that opens this module and still carries an old module name.
+	if not frappe.db.exists("DocType", "Desktop Icon"):
+		return
+	for icon in frappe.get_all("Desktop Icon", filters={"label": ["in", OLD_MODULE_LABELS]}, fields=["name", "link", "link_to", "app"]):
+		opens_module = (
+			icon.app == "smartprocess_erpnext_accounting"
+			or icon.link_to == WORKSPACE
+			or (icon.link or "").rstrip("/").endswith(APP_HOME_ROUTE)
+		)
+		if opens_module:
+			frappe.db.set_value("Desktop Icon", icon.name, "label", MODULE_LABEL, update_modified=False)
 
 
 def _ensure_financial_intermediary_party_type():

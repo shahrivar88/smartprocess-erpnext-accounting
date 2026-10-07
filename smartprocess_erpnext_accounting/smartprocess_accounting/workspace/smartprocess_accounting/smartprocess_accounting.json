@@ -1,27 +1,29 @@
 {
  "app": "smartprocess_erpnext_accounting",
  "charts": [],
- "content": "[{\"id\":\"spa-header\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>حسابداری اسمارت پروسس</b></span>\",\"col\":12}},{\"id\":\"spa-v2-document\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"اسناد حسابداری هوشمند\",\"col\":4}},{\"id\":\"spa-v2-intermediary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"واسطه‌های مالی\",\"col\":4}},{\"id\":\"spa-v2-card\",\"type\":\"card\",\"data\":{\"card_name\":\"نسخه ۲ (پیش‌نمونه)\",\"col\":6}},{\"id\":\"spa-legacy-card\",\"type\":\"card\",\"data\":{\"card_name\":\"ابزارهای فعلی\",\"col\":6}}]",
+ "content": "[{\"id\":\"spa-header\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>رسید هوشمند</b></span>\",\"col\":12}},{\"id\":\"spa-receipt\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"رسید هوشمند\",\"col\":3}},{\"id\":\"spa-conversion\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"تبدیل ارز\",\"col\":3}},{\"id\":\"spa-party-ledger\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"گردش و مانده طرف حساب\",\"col\":3}},{\"id\":\"spa-intermediary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"واسطه مالی\",\"col\":3}},{\"id\":\"spa-operations-card\",\"type\":\"card\",\"data\":{\"card_name\":\"عملیات\",\"col\":6}},{\"id\":\"spa-reports-card\",\"type\":\"card\",\"data\":{\"card_name\":\"گزارش و تنظیمات\",\"col\":6}}]",
  "creation": "2026-09-25 00:00:00.000000",
  "custom_blocks": [], "docstatus": 0, "doctype": "Workspace", "for_user": "", "hide_custom": 0,
- "icon": "accounting", "idx": 0, "is_hidden": 0, "label": "حسابداری اسمارت پروسس",
+ "icon": "accounting", "idx": 0, "is_hidden": 0, "label": "رسید هوشمند",
  "links": [
-  {"hidden":0,"is_query_report":0,"label":"نسخه ۲ (پیش‌نمونه)","link_count":3,"link_type":"DocType","onboard":0,"type":"Card Break"},
-  {"hidden":0,"is_query_report":0,"label":"اسناد حسابداری هوشمند","link_count":0,"link_to":"SmartProcess Accounting Document","link_type":"DocType","onboard":1,"type":"Link"},
-  {"hidden":0,"is_query_report":0,"label":"واسطه‌های مالی","link_count":0,"link_to":"SmartProcess Financial Intermediary","link_type":"DocType","onboard":1,"type":"Link"},
-  {"hidden":0,"is_query_report":0,"label":"تنظیمات حسابداری هوشمند","link_count":0,"link_to":"SmartProcess Accounting Settings","link_type":"DocType","onboard":1,"type":"Link"},
-  {"hidden":0,"is_query_report":0,"label":"ابزارهای فعلی","link_count":2,"link_type":"DocType","onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"عملیات","link_count":3,"link_type":"DocType","onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"رسید هوشمند","link_count":0,"link_to":"SmartProcess Accounting Document","link_type":"DocType","onboard":1,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"تبدیل ارز","link_count":0,"link_to":"SmartProcess Receipt Conversion","link_type":"DocType","onboard":1,"type":"Link"},
-  {"hidden":0,"is_query_report":0,"label":"گردش و مانده طرف حساب","link_count":0,"link_to":"party-account-explorer","link_type":"Page","onboard":1,"type":"Link"}
+  {"hidden":0,"is_query_report":0,"label":"واسطه مالی","link_count":0,"link_to":"SmartProcess Financial Intermediary","link_type":"DocType","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"گزارش و تنظیمات","link_count":2,"link_type":"DocType","onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"گردش و مانده طرف حساب","link_count":0,"link_to":"party-account-explorer","link_type":"Page","onboard":1,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"تنظیمات حسابداری هوشمند","link_count":0,"link_to":"SmartProcess Accounting Settings","link_type":"DocType","onboard":1,"type":"Link"}
  ],
- "modified": "2026-10-07 23:30:00.000000", "modified_by": "Administrator", "module": "SmartProcess Accounting",
+ "modified": "2026-10-08 01:00:00.000000", "modified_by": "Administrator", "module": "SmartProcess Accounting",
  "name": "SmartProcess Accounting", "number_cards": [], "owner": "Administrator", "parent_page": "", "public": 1,
  "quick_lists": [], "restrict_to_domain": "",
  "roles": [{"role":"Accounts User"},{"role":"Accounts Manager"},{"role":"Auditor"},{"role":"System Manager"}],
  "sequence_id": 30,
  "shortcuts": [
-  {"color":"Blue","doc_view":"List","label":"اسناد حسابداری هوشمند","link_to":"SmartProcess Accounting Document","stats_filter":"[]","type":"DocType"},
-  {"color":"Orange","doc_view":"List","label":"واسطه‌های مالی","link_to":"SmartProcess Financial Intermediary","stats_filter":"[]","type":"DocType"}
+  {"color":"Blue","doc_view":"List","label":"رسید هوشمند","link_to":"SmartProcess Accounting Document","stats_filter":"[]","type":"DocType"},
+  {"color":"Green","doc_view":"List","label":"تبدیل ارز","link_to":"SmartProcess Receipt Conversion","stats_filter":"[]","type":"DocType"},
+  {"color":"Grey","label":"گردش و مانده طرف حساب","link_to":"party-account-explorer","type":"Page"},
+  {"color":"Orange","doc_view":"List","label":"واسطه مالی","link_to":"SmartProcess Financial Intermediary","stats_filter":"[]","type":"DocType"}
  ],
- "title": "حسابداری اسمارت پروسس", "type": "Workspace"
+ "title": "رسید هوشمند", "type": "Workspace"
 }
