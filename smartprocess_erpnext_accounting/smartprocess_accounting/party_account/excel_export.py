@@ -54,7 +54,7 @@ def send_file(file_type, headers, rows, filename, title, subtitle):
 		content = get_pdf(html, options={"orientation": "Landscape", "page-size": "A4", "margin-top": "10mm", "margin-bottom": "10mm", "margin-left": "8mm", "margin-right": "8mm"})
 		extension, response_type = ".pdf", "pdf"
 	elif file_type == "xlsx":
-		content = build_xlsx_bytes(headers, rows, sheet_name="گزارش")
+		content = build_xlsx_bytes(headers, rows, sheet_name="گزارش", title=title, subtitle=subtitle)
 		extension, response_type = ".xlsx", "binary"
 	else:
 		frappe.throw(_("نوع فایل خروجی نامعتبر است."))

@@ -106,10 +106,14 @@ def other_side_parts(invoice, value):
 
 
 def item_row(item, side, amount, sign, basis):
-	title = " - ".join(part for part in (item.get("item_code"), item.get("item_name")) if part)
+	"""The main table shows the item name only; the item code stays in the row data
+	for the document details view."""
+	title = item.get("item_name") or item.get("item_code") or ""
+	description = item.get("description") or ""
 	row = money_row("item", title, side, amount)
 	row.update(
-		description=item.get("description") or "",
+		item_code=item.get("item_code") or "",
+		description="" if description.strip() == title.strip() else description,
 		qty=sign * flt(item.get("qty")),
 		rate=flt(item.get(f"{basis}rate")),
 	)
@@ -143,10 +147,22 @@ def money_row(kind, title, side, amount):
 
 
 def with_running_balance(line, rows):
-	"""Balance after each row; the last one equals the GL line's own balance."""
+	"""Balance after each row; the last one equals the GL line's own balance.
+
+	The company-currency balance moves at the GL line's own posting ratio and the last
+	row is set to the GL line's exact base balance, so no rounding drift survives."""
 	balance = flt(line["balance"] - flt(line["debit"]) + flt(line["credit"]), 9)
+	amount = flt(line["debit"]) + flt(line["credit"])
+	base_amount = flt(line.get("debit_base")) + flt(line.get("credit_base"))
+	ratio = base_amount / amount if amount and line.get("balance_base") is not None else None
+	balance_base = (
+		flt(line["balance_base"] - flt(line.get("debit_base")) + flt(line.get("credit_base")), 9) if ratio is not None else None
+	)
 	for row in rows:
-		balance = flt(balance + row["debit"] - row["credit"], 9)
-		row.update(balance=balance, nature=balance_nature(balance), balance_base=None)
+		movement = row["debit"] - row["credit"]
+		balance = flt(balance + movement, 9)
+		if ratio is not None:
+			balance_base = flt(balance_base + movement * ratio, 9)
+		row.update(balance=balance, nature=balance_nature(balance), balance_base=balance_base)
 	rows[-1]["balance_base"] = line.get("balance_base")
 	return rows

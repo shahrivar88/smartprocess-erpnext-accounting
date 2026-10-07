@@ -3,12 +3,14 @@
 
 """Export tables rebuilt on the server from the same GL queries as the page.
 
-An invoice line split into item/adjustment rows becomes a header without amounts;
-its rows carry the debit, credit and balance, adding up exactly to the GL line."""
+Every row is a real accounting row: a GL line, or one item/adjustment row of a split
+invoice line. Split rows repeat the date and the document; on each side they add up
+exactly to the GL line. Nothing is skipped: a row posted in another currency than
+the account's carries a visible note."""
 
 import frappe
 from frappe import _
-from frappe.utils import getdate
+from frappe.utils import get_url_to_form, getdate
 
 from .labels import balance_nature
 from .voucher_links import decorate_lines
@@ -18,7 +20,7 @@ OVERVIEW_HEADERS = [
 	"طرف حساب",
 	"کد طرف حساب",
 	"حساب",
-	"ارز",
+	"ارز حساب",
 	"مانده اول دوره",
 	"گردش بدهکار",
 	"گردش بستانکار",
@@ -26,6 +28,41 @@ OVERVIEW_HEADERS = [
 	"ماهیت",
 	"مانده پایان دوره (پایه)",
 ]
+DEBIT, CREDIT = 7, 8
+
+
+class SheetRow(list):
+	"""A table row with its kind: opening, line, total, closing or section."""
+
+	def __init__(self, cells, kind="line"):
+		super().__init__(cells)
+		self.kind = kind
+
+
+class LinkText(str):
+	"""Cell text that opens `url` where the output format supports links."""
+
+	def __new__(cls, text, url=None):
+		value = super().__new__(cls, text)
+		value.url = url
+		return value
+
+
+class LedgerColumns:
+	def __init__(self, is_foreign):
+		self.is_foreign = is_foreign
+		self.rate = 9 if is_foreign else None
+		self.balance = 10 if is_foreign else 9
+		self.width = self.balance + (4 if is_foreign else 3)
+
+	def blank(self, kind):
+		return SheetRow([""] * self.width, kind)
+
+	def set_balance(self, row, balance, balance_base, nature=None):
+		row[self.balance] = number(balance)
+		row[self.balance + 1] = nature or balance_nature(balance)
+		if self.is_foreign:
+			row[-1] = number(balance_base)
 
 
 def overview_table(rows):
@@ -36,7 +73,7 @@ def overview_table(rows):
 			row["party_name"],
 			row["party"],
 			row["account"],
-			row["currency"],
+			currency_text(row["currency"], row.get("other_currency_rows")),
 			number(row["opening"]),
 			number(row["period_debit"]),
 			number(row["period_credit"]),
@@ -48,9 +85,14 @@ def overview_table(rows):
 	]
 
 
+def currency_text(currency, other_currency_rows):
+	if not other_currency_rows:
+		return currency
+	return f"{currency} ({other_currency_rows} ردیف با ارز دیگر)"
+
+
 def ledger_headers(currency, company_currency, is_foreign):
-	headers = ["#", "تاریخ", "نوع سند", "شماره سند", "شرح", "عنوان قلم", "مقدار", "فی"]
-	headers += [f"بدهکار {currency}", f"بستانکار {currency}"]
+	headers = ["ردیف", "تاریخ", "سند", "شرح", "عنوان قلم", "مقدار", "فی", f"بدهکار {currency}", f"بستانکار {currency}"]
 	if is_foreign:
 		headers.append("نرخ ثبت")
 	headers += [f"مانده {currency}", "ماهیت", "ردیف سند"]
@@ -60,73 +102,87 @@ def ledger_headers(currency, company_currency, is_foreign):
 
 
 def ledger_rows(ledger, include_items=True, budget=MAX_EXPORT_LINES):
-	"""Rows of one account ledger: opening, GL lines (+ invoice rows), period totals."""
-	is_foreign = ledger.context["is_foreign"]
+	"""Rows of one account ledger: opening, every GL line (or its split rows), totals, closing."""
+	columns = LedgerColumns(ledger.context["is_foreign"])
 	summary = ledger.summary
-	width = len(ledger_headers("", "", is_foreign))
-	rows = [labelled_row(width, is_foreign, "مانده اول دوره", ledger.period.from_date, summary["opening"], summary["opening_base"])]
+	rows = [balance_row(columns, "opening", "مانده اول دوره", ledger.period.from_date, summary["opening"], summary["opening_base"])]
 	count = 0
 	for page in ledger.iter_lines():
-		count += len(page["rows"])
-		if count > budget:
+		if count + len(page["rows"]) > budget:
 			too_large()
 		for line in decorate_lines(page["rows"], include_items, ledger.context):
-			rows.append(line_row(line, is_foreign))
-			rows += [component_row(entry, width, is_foreign) for entry in line["components"]]
-	totals = [""] * width
+			count += 1
+			rows += line_rows(line, count, columns)
+	totals = columns.blank("total")
 	totals[2] = "جمع دوره"
-	totals[8], totals[9] = number(summary["period_debit"]), number(summary["period_credit"])
+	totals[DEBIT], totals[CREDIT] = number(summary["period_debit"]), number(summary["period_credit"])
 	rows.append(totals)
-	rows.append(labelled_row(width, is_foreign, "مانده پایان دوره", ledger.period.to_date, summary["closing"], summary["closing_base"]))
+	rows.append(balance_row(columns, "closing", "مانده پایان دوره", ledger.period.to_date, summary["closing"], summary["closing_base"]))
 	return rows, count
 
 
-def line_row(line, is_foreign):
-	header = bool(line["components"])
-	row = [
-		"",
-		date_text(line["posting_date"]),
-		line["voucher_label"],
-		line["document_number"],
-		line["remarks"] or "",
-		"",
-		"",
-		"",
-		"" if header else number(line["debit"]),
-		"" if header else number(line["credit"]),
-	]
-	if is_foreign:
-		row.append(number(line["rate"]))
-	row += ["", "", line["detail_ref"] or ""] if header else [number(line["balance"]), line["nature"], line["detail_ref"] or ""]
-	if is_foreign:
-		row.append("" if header else number(line["balance_base"]))
-	return row
+def line_rows(line, position, columns):
+	"""A GL line as one row, or its split rows each repeating the date and document."""
+	entries = line["components"] or [plain_entry(line)]
+	note = currency_note(line)
+	rows = []
+	for index, entry in enumerate(entries, start=1):
+		row = columns.blank("line")
+		row[0] = f"{position}.{index}" if len(entries) > 1 else str(position)
+		row[1], row[2] = date_text(line["posting_date"]), document_cell(line)
+		row[3] = join_text(entry["description"], note if index == 1 else "")
+		row[4], row[5], row[6] = entry["title"], number(entry["qty"]), number(entry["rate"])
+		row[DEBIT], row[CREDIT] = side_amount(entry["debit"]), side_amount(entry["credit"])
+		if columns.rate is not None:
+			row[columns.rate] = number(line["rate"])
+		columns.set_balance(row, entry["balance"], entry["balance_base"], entry["nature"])
+		row[columns.balance + 2] = line["detail_ref"] or ""
+		rows.append(row)
+	return rows
 
 
-def component_row(entry, width, is_foreign):
-	row = [""] * width
-	row[4], row[5], row[6], row[7] = entry["description"], entry["title"], number(entry["qty"]), number(entry["rate"])
-	row[8], row[9] = side_amount(entry["debit"]), side_amount(entry["credit"])
-	balance_column = 11 if is_foreign else 10
-	row[balance_column], row[balance_column + 1] = number(entry["balance"]), entry["nature"]
-	if is_foreign:
-		row[-1] = number(entry["balance_base"])
+def plain_entry(line):
+	return {
+		"description": line["remarks"] or "",
+		"title": "",
+		"qty": None,
+		"rate": None,
+		"debit": line["debit"],
+		"credit": line["credit"],
+		"balance": line["balance"],
+		"nature": line["nature"],
+		"balance_base": line["balance_base"],
+	}
+
+
+def document_cell(line):
+	text = f"{line['voucher_label']} - {line['document_number']}"
+	document = line.get("document")
+	return LinkText(text, get_url_to_form(document["doctype"], document["name"]) if document else None)
+
+
+def currency_note(line):
+	notes = []
+	if line.get("posted_in_other_currency"):
+		notes.append(f"ارز ثبت: {line['posted_currency']}")
+	if line.get("transaction_currency"):
+		notes.append(f"ارز سند: {line['transaction_currency']} {number(abs(line['transaction_amount'] or 0))}")
+	return " · ".join(notes)
+
+
+def join_text(*parts):
+	return " · ".join(str(part) for part in parts if part)
+
+
+def balance_row(columns, kind, label, date, balance, balance_base):
+	row = columns.blank(kind)
+	row[1], row[2] = date_text(date), label
+	columns.set_balance(row, balance, balance_base)
 	return row
 
 
 def side_amount(value):
 	return number(value) if value else ""
-
-
-def labelled_row(width, is_foreign, label, date, balance, balance_base):
-	row = [""] * width
-	row[1], row[2] = date_text(date), label
-	balance_column = 11 if is_foreign else 10
-	row[balance_column] = number(balance)
-	row[balance_column + 1] = balance_nature(balance)
-	if is_foreign:
-		row[-1] = number(balance_base)
-	return row
 
 
 def number(value):

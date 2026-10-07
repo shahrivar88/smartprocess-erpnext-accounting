@@ -1,3 +1,9 @@
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/page/party_account_explorer/explorer/format.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/page/party_account_explorer/explorer/ledger_rows.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/page/party_account_explorer/explorer/column_prefs.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/page/party_account_explorer/explorer/ledger_view.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/page/party_account_explorer/explorer/detail_view.js" %}
+
 const PAE_API = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account.";
 const PAE_ROUTE = "party-account-explorer";
 const PAE_LEDGER_KEYS = ["company", "party_type", "party", "account", "from_date", "to_date"];
@@ -19,55 +25,6 @@ frappe.pages[PAE_ROUTE].on_page_show = function () {
 	}
 };
 
-function currency_precision(currency) {
-	// Same rule frappe applies to Currency fields: the site's currency precision,
-	// otherwise the currency's own number format.
-	const configured = cint(frappe.defaults.get_default("currency_precision"));
-	if (configured) {
-		return configured;
-	}
-	return get_number_format_info(get_number_format(currency)).precision;
-}
-
-const pae_format = {
-	amount(value, currency, keep_zero) {
-		if (value === null || value === undefined || value === "") {
-			return "";
-		}
-		if (!keep_zero && !flt(value)) {
-			return "";
-		}
-		const text = frappe.format(flt(value), { fieldtype: "Float", precision: currency_precision(currency) }, { inline: true });
-		return `<span class="sp-num">${text}</span>`;
-	},
-	rate(value) {
-		if (!flt(value)) {
-			return "";
-		}
-		return `<span class="sp-num">${frappe.format(flt(value), { fieldtype: "Float", precision: 9 }, { inline: true })}</span>`;
-	},
-	number(value) {
-		if (value === null || value === undefined || value === "") {
-			return "";
-		}
-		return `<span class="sp-num">${frappe.format(flt(value), { fieldtype: "Float" }, { inline: true })}</span>`;
-	},
-	date(value) {
-		return value ? frappe.format(value, { fieldtype: "Date" }) : "";
-	},
-	text(value) {
-		return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
-	},
-	link(doctype, name, label) {
-		const text = pae_format.text(label || name);
-		if (!doctype || !name) {
-			return text;
-		}
-		const href = frappe.utils.get_form_link(doctype, name);
-		return `<a class="sp-doc-link" href="${href}" data-doctype="${pae_format.text(doctype)}" data-name="${pae_format.text(name)}">${text}</a>`;
-	},
-};
-
 class PartyAccountExplorer {
 	constructor(page) {
 		this.page = page;
@@ -78,6 +35,8 @@ class PartyAccountExplorer {
 		this.cursors = [null];
 		this.page_index = 0;
 		this.opened_from_overview = false;
+		this.prefs = new PaeColumnPrefs(frappe.model.user_settings);
+		this.reset_ledger_view();
 		this.make_filters();
 		this.make_layout();
 		this.page.set_primary_action(__("نمایش"), () => this.refresh());
@@ -89,8 +48,14 @@ class PartyAccountExplorer {
 				this.show_route();
 			}
 		});
-		this.ready = this.load_defaults();
+		this.ready = Promise.all([this.load_defaults(), this.prefs.load()]);
 		this.show_route();
+	}
+
+	reset_ledger_view() {
+		this.view_state = { query: "", side: "", sort_key: null, sort_dir: null };
+		this.details = new Map();
+		this.open_details = new Set();
 	}
 
 	make_filters() {
@@ -137,7 +102,7 @@ class PartyAccountExplorer {
 		});
 		this.currency = this.page.add_field({
 			fieldname: "currency",
-			label: __("ارز"),
+			label: __("ارز حساب"),
 			fieldtype: "Select",
 			options: [""],
 			change: overview_change,
@@ -189,12 +154,27 @@ class PartyAccountExplorer {
 		});
 		this.$overview.on("click", ".sp-page-prev", () => this.refresh_overview(this.overview_page - 1));
 		this.$overview.on("click", ".sp-page-next", () => this.refresh_overview(this.overview_page + 1));
-		this.$ledger.on("click", ".sp-back", () => this.back_to_overview());
-		this.$ledger.on("click", ".sp-detail-btn", (event) => {
-			const $row = $(event.currentTarget).closest("tr");
-			this.$ledger.find("tr.sp-row-active").removeClass("sp-row-active");
-			$row.addClass("sp-row-active");
-			this.show_detail($row.attr("data-gl"));
+		this.$ledger.on("click", ".sp-detail-btn", (event) => this.toggle_detail($(event.currentTarget).closest("tr").attr("data-gl")));
+		this.$ledger.on("click", "th.sp-sortable", (event) => {
+			Object.assign(this.view_state, pae_ledger_rows.next_sort(this.view_state, $(event.currentTarget).attr("data-sort")));
+			this.render_ledger_table();
+		});
+		this.$ledger.on("input", ".sp-ledger-search", (event) => {
+			clearTimeout(this.search_timer);
+			this.search_timer = setTimeout(() => {
+				this.view_state.query = $(event.currentTarget).val();
+				this.render_ledger_table();
+			}, 250);
+		});
+		this.$ledger.on("change", ".sp-ledger-side", (event) => {
+			this.view_state.side = $(event.currentTarget).val();
+			this.render_ledger_table();
+		});
+		this.$ledger.on("click", ".sp-clear-view", () => {
+			Object.assign(this.view_state, { query: "", side: "", sort_key: null, sort_dir: null });
+			this.$ledger.find(".sp-ledger-search").val("");
+			this.$ledger.find(".sp-ledger-side").val("");
+			this.render_ledger_table();
 		});
 		this.$ledger.on("click", ".sp-page-prev", () => this.load_ledger_page(this.page_index - 1));
 		this.$ledger.on("click", ".sp-page-next", () => this.load_ledger_page(this.page_index + 1));
@@ -290,6 +270,11 @@ class PartyAccountExplorer {
 		this.$overview.toggle(mode === "overview");
 		this.$ledger.toggle(mode === "ledger");
 		this.page.set_title(mode === "ledger" ? __("گردش حساب طرف حساب") : __("گردش و مانده طرف حساب"));
+		if (mode === "ledger") {
+			this.page.set_secondary_action(__("بازگشت به مانده‌ها"), () => this.back_to_overview());
+		} else {
+			this.page.clear_secondary_action();
+		}
 	}
 
 	refresh() {
@@ -359,23 +344,31 @@ class PartyAccountExplorer {
 		const data = this.overview;
 		const company_currency = data.company_currency;
 		const show_base = data.rows.some((row) => row.currency !== company_currency);
+		const columns = pae_ledger_view.overview_columns(show_base, company_currency);
+		const cell = (key, row) => {
+			switch (key) {
+				case "party":
+					return `<td><div class="sp-party-name">${pae_format.text(row.party_name)}</div><div class="sp-party-id">${pae_format.text(row.party)}</div></td>`;
+				case "account":
+					return `<td>${pae_format.text(row.account)}</td>`;
+				case "currency":
+					return `<td>${pae_ledger_view.currency_cell(row.currency, row.other_currency_rows)}</td>`;
+				case "opening":
+				case "closing":
+					return `<td class="${key === "closing" ? "sp-strong" : ""}">${pae_format.amount(row[key], row.currency, true)}</td>`;
+				case "period_debit":
+				case "period_credit":
+					return `<td>${pae_format.amount(row[key], row.currency)}</td>`;
+				case "nature":
+					return `<td>${pae_format.text(row.nature)}</td>`;
+				case "closing_base":
+					return `<td class="text-muted">${pae_format.amount(row.closing_base, company_currency, true)}</td>`;
+				default:
+					return "<td></td>";
+			}
+		};
 		const rows = data.rows
-			.map((row, index) => {
-				const cells = [
-					`<td><div class="sp-party-name">${pae_format.text(row.party_name)}</div><div class="sp-party-id">${pae_format.text(row.party)}</div></td>`,
-					`<td>${pae_format.text(row.account)}</td>`,
-					`<td>${pae_format.text(row.currency)}</td>`,
-					`<td>${pae_format.amount(row.opening, row.currency, true)}</td>`,
-					`<td>${pae_format.amount(row.period_debit, row.currency)}</td>`,
-					`<td>${pae_format.amount(row.period_credit, row.currency)}</td>`,
-					`<td class="sp-strong">${pae_format.amount(row.closing, row.currency, true)}</td>`,
-					`<td>${pae_format.text(row.nature)}</td>`,
-				];
-				if (show_base) {
-					cells.push(`<td class="text-muted">${pae_format.amount(row.closing_base, company_currency, true)}</td>`);
-				}
-				return `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش گردش حساب")}">${cells.join("")}</tr>`;
-			})
+			.map((row, index) => `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش گردش حساب")}">${columns.map((column) => cell(column.key, row)).join("")}</tr>`)
 			.join("");
 		const totals = (data.totals || [])
 			.map(
@@ -391,32 +384,21 @@ class PartyAccountExplorer {
 				</tr>`
 			)
 			.join("");
-		const headers = [
-			__("طرف حساب"),
-			__("حساب"),
-			__("ارز"),
-			__("مانده اول دوره"),
-			__("گردش بدهکار"),
-			__("گردش بستانکار"),
-			__("مانده پایان دوره"),
-			__("ماهیت"),
-		];
-		if (show_base) {
-			headers.push(__("مانده پایان دوره ({0})", [company_currency]));
-		}
 		const period = `${pae_format.date(data.from_date) || "—"} ${__("تا")} ${pae_format.date(data.to_date)}`;
 		this.$overview.html(`
 			<div class="sp-ledger-meta"><span>${__("دوره")}: ${period}</span></div>
 			<div class="sp-table-wrap">
-				<table class="table table-bordered sp-table">
-					<thead><tr>${headers.map((label) => `<th>${label}</th>`).join("")}</tr></thead>
-					<tbody>${rows || `<tr><td colspan="${headers.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`}</tbody>
+				<table class="table sp-table sp-overview-table">
+					${pae_ledger_view.colgroup(columns, this.prefs, "overview")}
+					<thead><tr>${pae_ledger_view.head(columns)}</tr></thead>
+					<tbody>${rows || `<tr><td colspan="${columns.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`}</tbody>
 					<tfoot>${totals}</tfoot>
 				</table>
 			</div>
 			${this.pager_html(data.page > 1, data.has_more, data.page)}
-			<p class="text-muted small">${__("برای دیدن گردش، روی ردیف طرف حساب کلیک کنید. جمع‌ها مستقل از صفحه و فقط برای همان ارز است.")}</p>
+			<p class="text-muted small">${__("برای دیدن گردش، روی ردیف طرف حساب کلیک کنید. ارز هر ردیف، ارز خود حساب است و هیچ ردیفی به خاطر ارز حذف نمی‌شود.")}</p>
 		`);
+		this.prefs.attach(this.$overview.find("table.sp-overview-table"), "overview");
 	}
 
 	pager_html(has_previous, has_next, page_number) {
@@ -465,6 +447,7 @@ class PartyAccountExplorer {
 		}
 		this.ledger_key = key;
 		this.cursors = [null];
+		this.reset_ledger_view();
 		this.load_ledger_page(0);
 	}
 
@@ -474,6 +457,7 @@ class PartyAccountExplorer {
 		}
 		if (reload) {
 			this.cursors = this.cursors.slice(0, index + 1);
+			this.details.clear();
 		}
 		const state = this.ledger_state;
 		frappe
@@ -491,151 +475,86 @@ class PartyAccountExplorer {
 					this.cursors.push(data.next_cursor);
 				}
 				this.ledger = data;
+				this.open_details.clear();
 				this.render_ledger();
 			});
 	}
 
 	render_ledger() {
 		const { context, summary } = this.ledger;
-		const currency = context.currency;
-		const base = context.company_currency;
-		const foreign = context.is_foreign;
-		const period = `${pae_format.date(context.from_date) || "—"} ${__("تا")} ${pae_format.date(context.to_date)}`;
-		const card = (label, value) => `<div class="sp-ledger-total"><div class="text-muted small">${label}</div><div class="sp-strong">${value}</div></div>`;
-		const base_line = foreign
-			? `<div class="text-muted small sp-base-line">${__("معادل {0}", [base])}: ${__("اول دوره")} ${pae_format.amount(summary.opening_base, base, true)} · ${__("بدهکار")} ${pae_format.amount(summary.period_debit_base, base, true)} · ${__("بستانکار")} ${pae_format.amount(summary.period_credit_base, base, true)} · ${__("پایان دوره")} ${pae_format.amount(summary.closing_base, base, true)}</div>`
-			: "";
+		this.columns = pae_ledger_view.columns(context);
+		this.groups = pae_ledger_rows.groups(this.ledger.rows, this.page_index * PAE_PAGE_LENGTH, this.show_items.get_value());
 		this.$ledger.html(`
-			<div class="sp-ledger-summary">
-				<div class="sp-ledger-head">
-					<button class="btn btn-default btn-sm sp-back">${__("بازگشت به مانده‌ها")}</button>
-					<div class="sp-ledger-meta">
-						<span>${__("طرف حساب")}: <b>${pae_format.text(context.party_name)}</b> <span class="sp-party-id">${pae_format.text(context.party)}</span></span>
-						<span>${__("حساب")}: <b>${pae_format.text(context.account)}</b></span>
-						<span>${__("ارز")}: <b>${pae_format.text(currency)}</b></span>
-						<span>${__("دوره")}: ${period}</span>
-					</div>
-				</div>
-				<div class="sp-ledger-totals">
-					${card(__("مانده اول دوره"), pae_format.amount(summary.opening, currency, true))}
-					${card(__("گردش بدهکار"), pae_format.amount(summary.period_debit, currency, true))}
-					${card(__("گردش بستانکار"), pae_format.amount(summary.period_credit, currency, true))}
-					${card(__("مانده پایان دوره"), pae_format.amount(summary.closing, currency, true))}
-					${card(__("ماهیت"), pae_format.text(summary.nature))}
-				</div>
-				${base_line}
-			</div>
-			<div class="sp-table-wrap">${this.ledger_table_html()}</div>
+			${pae_ledger_view.header(context, summary)}
+			${pae_ledger_view.toolbar(this.view_state)}
+			<div class="sp-table-wrap sp-ledger-wrap"></div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
-			<p class="text-muted small">${__("مبلغ هر فاکتور روی ردیف‌های اقلام و تعدیلات آن آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}</p>
+			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}</p>
 		`);
+		this.render_ledger_table();
 	}
 
-	ledger_table_html() {
+	render_ledger_table() {
 		const data = this.ledger;
-		const currency = data.context.currency;
-		const base = data.context.company_currency;
-		const foreign = data.context.is_foreign;
-		const headers = [
-			"#",
-			__("تاریخ"),
-			__("نوع سند"),
-			__("شماره سند"),
-			__("شرح"),
-			__("عنوان قلم"),
-			__("مقدار"),
-			__("فی"),
-			__("بدهکار"),
-			__("بستانکار"),
+		const context = data.context;
+		const columns = this.columns;
+		const shown = pae_ledger_rows.view(this.groups, this.view_state);
+		const rows = [
+			pae_ledger_view.balance_row("sp-opening-row", columns, context, {
+				label: this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره"),
+				date: this.page_index ? null : context.from_date,
+				balance: data.opening,
+				nature: data.opening_nature,
+				balance_base: data.opening_base,
+			}),
 		];
-		if (foreign) {
-			headers.push(__("نرخ ثبت"));
-		}
-		headers.push(__("مانده در خط"), __("تشخیص"), __("ردیف سند"));
-		if (foreign) {
-			headers.push(__("مانده {0}", [base]));
-		}
-		headers.push("");
-		const balance_cells = (balance, nature, balance_base) => {
-			const cells = [`<td class="sp-strong">${pae_format.amount(balance, currency, true)}</td>`, `<td>${pae_format.text(nature)}</td>`, "<td></td>"];
-			if (foreign) {
-				cells.push(`<td class="text-muted">${pae_format.amount(balance_base, base, true)}</td>`);
+		shown.forEach((group) => {
+			const open = this.open_details.has(group.gl_entry);
+			rows.push(pae_ledger_view.group_rows(group, columns, context, open));
+			if (open) {
+				rows.push(pae_ledger_view.detail_row(group.gl_entry, columns, this.detail_html(group.gl_entry)));
 			}
-			return cells.join("");
-		};
-		const lead = (label) => `<td></td><td></td><td></td><td></td><td colspan="${foreign ? 7 : 6}" class="sp-strong">${label}</td>`;
-		const opening_label = this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره");
-		const rows = [`<tr class="sp-opening-row">${lead(opening_label)}${balance_cells(data.opening, data.opening_nature, data.opening_base)}<td></td></tr>`];
-		const offset = this.page_index * PAE_PAGE_LENGTH;
-		const split = this.show_items.get_value();
-		data.rows.forEach((line, index) => {
-			// A split invoice line is a header: its amounts live on its component rows.
-			const components = split ? line.components || [] : [];
-			const header = components.length > 0;
-			const number = line.document
-				? pae_format.link(line.document.doctype, line.document.name, line.document_number)
-				: pae_format.text(line.document_number);
-			const cells = [
-				`<td class="text-muted">${offset + index + 1}</td>`,
-				`<td>${pae_format.date(line.posting_date)}</td>`,
-				`<td>${pae_format.text(line.voucher_label)}</td>`,
-				`<td>${number}</td>`,
-				`<td class="sp-remarks">${pae_format.text(line.remarks)}</td>`,
-				"<td></td><td></td><td></td>",
-				`<td>${header ? "" : pae_format.amount(line.debit, currency)}</td>`,
-				`<td>${header ? "" : pae_format.amount(line.credit, currency)}</td>`,
-			];
-			if (foreign) {
-				cells.push(`<td>${pae_format.rate(line.rate)}</td>`);
-			}
-			cells.push(`<td class="sp-strong">${header ? "" : pae_format.amount(line.balance, currency, true)}</td>`);
-			cells.push(`<td>${header ? "" : pae_format.text(line.nature)}</td>`);
-			cells.push(`<td class="small">${pae_format.text(line.detail_ref)}</td>`);
-			if (foreign) {
-				cells.push(`<td class="text-muted">${header ? "" : pae_format.amount(line.balance_base, base, true)}</td>`);
-			}
-			cells.push(`<td><button class="btn btn-default btn-xs sp-detail-btn">${__("جزئیات")}</button></td>`);
-			rows.push(`<tr class="sp-gl-row${header ? " sp-group-row" : ""}" data-gl="${pae_format.text(line.gl_entry)}">${cells.join("")}</tr>`);
-			components.forEach((entry) => rows.push(this.component_row_html(entry, currency, base, foreign)));
 		});
-		const total_cells = [`<td>${pae_format.amount(data.summary.period_debit, currency, true)}</td>`, `<td>${pae_format.amount(data.summary.period_credit, currency, true)}</td>`];
-		if (foreign) {
-			total_cells.push("<td></td>");
+		if (!shown.length) {
+			rows.push(`<tr><td colspan="${columns.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`);
 		}
-		const footer = `<tr class="sp-total-row"><td colspan="8" class="sp-strong">${__("جمع گردش کل دوره")}</td>${total_cells.join("")}${balance_cells(data.summary.closing, data.summary.nature, data.summary.closing_base)}<td></td></tr>`;
-		return `<table class="table table-bordered sp-table sp-ledger-table">
-			<thead><tr>${headers.map((label) => `<th>${label}</th>`).join("")}</tr></thead>
+		const footer = pae_ledger_view.balance_row("sp-total-row", columns, context, {
+			label: __("جمع گردش کل دوره"),
+			debit: data.summary.period_debit,
+			credit: data.summary.period_credit,
+			balance: data.summary.closing,
+			nature: data.summary.nature,
+			balance_base: data.summary.closing_base,
+		});
+		const $wrap = this.$ledger.find(".sp-ledger-wrap");
+		$wrap.html(`<table class="table sp-table sp-ledger-table">
+			${pae_ledger_view.colgroup(columns, this.prefs, "ledger")}
+			<thead><tr>${pae_ledger_view.head(columns, this.view_state)}</tr></thead>
 			<tbody>${rows.join("")}</tbody>
 			<tfoot>${footer}</tfoot>
-		</table>`;
+		</table>`);
+		this.prefs.attach($wrap.find("table"), "ledger");
+		this.fit_detail_panels();
+		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.view_state, shown.length, this.groups.length));
 	}
 
-	component_row_html(entry, currency, base, foreign) {
-		const cells = [
-			"<td></td><td></td><td></td><td></td>",
-			`<td class="sp-remarks">${pae_format.text(entry.description)}</td>`,
-			`<td class="sp-component-title">${pae_format.text(entry.title)}</td>`,
-			`<td>${pae_format.number(entry.qty)}</td>`,
-			`<td>${pae_format.amount(entry.rate, currency)}</td>`,
-			`<td>${pae_format.amount(entry.debit, currency)}</td>`,
-			`<td>${pae_format.amount(entry.credit, currency)}</td>`,
-		];
-		if (foreign) {
-			cells.push("<td></td>");
+	// ---- inline document details ----
+
+	toggle_detail(gl_entry) {
+		if (this.open_details.has(gl_entry)) {
+			this.open_details.delete(gl_entry);
+		} else {
+			this.open_details.add(gl_entry);
+			if (!this.details.has(gl_entry)) {
+				this.load_detail(gl_entry);
+			}
 		}
-		cells.push(`<td class="sp-strong">${pae_format.amount(entry.balance, currency, true)}</td>`);
-		cells.push(`<td>${pae_format.text(entry.nature)}</td>`, "<td></td>");
-		if (foreign) {
-			cells.push(`<td class="text-muted">${pae_format.amount(entry.balance_base, base, true)}</td>`);
-		}
-		cells.push("<td></td>");
-		return `<tr class="sp-component-row sp-component-${pae_format.text(entry.kind)}">${cells.join("")}</tr>`;
+		this.render_ledger_table();
 	}
 
-	// ---- drill-down ----
-
-	show_detail(gl_entry) {
+	load_detail(gl_entry) {
 		const state = this.ledger_state;
+		this.details.set(gl_entry, null);
 		frappe
 			.xcall(PAE_API + "document_details.get_document_detail", {
 				gl_entry,
@@ -644,96 +563,29 @@ class PartyAccountExplorer {
 				party: state.party,
 				account: state.account,
 			})
-			.then((detail) => this.open_detail_dialog(detail));
+			.then((detail) => this.details.set(gl_entry, detail))
+			.catch(() => this.details.set(gl_entry, false))
+			.finally(() => {
+				if (this.open_details.has(gl_entry)) {
+					this.$ledger.find("tr.sp-detail-row").filter((_index, row) => row.getAttribute("data-gl") === gl_entry).find(".sp-detail-panel").html(this.detail_html(gl_entry));
+				}
+			});
 	}
 
-	open_detail_dialog(detail) {
-		const dialog = new frappe.ui.Dialog({
-			title: `${detail.title || __("جزئیات سند")}${detail.document ? " — " + detail.document.name : ""}`,
-			size: "extra-large",
-			fields: [{ fieldtype: "HTML", fieldname: "body" }],
-			primary_action_label: detail.document ? __("باز کردن سند") : null,
-			primary_action: detail.document
-				? () => {
-						dialog.hide();
-						frappe.set_route("Form", detail.document.doctype, detail.document.name);
-				  }
-				: null,
-		});
-		const body = [
-			this.items_html(detail.summary),
-			detail.focus && detail.focus.length ? `<h6 class="sp-detail-title">${__("ردیف انتخاب‌شده")}</h6>${this.items_html(detail.focus, "sp-focus")}` : "",
-			...(detail.sections || []).map((section) => this.section_html(section)),
-			this.related_html(detail.related),
-			detail.technical && detail.technical.length
-				? `<details class="sp-technical"><summary>${__("اطلاعات فنی")}</summary>${this.items_html(detail.technical)}</details>`
-				: "",
-		];
-		const $body = $(`<div class="sp-party-explorer sp-detail">${body.join("")}</div>`);
-		$body.on("click", "a.sp-doc-link", (event) => {
-			if (event.ctrlKey || event.metaKey || event.shiftKey) {
-				return;
-			}
-			event.preventDefault();
-			dialog.hide();
-			const $link = $(event.currentTarget);
-			frappe.set_route("Form", $link.attr("data-doctype"), $link.attr("data-name"));
-		});
-		dialog.fields_dict.body.$wrapper.empty().append($body);
-		dialog.show();
-	}
-
-	value_html(entry) {
-		switch (entry.kind) {
-			case "amount":
-				return pae_format.amount(entry.value, entry.currency, true) + (entry.currency ? ` <span class="text-muted">${pae_format.text(entry.currency)}</span>` : "");
-			case "rate":
-				return pae_format.rate(entry.value);
-			case "number":
-				return pae_format.number(entry.value);
-			case "date":
-				return pae_format.date(entry.value);
-			case "link":
-				return pae_format.link(entry.doctype, entry.value);
-			default:
-				return pae_format.text(entry.value);
+	detail_html(gl_entry) {
+		const detail = this.details.get(gl_entry);
+		if (detail === false) {
+			return pae_detail_view.failed();
 		}
+		return detail ? pae_detail_view.html(detail) : pae_detail_view.loading();
 	}
 
-	items_html(items, extra_class) {
-		if (!items || !items.length) {
-			return "";
+	// The panel spans the whole table; keep it as wide as the visible area.
+	fit_detail_panels() {
+		const width = this.$ledger.find(".sp-ledger-wrap").innerWidth();
+		if (width) {
+			this.$ledger.find(".sp-detail-panel").css("width", `${width - 24}px`);
 		}
-		return `<div class="sp-detail-grid ${extra_class || ""}">${items
-			.map((entry) => `<div class="sp-detail-item"><div class="text-muted small">${pae_format.text(entry.label)}</div><div>${this.value_html(entry)}</div></div>`)
-			.join("")}</div>`;
-	}
-
-	section_html(section) {
-		const head = section.columns.map((column) => `<th>${pae_format.text(column.label)}</th>`).join("");
-		const rows = section.rows
-			.map((row) => {
-				const cells = section.columns
-					.map((column) => {
-						const entry = { kind: column.kind, value: row[column.key], doctype: row[`${column.key}_doctype`] };
-						return `<td>${this.value_html(entry)}</td>`;
-					})
-					.join("");
-				return `<tr class="${row.is_current ? "sp-row-current" : ""}">${cells}</tr>`;
-			})
-			.join("");
-		return `<h6 class="sp-detail-title">${pae_format.text(section.title)}</h6>
-			<div class="sp-table-wrap"><table class="table table-bordered sp-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
-			${section.note ? `<p class="text-muted small">${pae_format.text(section.note)}</p>` : ""}`;
-	}
-
-	related_html(related) {
-		if (!related || !related.length) {
-			return "";
-		}
-		return `<h6 class="sp-detail-title">${__("اسناد مرتبط")}</h6><ul class="sp-related">${related
-			.map((entry) => `<li>${pae_format.text(entry.relation)}: ${pae_format.link(entry.doctype, entry.name)} <span class="text-muted small">(${pae_format.text(entry.label)})</span></li>`)
-			.join("")}</ul>`;
 	}
 
 	// ---- export ----

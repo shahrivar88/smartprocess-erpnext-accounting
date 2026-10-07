@@ -136,7 +136,7 @@ class TestInvoiceComponents(unittest.TestCase):
 	def test_rounding_row(self):
 		line = gl_line(debit=1000)
 		rows = split(line, invoice(1000.4, rounding=-0.4), [item("A", 1, 1000.4)])
-		self.assertEqual([(row["kind"], row["title"], row["debit"]) for row in rows], [("item", "A - name A", 1000.4), ("rounding", "گردکردن", -0.4)])
+		self.assertEqual([(row["kind"], row["title"], row["debit"]) for row in rows], [("item", "name A", 1000.4), ("rounding", "گردکردن", -0.4)])
 		self.assert_reconciles(line, rows)
 
 	def test_merged_write_off_sits_on_the_other_side(self):
@@ -154,7 +154,7 @@ class TestInvoiceComponents(unittest.TestCase):
 		doc, items = invoice(1000), [item("A", 1, 1000)]
 		self.assertIsNone(split(line, doc, items), "a line that is not the invoice total is not split")
 		rows = split(line, doc, items, only_line=True)
-		self.assertEqual([(row["kind"], row["title"], row["debit"]) for row in rows], [("item", "A - name A", 1000), ("adjustment", "تعدیلات سند", 50)])
+		self.assertEqual([(row["kind"], row["title"], row["debit"]) for row in rows], [("item", "name A", 1000), ("adjustment", "تعدیلات سند", 50)])
 		self.assert_reconciles(line, rows)
 
 	def test_inclusive_tax_is_not_counted_twice(self):
@@ -177,6 +177,23 @@ class TestInvoiceComponents(unittest.TestCase):
 		rows = split(gl_line(debit=10), invoice(10), [item("A", 1, 10, uom="Nos")])
 		self.assertNotIn("uom", rows[0])
 		self.assertNotIn("uom", voucher_links.ITEM_FIELDS)
+
+	def test_item_row_shows_the_item_name_and_keeps_the_code_for_details(self):
+		rows = split(gl_line(debit=210_000_000), invoice(210_000_000), [item("CAM-1", 10, 21_000_000, item_name="DS-2CD2347G2-L (2.8mm)", description="DS-2CD2347G2-L (2.8mm)")])
+		self.assertEqual(rows[0]["title"], "DS-2CD2347G2-L (2.8mm)")
+		self.assertEqual(rows[0]["item_code"], "CAM-1")
+		self.assertEqual(rows[0]["description"], "", "a description equal to the name is not repeated")
+		self.assertEqual(rows[0]["qty"] * rows[0]["rate"], rows[0]["debit"])
+		self.assertEqual(rows[0]["credit"], 0, "the amount sits on one side only")
+		nameless = split(gl_line(debit=10), invoice(10), [item("B", 1, 10, item_name="")])
+		self.assertEqual(nameless[0]["title"], "B", "the code stands in only when there is no name")
+
+	def test_foreign_rows_carry_a_company_currency_balance_ending_on_the_gl_line(self):
+		line = gl_line(debit=300)
+		line.update(debit_base=180_000_000, balance_base=180_000_007)
+		rows = split(line, invoice(300), [item("A", 1, 100), item("B", 2, 100)])
+		self.assertEqual(rows[0]["balance_base"], flt(7 + 100 * 600_000, 9))
+		self.assertEqual(rows[-1]["balance_base"], 180_000_007, "the last row is the GL line's exact base balance")
 
 	def test_amount_basis_never_mixes_currencies(self):
 		self.assertEqual(amount_basis("USD", "USD", "IRR"), "")
@@ -271,11 +288,13 @@ class TestLedgerReconciliation(unittest.TestCase):
 		):
 			rows, _count = ledger_rows(ledger)
 		body = rows[1:-2]
-		self.assertEqual(sum(row[8] or 0 for row in body), 174_000_000)
-		self.assertEqual(sum(row[9] or 0 for row in body), 20_000_000)
-		self.assertEqual(rows[-2][8:10], [174_000_000, 20_000_000])
-		self.assertEqual(rows[-1][10], summary["closing"])
-		self.assertEqual([row[10] for row in body if row[10] != ""][-1], summary["closing"])
+		self.assertTrue(all(row[7] or row[8] for row in body), "every body row carries an amount")
+		self.assertEqual(sum(row[7] or 0 for row in body), 174_000_000)
+		self.assertEqual(sum(row[8] or 0 for row in body), 20_000_000)
+		self.assertEqual(rows[-2][7:9], [174_000_000, 20_000_000])
+		self.assertEqual(rows[-1][9], summary["closing"])
+		self.assertEqual(body[-1][9], summary["closing"], "the running balance ends on the GL closing")
+		self.assertEqual({row[2] for row in body}, {"فاکتور فروش - SINV-1", "برگشت از فروش - SINV-2", "فاکتور فروش - SINV-3"})
 
 	def test_items_split_once_per_invoice(self):
 		lines = [gl_line(debit=1000, voucher_no="SINV-1"), gl_line(debit=1000, voucher_no="SINV-1")]

@@ -13,11 +13,11 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate
 
-from .access import GL, GLScope, assert_report_access
+from .access import ACCOUNT_CURRENCY, GL, GLScope, assert_report_access
 from .excel_bytes import build_xlsx_bytes
 from .gl_period import Period
 from .ledger import AccountLedger
-from .report_tables import MAX_EXPORT_LINES, ledger_headers, ledger_rows
+from .report_tables import MAX_EXPORT_LINES, LedgerColumns, ledger_headers, ledger_rows
 
 # ledger summary key → meta key read by existing callers
 META_KEYS = {
@@ -34,12 +34,12 @@ TOTAL_KEYS = tuple(META_KEYS)
 
 
 def list_party_ledger_currencies(company, party_type, party):
-	"""Distinct GL account currencies for one party. No currency conversion."""
+	"""Distinct currencies of the party's accounts — the same key `party_accounts` filters on."""
 	assert_report_access(company, party_type, party)
 	rows = GLScope(company, party_type, party=party).query(
-		f"distinct {GL}.account_currency as currency",
-		f" and ifnull({GL}.account_currency, '') != ''",
-		f"order by {GL}.account_currency",
+		f"distinct {ACCOUNT_CURRENCY} as currency",
+		f" and ifnull({ACCOUNT_CURRENCY}, '') != ''",
+		"order by currency",
 	)
 	return [row.currency for row in rows]
 
@@ -58,14 +58,20 @@ def build_party_item_ledger_xlsx(company, party_type, party, from_date=None, to_
 	for name in accounts:
 		ledger = AccountLedger(company, party_type, party, name, from_date, to_date)
 		if len(accounts) > 1:
-			rows.append(["", "", f"حساب: {name}"])
+			rows.append(section_row(f"حساب: {name}", is_foreign))
 		section, count = ledger_rows(ledger, budget=MAX_EXPORT_LINES - line_count)
 		rows += section
 		line_count += count
 		for key in TOTAL_KEYS:
 			totals[key] = flt(totals[key] + ledger.summary[key], 9)
 	headers = ledger_headers(currency, company_currency, is_foreign)
-	content = build_xlsx_bytes(headers, rows, sheet_name="گردش حساب")
+	content = build_xlsx_bytes(
+		headers,
+		rows,
+		sheet_name="گردش حساب",
+		title=f"ریزحساب {party}",
+		subtitle=ledger_subtitle(company, currency, from_date, to_date),
+	)
 	meta = {
 		"party": party,
 		"party_type": party_type,
@@ -90,6 +96,17 @@ def party_accounts(company, party_type, party, currency, to_date):
 		f"distinct {GL}.account as account", period.until, f"order by {GL}.account", **period.params
 	)
 	return [row.account for row in rows]
+
+
+def section_row(text, is_foreign):
+	row = LedgerColumns(is_foreign).blank("section")
+	row[2] = text
+	return row
+
+
+def ledger_subtitle(company, currency, from_date, to_date):
+	period = f"{getdate(from_date)} تا {getdate(to_date)}" if from_date and to_date else "همه تاریخ‌ها"
+	return f"شرکت: {company} | ارز حساب: {currency} | دوره: {period}"
 
 
 def ledger_filename(party, from_date, to_date, currency):

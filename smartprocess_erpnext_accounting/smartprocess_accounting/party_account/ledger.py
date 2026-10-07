@@ -12,7 +12,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
-from .access import GL, PARTY_NAME_FIELD, GLScope, assert_report_access
+from .access import GL, PARTY_NAME_FIELD, POSTED_IN_OTHER_CURRENCY, GLScope, assert_report_access
 from .gl_period import Period, balance_columns, balance_values
 from .labels import balance_nature
 from .voucher_links import decorate_lines
@@ -33,6 +33,10 @@ ROW_FIELDS = ", ".join(
 		"credit",
 		"debit_in_account_currency",
 		"credit_in_account_currency",
+		"account_currency",
+		"transaction_currency",
+		"debit_in_transaction_currency",
+		"credit_in_transaction_currency",
 		"remarks",
 	)
 )
@@ -82,8 +86,9 @@ class AccountLedger:
 
 	@cached_property
 	def summary(self):
-		row = self.scope.query(balance_columns(), self.period.until, **self.period.params)[0]
-		return balance_values(row)
+		other_currency = f"sum(case when {POSTED_IN_OTHER_CURRENCY} then 1 else 0 end) as other_currency_rows"
+		row = self.scope.query(f"{balance_columns()}, {other_currency}", self.period.until, **self.period.params)[0]
+		return {**balance_values(row), "other_currency_rows": cint(row.other_currency_rows)}
 
 	def page(self, after=None, page_length=PAGE_LENGTH):
 		params = {**self.period.params, "limit": page_length + 1}
@@ -107,7 +112,7 @@ class AccountLedger:
 			"opening": opening,
 			"opening_base": opening_base,
 			"opening_nature": balance_nature(opening),
-			"rows": running_lines(rows, opening, opening_base, self.context["is_foreign"]),
+			"rows": running_lines(rows, opening, opening_base, self.context["is_foreign"], self.currency),
 			"has_more": has_more,
 			"next_cursor": rows[-1].name if has_more else None,
 		}
@@ -133,7 +138,9 @@ class AccountLedger:
 			after = page["next_cursor"]
 
 
-def running_lines(rows, opening, opening_base, is_foreign):
+def running_lines(rows, opening, opening_base, is_foreign, currency=None):
+	"""Every GL row moves the balance, the same way the GL SUM totals do. A row posted
+	in another currency than the account's is flagged, never skipped."""
 	balance, balance_base = flt(opening), flt(opening_base)
 	lines = []
 	for row in rows:
@@ -143,6 +150,7 @@ def running_lines(rows, opening, opening_base, is_foreign):
 		balance_base = flt(balance_base + flt(row.debit) - flt(row.credit), 9)
 		lines.append(
 			{
+				**currency_flags(row, currency),
 				"gl_entry": row.name,
 				"posting_date": row.posting_date,
 				"voucher_type": row.voucher_type,
@@ -162,6 +170,22 @@ def running_lines(rows, opening, opening_base, is_foreign):
 			}
 		)
 	return lines
+
+
+def currency_flags(row, currency):
+	posted = row.get("account_currency") or currency
+	transaction = row.get("transaction_currency") or posted
+	other_transaction = transaction != posted
+	return {
+		"posted_currency": posted,
+		"posted_in_other_currency": bool(currency and posted != currency),
+		"transaction_currency": transaction if other_transaction else None,
+		"transaction_amount": (
+			flt(row.get("debit_in_transaction_currency")) or -flt(row.get("credit_in_transaction_currency"))
+			if other_transaction
+			else None
+		),
+	}
 
 
 def posting_rate(row):

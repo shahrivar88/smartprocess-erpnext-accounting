@@ -6,7 +6,7 @@
 import frappe
 from frappe.utils import cint, getdate
 
-from .access import GL, GLScope, assert_readable, assert_report_access
+from .access import ACCOUNT_CURRENCY, GL, POSTED_IN_OTHER_CURRENCY, GLScope, assert_readable, assert_report_access
 from .gl_period import Period, balance_columns, balance_values
 from .period_ranges import get_current_fiscal_year_to_date
 
@@ -82,6 +82,7 @@ def overview_rows(scope, period, hide_zero, limit=None, offset=0):
 			"party_name": row.party_name or row.party,
 			"account": row.account,
 			"currency": row.currency,
+			"other_currency_rows": cint(row.other_currency_rows),
 			**balance_values(row),
 		}
 		for row in data
@@ -103,6 +104,8 @@ def overview_totals(scope, period, hide_zero):
 
 
 def grouped_sql(scope, period, hide_zero):
+	"""One row per Party + Account in the Account's currency. GL rows posted in another
+	currency are counted, never split off or dropped."""
 	having = ""
 	if cint(hide_zero):
 		having = (
@@ -110,6 +113,7 @@ def grouped_sql(scope, period, hide_zero):
 		)
 	select = (
 		f"{GL}.party as party, max({scope.name_column}) as party_name, {GL}.account as account, "
-		f"{GL}.account_currency as currency, {balance_columns()}"
+		f"max({ACCOUNT_CURRENCY}) as currency, "
+		f"sum(case when {POSTED_IN_OTHER_CURRENCY} then 1 else 0 end) as other_currency_rows, {balance_columns()}"
 	)
-	return scope.sql(select, period.until, f"group by {GL}.party, {GL}.account, {GL}.account_currency{having}")
+	return scope.sql(select, period.until, f"group by {GL}.party, {GL}.account{having}")

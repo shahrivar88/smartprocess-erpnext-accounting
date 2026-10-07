@@ -13,6 +13,10 @@ from frappe.desk.reportview import build_match_conditions
 PARTY_TYPES = ("Customer", "Supplier")
 PARTY_NAME_FIELD = {"Customer": "customer_name", "Supplier": "supplier_name"}
 GL = "`tabGL Entry`"
+# The ledger's Account; its currency is the report currency of every GL row on it.
+ACCOUNT = "`sp_account`"
+ACCOUNT_CURRENCY = f"{ACCOUNT}.account_currency"
+POSTED_IN_OTHER_CURRENCY = f"ifnull({GL}.account_currency, '') != ifnull({ACCOUNT_CURRENCY}, '')"
 
 
 def assert_report_access(company, party_type, party=None, account=None):
@@ -56,7 +60,9 @@ class GLScope:
 	"""Active GL rows of one company and party type, filtered by the caller's permissions.
 
 	The party table is joined because `GL Entry.party` is a Dynamic Link, so user
-	permissions on Customer/Supplier only apply through the party's own match conditions."""
+	permissions on Customer/Supplier only apply through the party's own match conditions.
+	`currency` selects accounts by the Account's own currency, never GL rows by theirs:
+	a row posted in another currency stays visible on its account."""
 
 	def __init__(self, company, party_type, party=None, account=None, currency=None, search=None):
 		self.party_table = f"`tab{party_type}`"
@@ -68,10 +74,11 @@ class GLScope:
 			f"{GL}.is_cancelled = 0",
 			f"ifnull({GL}.party, '') != ''",
 		]
-		for column, value in (("party", party), ("account", account), ("account_currency", currency)):
+		for column, value in ((f"{GL}.party", party), (f"{GL}.account", account), (ACCOUNT_CURRENCY, currency)):
 			if value:
-				conditions.append(f"{GL}.{column} = %(scope_{column})s")
-				self.params[f"scope_{column}"] = value
+				key = "scope_" + column.rsplit(".", 1)[1]
+				conditions.append(f"{column} = %({key})s")
+				self.params[key] = value
 		if search:
 			conditions.append(f"({GL}.party like %(scope_search)s or {self.name_column} like %(scope_search)s)")
 			self.params["scope_search"] = f"%{escape_like(search)}%"
@@ -83,7 +90,10 @@ class GLScope:
 
 	@property
 	def source(self):
-		return f"{GL} left join {self.party_table} on {self.party_table}.name = {GL}.party"
+		return (
+			f"{GL} left join {self.party_table} on {self.party_table}.name = {GL}.party"
+			f" left join `tabAccount` {ACCOUNT} on {ACCOUNT}.name = {GL}.account"
+		)
 
 	def sql(self, select, extra="", tail=""):
 		return f"select {select} from {self.source} where {self.where}{extra} {tail}"
