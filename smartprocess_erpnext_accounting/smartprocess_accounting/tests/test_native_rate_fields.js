@@ -57,9 +57,15 @@ const lock = (doctype, values, fieldname = "conversion_rate", write = 1) => {
 test("1 each native DocType registers its handlers once, however often the file runs", () => {
 	native.register(frappe);
 	native.register(frappe);
-	assert.deepEqual(registrations.map(([doctype]) => doctype), ["Sales Invoice", "Purchase Invoice", "Payment Entry"]);
-	for (const [, events] of registrations) {
-		assert.deepEqual(Object.keys(events), ["setup", "refresh"]);
+	assert.deepEqual(registrations.map(([doctype]) => doctype), [
+		"Sales Invoice",
+		"Purchase Invoice",
+		"Payment Entry",
+		"Sales Invoice Item",
+		"Purchase Invoice Item",
+	]);
+	for (const [doctype, events] of registrations) {
+		assert.deepEqual(Object.keys(events), doctype.endsWith(" Item") ? ["form_render"] : ["setup", "refresh"]);
 	}
 });
 
