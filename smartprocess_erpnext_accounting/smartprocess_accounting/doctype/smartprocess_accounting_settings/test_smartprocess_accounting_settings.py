@@ -29,6 +29,7 @@ TABS = {
 	"عمومی": [
 		"enable_v2_posting",
 		"enable_counterpart_proposal",
+		"enable_customer_currency_receivable_account",
 		"receipt_recipient_type_options",
 		"receipt_recipient_type_default",
 		"receipt_naming_series",
@@ -101,7 +102,16 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 		bootinfo = frappe._dict()
 		extend_bootinfo(bootinfo)
 		payload = bootinfo.smartprocess_accounting
-		self.assertEqual(set(payload), {"hide_insignificant_trailing_zeros", "allow_exchange_rate_editing", "live_number_separator"})
+		self.assertEqual(
+			set(payload),
+			{
+				"hide_insignificant_trailing_zeros",
+				"allow_exchange_rate_editing",
+				"live_number_separator",
+				"customer_currency_receivable_account",
+			},
+		)
+		self.assertIn(payload["customer_currency_receivable_account"], (0, 1))
 		self.assertEqual(payload["hide_insignificant_trailing_zeros"], hide_insignificant_trailing_zeros())
 		self.assertIn(payload["allow_exchange_rate_editing"], (0, 1))
 		self.assertEqual(payload["live_number_separator"], get_number_input_settings())

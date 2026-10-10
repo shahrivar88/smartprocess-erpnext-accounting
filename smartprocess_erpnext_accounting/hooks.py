@@ -33,13 +33,14 @@ extend_bootinfo = [
 ]
 
 doctype_js = {
-	"Sales Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
+	"Sales Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js", "public/js/customer_receivable_account.js"],
 	"Purchase Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
 	"Payment Entry": "public/js/native_rate_fields.js",
 }
 
 doc_events = {
 	"Sales Invoice": {
+		"before_validate": "smartprocess_erpnext_accounting.smartprocess_accounting.customer_receivable_account.apply_receivable_account",
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 	},
 	"Purchase Invoice": {
