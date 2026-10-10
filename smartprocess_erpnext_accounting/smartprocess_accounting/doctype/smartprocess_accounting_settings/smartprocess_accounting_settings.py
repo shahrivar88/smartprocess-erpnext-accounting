@@ -77,12 +77,9 @@ def _stored(doctype):
 
 
 def extend_bootinfo(bootinfo):
-	"""Desk flags, read once per page load. UI only: server rules read the Settings themselves."""
-	from smartprocess_erpnext_accounting.smartprocess_accounting import customer_receivable_account
-
+	"""Desk display flags, read once per page load. UI only: no server rule reads them."""
 	bootinfo.smartprocess_accounting = {
 		"hide_insignificant_trailing_zeros": hide_insignificant_trailing_zeros(),
 		"allow_exchange_rate_editing": display_flag("allow_exchange_rate_editing"),
 		"live_number_separator": number_input_settings(),
-		"customer_currency_receivable_account": int(customer_receivable_account.is_enabled()),
 	}
