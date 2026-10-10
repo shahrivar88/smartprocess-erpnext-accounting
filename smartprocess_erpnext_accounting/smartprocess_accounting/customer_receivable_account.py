@@ -8,6 +8,10 @@ Company currency. The candidate order is ERPNext's own: the Customer's Party
 Account, the Customer Group's Party Account, then the Company default. A
 generic candidate in another currency is skipped; otherwise the only eligible
 account of the Company is used. Nothing is guessed and no account is created.
+
+ERPNext allows one receivable currency per Customer and Company once GL exists.
+When that ledger currency differs from the Customer's currency, ERPNext's own
+account for the ledger is used and a non-blocking warning explains why.
 """
 
 import frappe
@@ -31,13 +35,19 @@ MSG_CUSTOMER_ACCOUNT = (
 	"حساب «{2}» که در «حساب‌های پیش‌فرض» مشتری «{0}» برای شرکت «{1}» تعریف شده، "
 	"حساب دریافتنی فعال و غیرگروهی با ارز مشتری ({3}) نیست. حساب مشتری یا ارز صورتحساب او را اصلاح کنید."
 )
-MSG_GL_CONFLICT = (
-	"ارز مشتری «{0}» {2} است، اما سوابق حسابداری او در شرکت «{1}» با ارز {3} ثبت شده است. "
-	"ERPNext برای هر مشتری در هر شرکت فقط یک ارز حساب می‌پذیرد؛ ارز صورتحساب (Billing Currency) مشتری را با سوابق او هماهنگ کنید."
+MSG_LEDGER_NO_ACCOUNT = (
+	"سوابق حسابداری مشتری «{0}» در شرکت «{1}» با ارز {2} ثبت شده، اما ERPNext حساب دریافتنی "
+	"فعال و غیرگروهی معتبری با ارز {2} برای او پیدا نکرد. حساب را در «حساب‌های پیش‌فرض» مشتری تعیین کنید."
 )
+MSG_LEDGER_WARNING = (
+	"ارز صورتحساب مشتری «{0}» {1} است، اما سوابق حسابداری او در شرکت «{2}» با ارز {3} ثبت شده است. "
+	"ERPNext برای هر مشتری در هر شرکت فقط یک ارز حساب دریافتنی می‌پذیرد؛ بنابراین حساب «{4}» با ارز {3} "
+	"استفاده می‌شود و مبلغ فاکتور با نرخ تبدیل در همین حساب ثبت می‌شود. سوابق قبلی و ارز صورتحساب مشتری تغییری نکرد."
+)
+MSG_LEDGER_WARNING_TITLE = "هشدار ارز حساب دریافتنی"
 MSG_MISMATCH = (
 	"حساب دریافتنی «{0}» با مشتری هم‌خوان نیست. حسابی از شرکت «{1}» انتخاب کنید که دریافتنی، "
-	"غیرگروهی، فعال و با ارز مشتری ({2}) باشد."
+	"غیرگروهی، فعال و با ارز {2} باشد."
 )
 
 
@@ -50,6 +60,15 @@ def customer_currency(customer, company):
 	return frappe.get_cached_value("Customer", customer, "default_currency") or frappe.get_cached_value(
 		"Company", company, "default_currency"
 	)
+
+
+def receivable_currency(customer, company):
+	"""(currency the receivable must have, ledger currency when it overrides the Customer's currency)."""
+	own = customer_currency(customer, company)
+	ledger = get_party_gle_currency("Customer", customer, company)
+	if ledger and ledger != own:
+		return ledger, ledger
+	return own, None
 
 
 def is_eligible(account, company, currency):
@@ -70,8 +89,9 @@ def is_eligible(account, company, currency):
 
 
 def resolve_receivable_account(customer, company):
-	currency = customer_currency(customer, company)
-	validate_ledger_currency(customer, company, currency)
+	currency, ledger = receivable_currency(customer, company)
+	if ledger:
+		return _ledger_account(customer, company, ledger)
 
 	own = _party_account("Customer", customer, company)
 	if own:
@@ -90,27 +110,34 @@ def resolve_receivable_account(customer, company):
 	return _only_eligible_account(customer, company, currency)
 
 
-def validate_ledger_currency(customer, company, currency):
-	ledger_currency = get_party_gle_currency("Customer", customer, company)
-	if ledger_currency and ledger_currency != currency:
-		frappe.throw(_(MSG_GL_CONFLICT).format(customer, company, currency, ledger_currency))
-
-
 def apply_receivable_account(doc, method=None):
 	"""Sales Invoice `before_validate`: runs on every Save and Submit, from Desk, API or Import."""
 	if not is_enabled() or doc.is_return or not (doc.customer and doc.company):
 		return
 
-	currency = customer_currency(doc.customer, doc.company)
-	if doc.debit_to and is_eligible(doc.debit_to, doc.company, currency):
-		validate_ledger_currency(doc.customer, doc.company, currency)
-		return
+	currency, ledger = receivable_currency(doc.customer, doc.company)
+	if not (doc.debit_to and is_eligible(doc.debit_to, doc.company, currency)):
+		# An account other than ERPNext's own default was chosen on purpose: report it, never replace it.
+		if doc.debit_to and doc.debit_to != get_party_account("Customer", doc.customer, doc.company):
+			frappe.throw(_(MSG_MISMATCH).format(doc.debit_to, doc.company, currency))
+		doc.debit_to = resolve_receivable_account(doc.customer, doc.company)
 
-	# An account other than ERPNext's own default was chosen on purpose: report it, never replace it.
-	if doc.debit_to and doc.debit_to != get_party_account("Customer", doc.customer, doc.company):
-		frappe.throw(_(MSG_MISMATCH).format(doc.debit_to, doc.company, currency))
+	if ledger:
+		warn_ledger_currency(doc.customer, doc.company, doc.debit_to)
 
-	doc.debit_to = resolve_receivable_account(doc.customer, doc.company)
+
+def warn_ledger_currency(customer, company, account):
+	frappe.msgprint(
+		_(MSG_LEDGER_WARNING).format(
+			customer,
+			customer_currency(customer, company),
+			company,
+			get_party_gle_currency("Customer", customer, company),
+			account,
+		),
+		title=_(MSG_LEDGER_WARNING_TITLE),
+		indicator="orange",
+	)
 
 
 @frappe.whitelist()
@@ -121,6 +148,15 @@ def get_customer_receivable_account(customer, company):
 	account = resolve_receivable_account(customer, company)
 	ptype = "select" if frappe.only_has_select_perm("Account") else "read"
 	frappe.has_permission("Account", ptype, account, throw=True)
+	if receivable_currency(customer, company)[1]:
+		warn_ledger_currency(customer, company, account)
+	return account
+
+
+def _ledger_account(customer, company, currency):
+	account = get_party_account("Customer", customer, company)
+	if not (account and is_eligible(account, company, currency)):
+		frappe.throw(_(MSG_LEDGER_NO_ACCOUNT).format(customer, company, currency))
 	return account
 
 

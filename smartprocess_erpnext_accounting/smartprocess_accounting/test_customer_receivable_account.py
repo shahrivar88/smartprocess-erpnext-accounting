@@ -35,7 +35,9 @@ class World:
 		}
 		self.party_accounts = {}
 		self.ledger = {}
+		self.ledger_accounts = {}
 		self.singles = {cra.FLAG: str(enabled)}
+		self.warnings = []
 
 	def cached_value(self, doctype, name, fieldname, as_dict=False):
 		if doctype == "Account":
@@ -56,7 +58,12 @@ class World:
 		)
 
 	def standard_account(self, party_type, customer, company):
-		return self.party_accounts.get(("Customer", customer, company)) or self.companies[company]["default_receivable_account"]
+		"""ERPNext's chain: party, then Company default; an existing ledger's currency wins."""
+		account = self.party_accounts.get(("Customer", customer, company)) or self.companies[company]["default_receivable_account"]
+		ledger = self.ledger.get((customer, company))
+		if ledger and self.accounts[account][3] != ledger:
+			account = self.ledger_accounts.get((customer, company))
+		return account
 
 	def patch(self):
 		stack = ExitStack()
@@ -65,6 +72,7 @@ class World:
 		stack.enter_context(mock.patch.object(cra.frappe.db, "get_singles_dict", lambda *a, **k: self.singles))
 		stack.enter_context(mock.patch.object(cra.frappe, "get_list", self.account_list))
 		stack.enter_context(mock.patch.object(cra, "get_party_account", self.standard_account))
+		stack.enter_context(mock.patch.object(cra.frappe, "msgprint", lambda msg, **kw: self.warnings.append((msg, kw))))
 		stack.enter_context(
 			mock.patch.object(cra, "get_party_gle_currency", lambda pt, party, company: self.ledger.get((party, company)))
 		)
@@ -166,12 +174,55 @@ class TestCustomerReceivableAccount(unittest.TestCase):
 		doc.company, doc.debit_to = "B", "Debtors - B"
 		self.assertEqual(self.run_rule(world, doc), "Debtors USD - B")
 
-	def test_ledger_in_another_currency_blocks_with_a_clear_message(self):
+	def test_ledger_matching_customer_currency_keeps_the_customer_rule(self):
+		world = World()
+		world.ledger[("C-USD", "A")] = "USD"
+		self.assertEqual(self.run_rule(world, invoice()), "Debtors USD - A")
+		self.assertEqual(world.warnings, [])
+
+	def test_ledger_in_another_currency_uses_erpnext_ledger_account_and_warns(self):
 		world = World()
 		world.ledger[("C-USD", "A")] = "IRR"
-		self.assert_rejected(world, invoice(), "سوابق حسابداری")
-		self.assert_rejected(world, invoice(debit_to="Debtors USD - A"), "سوابق حسابداری")
-		self.assertEqual(self.run_rule(world, invoice(company="B")), "Debtors USD - B")
+		for doc in (invoice(), invoice(debit_to="Debtors - A")):
+			world.warnings.clear()
+			self.assertEqual(self.run_rule(world, doc), "Debtors - A")
+			((message, options),) = world.warnings
+			self.assertIn("سوابق حسابداری", message)
+			self.assertIn("«Debtors - A»", message)
+			self.assertEqual(options["indicator"], "orange")
+		world.warnings.clear()
+		self.assertEqual(self.run_rule(world, invoice(company="B")), "Debtors USD - B", "other company: no ledger")
+		self.assertEqual(world.warnings, [])
+
+	def test_ledger_manual_choice_is_kept_only_in_the_ledger_currency(self):
+		world = World()
+		world.ledger[("C-USD", "A")] = "IRR"
+		self.assertEqual(self.run_rule(world, invoice(debit_to="Debtors Other - A")), "Debtors Other - A")
+		self.assertEqual(len(world.warnings), 1)
+		doc = invoice(debit_to="Debtors USD - A")
+		self.assert_rejected(world, doc, "با ارز IRR")
+		self.assertEqual(doc.debit_to, "Debtors USD - A")
+
+	def test_ledger_without_a_valid_standard_account_is_reported(self):
+		world = World()
+		world.ledger[("C-NONE", "A")] = "USD"
+		for ledger_account in (None, "Old USD - A", "Debtors USD - B"):
+			world.ledger_accounts[("C-NONE", "A")] = ledger_account
+			self.assert_rejected(world, invoice(customer="C-NONE"), "پیدا نکرد")
+
+	def test_client_method_warns_about_the_ledger_currency(self):
+		world = World()
+		world.ledger[("C-USD", "A")] = "IRR"
+		with (
+			world.patch(),
+			mock.patch.object(cra.frappe, "has_permission", return_value=True),
+			mock.patch.object(cra.frappe, "only_has_select_perm", return_value=False),
+		):
+			self.assertEqual(cra.get_customer_receivable_account("C-USD", "A"), "Debtors - A")
+			self.assertEqual(len(world.warnings), 1)
+			world.warnings.clear()
+			self.assertEqual(cra.get_customer_receivable_account("C-USD", "B"), "Debtors USD - B")
+			self.assertEqual(world.warnings, [])
 
 	def test_returns_keep_their_account(self):
 		doc = invoice(debit_to="Debtors - A", is_return=1)

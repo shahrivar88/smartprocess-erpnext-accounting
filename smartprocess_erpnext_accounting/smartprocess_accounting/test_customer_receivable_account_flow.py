@@ -16,6 +16,8 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartproces
 COMPANIES = {"A": "_SP CRA Company A", "B": "_SP CRA Company B"}
 ABBR = {"A": "SPCRAA", "B": "SPCRAB"}
 FOREIGN_RATE = 50000
+ACCOUNTS_SETTINGS = "Accounts Settings"
+MULTI_CURRENCY = "allow_multi_currency_invoices_against_single_party_account"
 
 
 class TestCustomerReceivableAccountFlow(AccountingFixtureTestCase):
@@ -155,14 +157,42 @@ class TestCustomerReceivableAccountFlow(AccountingFixtureTestCase):
 		self.assert_rejected(doc, "هم‌خوان نیست", action="submit")
 		self.assertEqual(frappe.db.get_value("Sales Invoice", doc.name, "docstatus"), 0)
 
-	def test_ledger_currency_conflict_blocks_and_returns_are_exempt(self):
-		customer = _customer()
-		original = self.invoice(customer).insert()
+	def test_ledger_in_the_customer_currency_keeps_the_customer_rule(self):
+		customer = _customer("USD")
+		self.invoice(customer).insert().submit()
+		frappe.local.message_log = []
+		second = self.invoice(customer).insert()
+		second.submit()
+		self.assertEqual(second.debit_to, self.usd["A"])
+		self.assertFalse(_warned())
+
+	def test_cust_2026_00001_ledger_in_another_currency(self):
+		"""Billing Currency USD, but the first invoice posted in IRR (USD invoice on the IRR receivable)."""
+		customer = _customer("USD")
+		self.enable(0)
+		frappe.db.set_single_value(ACCOUNTS_SETTINGS, MULTI_CURRENCY, 1)
+		original = self.invoice(customer, debit_to=self.irr["A"]).insert()
 		original.submit()
-		switched = frappe.get_doc("Customer", customer)
-		switched.default_currency = "USD"
-		switched.save()
-		self.assert_rejected(self.invoice(customer), "سوابق حسابداری")
+		frappe.db.set_single_value(ACCOUNTS_SETTINGS, MULTI_CURRENCY, 0)
+		self.enable(1)
+		ledger_before = _ledger_rows(original.name)
+
+		frappe.local.message_log = []
+		doc = self.invoice(customer).insert()
+		self.assertEqual((doc.currency, doc.debit_to, doc.party_account_currency), ("USD", self.irr["A"], "IRR"))
+		self.assertTrue(_warned(), "a non-blocking warning explains the ledger currency")
+		doc.submit()
+		party_rows = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_no": doc.name, "party": customer, "is_cancelled": 0},
+			fields=["account", "account_currency"],
+		)
+		self.assertEqual({(row.account, row.account_currency) for row in party_rows}, {(self.irr["A"], "IRR")})
+		self.assertEqual(_ledger_rows(original.name), ledger_before)
+		self.assertEqual(frappe.db.get_value("Customer", customer, "default_currency"), "USD")
+
+		self.assert_rejected(self.invoice(customer, debit_to=self.usd["A"]), "با ارز IRR")
+		self.assertEqual(self.invoice(customer, "B").insert().debit_to, self.usd["B"], "no ledger in Company B")
 
 		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 
@@ -170,6 +200,23 @@ class TestCustomerReceivableAccountFlow(AccountingFixtureTestCase):
 		credit_note.insert()
 		credit_note.submit()
 		self.assertEqual(credit_note.debit_to, original.debit_to)
+
+
+def _warned():
+	return any(cra.MSG_LEDGER_WARNING_TITLE in str(message) for message in frappe.local.message_log)
+
+
+def _ledger_rows(voucher_no):
+	fields = ["name", "account", "account_currency", "debit", "credit", "is_cancelled"]
+	return (
+		frappe.get_all("GL Entry", filters={"voucher_no": voucher_no}, fields=fields, order_by="name"),
+		frappe.get_all(
+			"Payment Ledger Entry",
+			filters={"voucher_no": voucher_no},
+			fields=["name", "account", "amount", "delinked"],
+			order_by="name",
+		),
+	)
 
 
 def _company(key):
