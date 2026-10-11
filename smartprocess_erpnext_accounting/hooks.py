@@ -33,17 +33,29 @@ extend_bootinfo = [
 ]
 
 doctype_js = {
-	"Sales Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
-	"Purchase Invoice": ["public/js/manual_invoice_conversion_rate.js", "public/js/native_rate_fields.js"],
+	"Sales Invoice": [
+		"public/js/manual_invoice_conversion_rate.js",
+		"public/js/native_rate_fields.js",
+		"public/js/invoice_default_account.js",
+		"public/js/sales_invoice_default_account.js",
+	],
+	"Purchase Invoice": [
+		"public/js/manual_invoice_conversion_rate.js",
+		"public/js/native_rate_fields.js",
+		"public/js/invoice_default_account.js",
+		"public/js/purchase_invoice_default_account.js",
+	],
 	"Payment Entry": "public/js/native_rate_fields.js",
 }
 
 doc_events = {
 	"Sales Invoice": {
+		"before_validate": "smartprocess_erpnext_accounting.smartprocess_accounting.sales_invoice_default_account.set_default_receivable_account",
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 		"before_submit": "smartprocess_erpnext_accounting.smartprocess_accounting.receivable_account_currency.validate_receivable_account_currency",
 	},
 	"Purchase Invoice": {
+		"before_validate": "smartprocess_erpnext_accounting.smartprocess_accounting.purchase_invoice_default_account.set_default_payable_account",
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 	},
 }

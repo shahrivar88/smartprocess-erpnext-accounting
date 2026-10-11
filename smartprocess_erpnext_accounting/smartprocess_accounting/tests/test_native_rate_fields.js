@@ -173,7 +173,7 @@ test("7 SmartProcess forms keep their own rate locks; only UI code reads the set
 	}
 	const hooks = fs.readFileSync(path.join(APP_DIR, "hooks.py"), "utf-8");
 	for (const doctype of Object.keys(native.RATE_FIELDS)) {
-		assert.match(hooks, new RegExp(`"${doctype}": [^\\n]*native_rate_fields\\.js`), doctype);
+		assert.match(hooks, new RegExp(`"${doctype}": (?:\\[[^\\]]*|[^\\n]*)native_rate_fields\\.js`), doctype);
 	}
 	const source = fs.readFileSync(path.join(APP_DIR, "public", "js", "native_rate_fields.js"), "utf-8");
 	for (const forbidden of ["prototype", "eval(", "set_value(", "innerHTML", ".html("]) {

@@ -8,6 +8,7 @@ from frappe.query_builder.functions import Max, Sum
 
 from smartprocess_erpnext_accounting import install, navigation
 from smartprocess_erpnext_accounting.install import _ensure_number_separator_defaults
+from smartprocess_erpnext_accounting.smartprocess_accounting import default_accounts
 from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_settings.smartprocess_accounting_settings import (
 	SETTINGS,
 	extend_bootinfo,
@@ -45,6 +46,7 @@ TABS = {
 		"exchange_rate_display_precision",
 	],
 	"نرخ ارز و تبدیل": ["allow_exchange_rate_editing", "enable_manual_invoice_rate_feature", "base_currency_rounding_tolerance"],
+	"حساب‌های پیش‌فرض": ["enable_central_default_accounts", "default_account_priority", "default_accounts"],
 	"پیشرفته": ["enable_templates", DEPRECATED],
 }
 SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش و مانده طرف حساب", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
@@ -102,9 +104,18 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 		bootinfo = frappe._dict()
 		extend_bootinfo(bootinfo)
 		payload = bootinfo.smartprocess_accounting
-		self.assertEqual(set(payload), {"hide_insignificant_trailing_zeros", "allow_exchange_rate_editing", "live_number_separator"})
+		self.assertEqual(
+			set(payload),
+			{
+				"hide_insignificant_trailing_zeros",
+				"allow_exchange_rate_editing",
+				"live_number_separator",
+				"central_default_accounts",
+			},
+		)
 		self.assertEqual(payload["hide_insignificant_trailing_zeros"], hide_insignificant_trailing_zeros())
 		self.assertIn(payload["allow_exchange_rate_editing"], (0, 1))
+		self.assertEqual(payload["central_default_accounts"], int(default_accounts.is_enabled()))
 		self.assertEqual(payload["live_number_separator"], get_number_input_settings())
 
 

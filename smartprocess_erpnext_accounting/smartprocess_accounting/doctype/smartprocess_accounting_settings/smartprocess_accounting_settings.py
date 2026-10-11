@@ -3,11 +3,19 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, get_number_format_info
 
+from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts import (
+	is_enabled as central_default_accounts_enabled,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts import (
+	validate_default_account_settings,
+)
+
 SETTINGS = "SmartProcess Accounting Settings"
 
 class SmartProcessAccountingSettings(Document):
 	def validate(self):
 		self.validate_number_separator()
+		validate_default_account_settings(self)
 
 	def validate_number_separator(self):
 		separator = self.number_separator
@@ -77,9 +85,10 @@ def _stored(doctype):
 
 
 def extend_bootinfo(bootinfo):
-	"""Desk display flags, read once per page load. UI only: no server rule reads them."""
+	"""Desk flags, read once per page load. UI only: no server rule reads them."""
 	bootinfo.smartprocess_accounting = {
 		"hide_insignificant_trailing_zeros": hide_insignificant_trailing_zeros(),
 		"allow_exchange_rate_editing": display_flag("allow_exchange_rate_editing"),
 		"live_number_separator": number_input_settings(),
+		"central_default_accounts": cint(central_default_accounts_enabled()),
 	}

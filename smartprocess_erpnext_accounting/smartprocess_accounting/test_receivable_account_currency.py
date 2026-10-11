@@ -73,7 +73,6 @@ class TestReceivableAccountCurrency(unittest.TestCase):
 		self.assertEqual(events["before_submit"], HOOK)
 		other = {event: path for event, path in events.items() if event != "before_submit"}
 		self.assertNotIn("receivable_account_currency", json.dumps(other))
-		self.assertNotIn("before_validate", events)
 
 	def test_settings_field_is_one_check_in_the_general_tab_off_by_default(self):
 		meta = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
