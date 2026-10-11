@@ -23,6 +23,14 @@ function spDefaultAccountFilters(row, companyCurrency) {
 	return filters;
 }
 
+// Invoice forms read this flag from boot, which loads once per page; a save must reach this tab too.
+function spSyncBootFlags(doc, boot) {
+	const flags = boot && boot.smartprocess_accounting;
+	if (flags) {
+		flags.central_default_accounts = Number(doc.enable_central_default_accounts) ? 1 : 0;
+	}
+}
+
 if (typeof frappe !== "undefined") {
 	frappe.ui.form.on("SmartProcess Accounting Settings", {
 		setup(frm) {
@@ -43,9 +51,12 @@ if (typeof frappe !== "undefined") {
 			grid.set_grid_description();
 			$(grid.parent).find(".grid-description").show();
 		},
+		after_save(frm) {
+			spSyncBootFlags(frm.doc, frappe.boot);
+		},
 	});
 }
 
 if (typeof module === "object" && module.exports) {
-	module.exports = { spDefaultAccountFilters };
+	module.exports = { spDefaultAccountFilters, spSyncBootFlags };
 }

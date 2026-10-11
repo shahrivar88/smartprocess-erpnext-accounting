@@ -35,11 +35,19 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.label
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import running_lines
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.pdf_html import build_pdf_html
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import (
+	BALANCE,
+	BALANCE_BASE,
 	CREDIT,
+	CREDIT_BASE,
 	DEBIT,
+	DEBIT_BASE,
+	DETAILS,
+	RATE,
+	RATE_BASE,
 	SheetRow,
 	ledger_headers,
 	ledger_rows,
+	overview_table,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import RESOLVERS, resolve_generic
 
@@ -50,8 +58,6 @@ PAGE_JS = os.path.join(
 PAGE_CSS = os.path.join(
 	os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "public", "css", "party_account_explorer.css"
 )
-BALANCE, NATURE, VOUCHER = 9, 10, 11
-
 
 def gl_row(name, debit=0, credit=0, debit_base=None, credit_base=None, **extra):
 	return frappe._dict(
@@ -109,12 +115,13 @@ class TestLabelsAndFormulas(unittest.TestCase):
 		lines = running_lines(rows, 100, 9000, is_foreign=True)
 		self.assertEqual([line["balance"] for line in lines], [110, 106])
 		self.assertEqual([line["balance_base"] for line in lines], [9900, 9520])
-		self.assertEqual([line["rate"] for line in lines], [90, 95])
+		self.assertEqual([(line["debit_base"], line["credit_base"]) for line in lines], [(900, 0), (0, 380)])
 		self.assertEqual(lines[1]["nature"], "بدهکار")
 
-	def test_company_currency_rows_have_no_rate(self):
-		lines = running_lines([gl_row("A", debit=10)], 0, 0, is_foreign=False)
-		self.assertIsNone(lines[0]["rate"])
+	def test_gl_lines_carry_no_derived_rate_and_name_their_account(self):
+		lines = running_lines([gl_row("A", debit=10, debit_base=900, account="AR-USD")], 0, 0, is_foreign=True)
+		self.assertNotIn("rate", lines[0], "no rate is computed from GL amounts")
+		self.assertEqual(lines[0]["account"], "AR-USD")
 
 	def test_search_escapes_like_wildcards(self):
 		self.assertEqual(escape_like("50%_x"), "50\\%\\_x")
@@ -320,6 +327,7 @@ class TestVoucherLinks(unittest.TestCase):
 			"voucher_no": voucher_no,
 			"voucher_detail_no": None,
 			"against_voucher_type": None,
+			"account": "AR",
 			"debit": debit,
 			"credit": credit,
 			"debit_base": debit,
@@ -378,6 +386,11 @@ class TestLedgerFilter(unittest.TestCase):
 
 	def test_cancelled_gl_rows_are_excluded_by_the_scope(self):
 		self.assertIn(f"{GL}.is_cancelled = 0", GLScope("Any Company", "Customer").where)
+
+	def test_currency_filter_uses_the_gl_account_currency_only(self):
+		scope = GLScope("Any Company", "Customer", currency="USD")
+		self.assertIn("`sp_account`.account_currency = %(scope_account_currency)s", scope.where)
+		self.assertNotIn("default_currency", scope.where, "the party's own currency never filters GL rows")
 
 	def test_no_filter_is_falsy_and_matches_everything(self):
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
@@ -550,13 +563,13 @@ def export_line(**extra):
 		"voucher_type": "Sales Invoice",
 		"voucher_no": "SINV-1",
 		"voucher_detail_no": None,
+		"account": "AR",
 		"against_voucher_type": None,
 		"remarks": "",
 		"debit": 5,
 		"credit": 0,
 		"debit_base": 5,
 		"credit_base": 0,
-		"rate": None,
 		"balance": 15,
 		"balance_base": 15,
 		"nature": "بدهکار",
@@ -564,11 +577,12 @@ def export_line(**extra):
 	}
 
 
-def export_ledger(lines, is_foreign=False):
+def export_ledger(lines, base_factor=1):
+	amounts = {"opening": 10, "period_debit": 5, "period_credit": 0, "closing": 15}
 	return SimpleNamespace(
-		context={"is_foreign": is_foreign},
+		context={},
 		period=SimpleNamespace(from_date="2026-01-01", to_date="2026-01-31"),
-		summary={"opening": 10, "opening_base": 10, "period_debit": 5, "period_credit": 0, "closing": 15, "closing_base": 15},
+		summary={**amounts, **{f"{key}_base": value * base_factor for key, value in amounts.items()}},
 		iter_lines=lambda: iter([{"rows": lines}]),
 	)
 
@@ -582,14 +596,34 @@ def decorated(**values):
 
 
 class TestExports(unittest.TestCase):
+	def test_ledger_headers_follow_the_report_column_order(self):
+		self.assertEqual(
+			ledger_headers("USD", "IRR"),
+			[
+				"ردیف",
+				"تاریخ",
+				"نوع برگه",
+				"شرح",
+				"عنوان قلم",
+				"مقدار",
+				"فی (IRR)",
+				"بدهکار (IRR)",
+				"بستانکار (IRR)",
+				"مانده (IRR)",
+				"فی ارزی (USD)",
+				"بدهکار ارزی (USD)",
+				"بستانکار ارزی (USD)",
+				"مانده ارزی (USD)",
+				"جزئیات",
+			],
+		)
+
 	def test_split_invoice_rows_repeat_the_document_and_carry_every_amount(self):
-		component = {"kind": "item", "title": "I1", "description": "", "qty": 3, "rate": 2, "debit": 6, "credit": 0, "balance": 16, "nature": "بدهکار", "balance_base": 16}
-		discount = {"kind": "discount", "title": "تخفیف", "description": "", "qty": None, "rate": None, "debit": -1, "credit": 0, "balance": 15, "nature": "بدهکار", "balance_base": 15}
+		component = {"kind": "item", "title": "I1", "description": "", "qty": 3, "rate": 2, "rate_base": 20, "debit": 6, "credit": 0, "debit_base": 60, "credit_base": 0, "balance": 16, "nature": "بدهکار", "balance_base": 160}
+		discount = {"kind": "discount", "title": "تخفیف", "description": "", "qty": None, "rate": None, "rate_base": None, "debit": -1, "credit": 0, "debit_base": -10, "credit_base": 0, "balance": 15, "nature": "بدهکار", "balance_base": 150}
 		with decorated(components=[component, discount]):
-			rows, count = ledger_rows(export_ledger([export_line()]))
-		headers = ledger_headers("IRR", "IRR", False)
-		self.assertEqual(headers[2], "نوع برگه")
-		self.assertEqual(headers[VOUCHER], "سند ثبت")
+			rows, count = ledger_rows(export_ledger([export_line(debit_base=50, balance_base=150)], base_factor=10))
+		headers = ledger_headers("IRR", "IRR")
 		self.assertNotIn("کد کالا", headers, "item code stays in the details only")
 		self.assertNotIn("واحد", headers)
 		self.assertEqual(count, 1)
@@ -600,14 +634,28 @@ class TestExports(unittest.TestCase):
 		for row in (item, adjustment):
 			self.assertEqual(row[1], "2026-01-02")
 			self.assertEqual(row[2], "فاکتور فروش - SINV-1")
-			self.assertEqual(row[VOUCHER], "SINV-1")
+			self.assertEqual(row[DETAILS], "حساب: AR · سند ثبت: SINV-1")
 			self.assertTrue(row[DEBIT] or row[CREDIT], "every line row carries an amount")
-		self.assertEqual(item[4:11], ["I1", 3, 2, 6, "", 16, "بدهکار"])
+		self.assertEqual(item[4:6], ["I1", 3])
+		self.assertEqual([item[RATE_BASE], item[DEBIT_BASE], item[CREDIT_BASE], item[BALANCE_BASE]], [20, 60, "", 160])
+		self.assertEqual([item[RATE], item[DEBIT], item[CREDIT], item[BALANCE]], [2, 6, "", 16])
 		self.assertEqual(adjustment[4], "تخفیف")
 		self.assertEqual(sum(row[DEBIT] or 0 for row in rows[0:2]), 5, "split rows add up to the GL debit")
-		self.assertEqual(rows[-3][BALANCE], 10, "opening")
+		self.assertEqual(sum(row[DEBIT_BASE] or 0 for row in rows[0:2]), 50, "and to the GL base debit")
+		self.assertEqual((rows[-3][BALANCE], rows[-3][BALANCE_BASE]), (10, 100), "opening")
+		self.assertEqual(rows[-2][DEBIT_BASE : CREDIT_BASE + 1], [50, 0])
 		self.assertEqual(rows[-2][DEBIT : CREDIT + 1], [5, 0])
-		self.assertEqual(rows[-1][BALANCE], 15)
+		self.assertEqual((rows[-1][BALANCE], rows[-1][BALANCE_BASE]), (15, 150))
+
+	def test_overview_export_keeps_one_total_per_currency(self):
+		row = {"party": "C1", "party_name": "Customer 1", "currency": "USD", "other_currency_rows": 0, "period_debit_base": 900, "period_credit_base": 0, "closing_base": 900, "period_debit": 10, "period_credit": 0, "closing": 10}
+		totals = [{**row, "row_count": 1}, {**row, "currency": "IRR", "row_count": 2, "period_debit": 5, "closing": 5, "period_debit_base": 5, "closing_base": 5}]
+		headers, table = overview_table([row], totals, "IRR")
+		self.assertEqual(headers[:2], ["طرف حساب", "ارز حساب"])
+		self.assertEqual(headers[2:5], ["گردش بدهکار (IRR)", "گردش بستانکار (IRR)", "مانده (IRR)"])
+		self.assertEqual(headers[5:], ["گردش بدهکار ارزی", "گردش بستانکار ارزی", "مانده ارزی"])
+		self.assertEqual(list(table[0]), ["Customer 1", "USD", 900, 0, 900, 10, 0, 10], "no party code and no account column")
+		self.assertEqual([(entry.kind, entry[1], entry[7]) for entry in table[1:]], [("total", "USD", 10), ("total", "IRR", 5)])
 
 	def test_document_and_posting_cells_are_plain_text(self):
 		document = {"doctype": "SmartProcess Accounting Document", "name": "SP-REC-2026-00019"}
@@ -615,16 +663,17 @@ class TestExports(unittest.TestCase):
 			rows, _count = ledger_rows(export_ledger([export_line(voucher_type="SmartProcess Accounting Posting", voucher_no="SP-POST-1")]))
 		self.assertEqual(rows[0][2], "رسید - SP-REC-2026-00019")
 		self.assertIs(type(rows[0][2]), str, "no hyperlink object in exports")
-		self.assertEqual(rows[0][VOUCHER], "SP-POST-1 (ردیف 1 · پرداخت‌کننده)")
+		self.assertEqual(rows[0][DETAILS], "حساب: AR · سند ثبت: SP-POST-1 (ردیف 1 · پرداخت‌کننده)")
 		self.assertTrue(all(type(cell) in (str, int, float) for row in rows for cell in row))
 
 	def test_filtered_export_adds_a_filtered_totals_row(self):
 		ledger = export_ledger([export_line()])
-		ledger.filter_totals = {"row_count": 1, "debit": 5, "credit": 0}
+		ledger.filter_totals = {"row_count": 1, "debit": 5, "credit": 0, "debit_base": 5, "credit_base": 0}
 		with decorated():
 			rows, _count = ledger_rows(ledger)
 		self.assertEqual([row.kind for row in rows], ["line", "opening", "total", "filtered", "closing"])
 		self.assertEqual(rows[3][2], "جمع 1 ردیف فیلترشده")
+		self.assertEqual((rows[3][DEBIT_BASE], rows[3][DEBIT]), (5, 5))
 		self.assertEqual(rows[-1][BALANCE], 15, "closing stays the whole ledger's")
 
 	def test_rows_in_another_currency_stay_with_a_visible_note(self):
@@ -636,16 +685,15 @@ class TestExports(unittest.TestCase):
 		self.assertIn("ارز سند: EUR 50", rows[0][3])
 		self.assertNotIn("ارز", rows[1][3])
 
-	def test_foreign_export_keeps_rate_and_company_currency_balance(self):
-		headers = ledger_headers("USD", "IRR", True)
-		self.assertEqual(headers[9], "نرخ ثبت")
-		self.assertEqual(headers[-1], "مانده IRR")
+	def test_foreign_export_shows_gl_amounts_in_both_currencies_without_a_rate(self):
+		headers = ledger_headers("USD", "IRR")
+		self.assertNotIn("نرخ ثبت", headers)
 		with decorated():
-			rows, _count = ledger_rows(export_ledger([export_line(rate=600000, balance_base=9_000_000)], is_foreign=True))
+			rows, _count = ledger_rows(export_ledger([export_line(debit_base=3_000_000, balance_base=9_000_000)], base_factor=600_000))
 		self.assertTrue(all(len(row) == len(headers) for row in rows))
-		self.assertEqual(rows[0][9], 600000)
-		self.assertEqual(rows[0][-1], 9_000_000)
-		self.assertEqual(rows[-1][-1], 15)
+		self.assertEqual([rows[0][DEBIT_BASE], rows[0][BALANCE_BASE], rows[0][DEBIT], rows[0][BALANCE]], [3_000_000, 9_000_000, 5, 15])
+		self.assertEqual((rows[0][RATE_BASE], rows[0][RATE]), ("", ""), "a GL line without a source rate stays empty")
+		self.assertEqual((rows[-1][BALANCE_BASE], rows[-1][BALANCE]), (9_000_000, 15))
 
 	def test_export_refuses_more_rows_than_the_limit_instead_of_truncating(self):
 		with decorated(), self.assertRaises(frappe.ValidationError):
@@ -747,30 +795,32 @@ class TestCurrencyNeverHidesRows(unittest.TestCase):
 		self.assertNotIn(f"{GL}.account_currency", scope.where)
 		self.assertIn("left join `tabAccount`", scope.source)
 
-	def test_overview_groups_by_party_and_account_only(self):
+	def test_overview_groups_by_party_and_account_currency_only(self):
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.gl_period import Period
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import grouped_sql
 
 		sql = grouped_sql(GLScope("Any Company", "Customer"), Period(None, "2026-12-31"), 0)
-		self.assertIn(f"group by {GL}.party, {GL}.account", sql)
-		self.assertNotIn(f"{GL}.account, {GL}.account_currency", sql)
+		self.assertIn(f"group by {GL}.party, {ACCOUNT_CURRENCY}", sql)
+		self.assertNotIn(f"group by {GL}.party, {GL}.account", sql, "same-currency accounts add into one row")
+		self.assertNotIn(f"{GL}.account_currency, ", sql.split("group by")[1], "GL rows are never split by their own currency")
 		self.assertIn("other_currency_rows", sql)
 
 	def test_site_currency_filters_partition_every_balance_row(self):
-		"""Read-only: per-currency overviews together list every party/account row."""
+		"""Read-only: per-currency overviews together list every party/currency row with the same amounts."""
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.gl_period import Period
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import overview_rows
 
 		period = Period(None, frappe.utils.today())
+
+		def key(row):
+			return (row["party"], row["currency"], row["closing"], row["closing_base"])
+
 		for company in frappe.get_all("Company", pluck="name"):
 			for party_type in ("Customer", "Supplier"):
 				every = overview_rows(GLScope(company, party_type), period, 0)
 				currencies = {row["currency"] for row in every}
 				split = [row for currency in currencies for row in overview_rows(GLScope(company, party_type, currency=currency), period, 0)]
-				self.assertEqual(
-					sorted((row["party"], row["account"]) for row in split),
-					sorted((row["party"], row["account"]) for row in every),
-				)
+				self.assertEqual(sorted(map(key, split)), sorted(map(key, every)))
 
 
 class TestExplorerPage(unittest.TestCase):
@@ -798,7 +848,8 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertNotIn("voucher_type: line", self.js)
 		self.assertIn('frappe.set_route(PAE_ROUTE, "ledger"', self.js)
 		self.assertIn('frappe.router.on("change"', self.js)
-		self.assertIn("account: row.account", self.js)
+		self.assertIn("currency: row.currency", self.js, "page 2 opens the party in the clicked account currency")
+		self.assertIn("account: line.account || state.account", self.js, "the drill-down uses the GL line's own account")
 
 	def test_page_uses_jalali_formatter_and_server_exports(self):
 		self.assertIn('fieldtype: "Date"', self.js)

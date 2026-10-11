@@ -253,11 +253,27 @@ body.sp-col-resizing {
 	text-decoration: underline;
 }
 
-.sp-party-explorer .sp-table td.sp-voucher {
+.sp-party-explorer .sp-voucher,
+.sp-party-explorer .sp-detail-account {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	overflow-wrap: normal;
+}
+
+.sp-party-explorer .sp-detail-account {
+	color: var(--text-muted, #6c7680);
+	font-size: 0.75rem;
+}
+
+.sp-party-explorer .sp-details-cell .sp-detail-btn {
+	margin-top: 2px;
+}
+
+.sp-party-explorer .sp-kpi-currency {
+	color: var(--text-muted, #6c7680);
+	font-size: 0.75rem;
+	font-weight: 500;
 }
 
 .sp-party-explorer .sp-voucher-detail {
@@ -371,4 +387,48 @@ body[data-route="party-account-explorer"] .main-section {
 [data-page-route="party-account-explorer"] .menu-btn-group {
 	display: inline-flex !important;
 	visibility: visible !important;
+}
+
+/* ---- filter bar: right to left, wrapping with the page width ---- */
+
+[data-page-route="party-account-explorer"] .page-form {
+	direction: rtl;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 0 10px;
+	padding: 8px 12px 0;
+}
+
+[data-page-route="party-account-explorer"] .page-form .frappe-control {
+	flex: 1 1 170px;
+	min-width: 150px;
+	max-width: 260px;
+	width: auto;
+	padding: 0;
+	margin-bottom: 8px;
+}
+
+[data-page-route="party-account-explorer"] .page-form .frappe-control[data-fieldtype="Check"] {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+@media (max-width: 768px) {
+	.sp-party-explorer {
+		padding-inline-start: 0;
+	}
+
+	.sp-party-explorer .sp-table-wrap {
+		max-height: none;
+	}
+
+	.sp-party-explorer .sp-kpis {
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	}
+
+	[data-page-route="party-account-explorer"] .page-form .frappe-control {
+		flex-basis: calc(50% - 10px);
+		max-width: none;
+	}
 }

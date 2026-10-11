@@ -13,7 +13,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account impor
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.gl_period import balance_values
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.invoice_presentation import (
 	amount_basis,
-	invoice_components,
+	both_currency_components,
 	with_running_balance,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import running_lines
@@ -59,6 +59,7 @@ def gl_line(debit=0, credit=0, opening=0, voucher_type="Sales Invoice", voucher_
 		"gl_entry": f"GL-{voucher_no}-{debit}-{credit}",
 		"voucher_type": voucher_type,
 		"voucher_no": voucher_no,
+		"account": "AR",
 		"debit": debit,
 		"credit": credit,
 		"debit_base": debit,
@@ -68,8 +69,8 @@ def gl_line(debit=0, credit=0, opening=0, voucher_type="Sales Invoice", voucher_
 	}
 
 
-def split(line, doc, items, voucher_type="Sales Invoice", **kwargs):
-	rows = invoice_components(line, voucher_type, doc, items, "", PRECISION, **kwargs)
+def split(line, doc, items, voucher_type="Sales Invoice", basis="", **kwargs):
+	rows = both_currency_components(line, voucher_type, doc, items, basis, PRECISION, PRECISION, **kwargs)
 	return with_running_balance(line, rows) if rows else rows
 
 
@@ -188,12 +189,23 @@ class TestInvoiceComponents(unittest.TestCase):
 		nameless = split(gl_line(debit=10), invoice(10), [item("B", 1, 10, item_name="")])
 		self.assertEqual(nameless[0]["title"], "B", "the code stands in only when there is no name")
 
-	def test_foreign_rows_carry_a_company_currency_balance_ending_on_the_gl_line(self):
+	def test_foreign_rows_take_company_currency_amounts_from_the_invoice(self):
 		line = gl_line(debit=300)
 		line.update(debit_base=180_000_000, balance_base=180_000_007)
-		rows = split(line, invoice(300), [item("A", 1, 100), item("B", 2, 100)])
-		self.assertEqual(rows[0]["balance_base"], flt(7 + 100 * 600_000, 9))
+		base = 180_000_000
+		doc = invoice(300, currency="USD", base_total=base, base_net_total=base, base_grand_total=base, base_rounded_total=base)
+		items = [item("A", 1, 100, base_rate=60_000_000, base_amount=60_000_000), item("B", 2, 100, base_rate=60_000_000, base_amount=120_000_000)]
+		rows = split(line, doc, items)
+		self.assertEqual([(row["rate"], row["debit"]) for row in rows], [(100, 100), (100, 200)])
+		self.assertEqual([(row["rate_base"], row["debit_base"]) for row in rows], [(60_000_000, 60_000_000), (60_000_000, 120_000_000)])
+		self.assertEqual(rows[0]["balance_base"], 60_000_007, "moved by the item's own base amount, not by a rate")
 		self.assertEqual(rows[-1]["balance_base"], 180_000_007, "the last row is the GL line's exact base balance")
+
+	def test_a_line_whose_base_amounts_do_not_add_up_stays_whole(self):
+		line = gl_line(debit=300)
+		line.update(debit_base=180_000_000, balance_base=180_000_000)
+		doc = invoice(300, currency="USD", base_total=170_000_000, base_net_total=170_000_000, base_grand_total=170_000_000, base_rounded_total=170_000_000)
+		self.assertIsNone(split(line, doc, [item("A", 3, 100, base_rate=56_666_666.67, base_amount=170_000_000)]))
 
 	def test_amount_basis_never_mixes_currencies(self):
 		self.assertEqual(amount_basis("USD", "USD", "IRR"), "")
@@ -204,8 +216,9 @@ class TestInvoiceComponents(unittest.TestCase):
 		doc = invoice(100, currency="USD", base_total=172_981_700, base_net_total=172_981_700, base_grand_total=172_981_700, base_rounded_total=172_981_700)
 		lines = [item("A", 1, 100, base_rate=172_981_700, base_amount=172_981_700)]
 		line = gl_line(debit=172_981_700)
-		rows = with_running_balance(line, invoice_components(line, "Sales Invoice", doc, lines, "base_", PRECISION))
+		rows = split(line, doc, lines, basis="base_")
 		self.assertEqual((rows[0]["rate"], rows[0]["debit"]), (172_981_700, 172_981_700))
+		self.assertEqual((rows[0]["rate_base"], rows[0]["debit_base"]), (172_981_700, 172_981_700))
 
 
 class TestLedgerReconciliation(unittest.TestCase):

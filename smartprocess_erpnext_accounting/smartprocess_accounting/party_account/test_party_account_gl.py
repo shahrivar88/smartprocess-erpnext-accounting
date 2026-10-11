@@ -91,7 +91,7 @@ class TestLedgerArithmetic(PartyAccountCase):
 		self.assertEqual((summary["opening"], summary["period_debit"], summary["period_credit"], summary["closing"]), (100, 40, 15, 125))
 		self.assertEqual(data["opening"], 100)
 		self.assertEqual([line["balance"] for line in data["rows"]], [140, 125])
-		row = next(entry for entry in self.overview_rows(hide_zero=0)[0] if entry["account"] == self.receivable)
+		row = next(entry for entry in self.overview_rows(hide_zero=0)[0] if entry["currency"] == self.base)
 		self.assertEqual((row["opening"], row["period_debit"], row["period_credit"], row["closing"]), (100, 40, 15, 125))
 
 	def test_same_day_rows_follow_creation_then_name(self):
@@ -109,30 +109,28 @@ class TestLedgerArithmetic(PartyAccountCase):
 		self.assertEqual((data["summary"]["opening"], data["summary"]["period_credit"], data["summary"]["closing"]), (0, 0, 5))
 		self.assertEqual(len(data["rows"]), 1)
 
-	def test_two_same_currency_accounts_stay_separate(self):
+	def test_same_currency_accounts_share_one_row(self):
 		other = self.second_account()
 		self.gl(self.receivable, "1999-05-01", debit=10)
 		self.gl(other, "1999-05-02", credit=3)
 		rows, _data = self.overview_rows(hide_zero=0)
-		by_account = {row["account"]: row["closing"] for row in rows}
-		self.assertEqual(by_account[self.receivable], 10)
-		self.assertEqual(by_account[other], -3)
-		self.assertEqual([line["debit"] for line in self.ledger()["rows"]], [10])
+		self.assertEqual([(row["currency"], row["closing"]) for row in rows], [(self.base, 7)])
+		lines = get_account_ledger(self.company, "Customer", self.customer, None, FROM, TO, currency=self.base)["rows"]
+		self.assertEqual([(line["account"], line["debit"], line["credit"]) for line in lines], [(self.receivable, 10, 0), (other, 0, 3)])
 		self.assertEqual([line["credit"] for line in self.ledger(account=other)["rows"]], [3])
 
 	def test_irr_and_usd_never_mix(self):
 		self.gl(self.receivable, "1999-06-01", debit=1000)
 		self.gl(self.target_receivable, "1999-06-01", debit=2, base=180000)
 		rows, data = self.overview_rows(hide_zero=0)
-		currencies = {row["account"]: row["currency"] for row in rows}
-		self.assertEqual(currencies[self.target_receivable], self.target)
-		usd = next(row for row in rows if row["account"] == self.target_receivable)
-		self.assertEqual((usd["closing"], usd["closing_base"]), (2, 180000))
-		irr_only, _data = self.overview_rows(hide_zero=0, currency=self.base)
-		self.assertNotIn(self.target_receivable, {row["account"] for row in irr_only})
-		ledger = self.ledger(account=self.target_receivable)
-		self.assertTrue(ledger["context"]["is_foreign"])
-		self.assertEqual(ledger["rows"][0]["rate"], 90000)
+		usd = next(row for row in rows if row["currency"] == self.target)
+		self.assertEqual((usd["period_debit"], usd["closing"], usd["period_debit_base"], usd["closing_base"]), (2, 2, 180000, 180000))
+		self.assertEqual({total["currency"] for total in data["totals"]}, {self.base, self.target})
+		base_only, _data = self.overview_rows(hide_zero=0, currency=self.base)
+		self.assertEqual([row["currency"] for row in base_only], [self.base])
+		line = self.ledger(account=self.target_receivable)["rows"][0]
+		self.assertEqual((line["debit"], line["debit_base"]), (2, 180000))
+		self.assertNotIn("rate", line, "no rate is derived from GL amounts")
 
 	def test_hide_zero_and_search_by_name(self):
 		self.gl(self.receivable, "1999-07-01", debit=10)
@@ -164,14 +162,13 @@ class TestPagination(PartyAccountCase):
 		self.assertEqual((seen, pages, previous_closing), (total, 11, 7 + total))
 
 	def test_overview_pages_keep_independent_totals(self):
-		other = self.second_account()
 		self.gl(self.receivable, "1999-09-01", debit=10)
-		self.gl(other, "1999-09-01", debit=5)
+		self.gl(self.target_receivable, "1999-09-01", debit=5, base=450000)
 		first = get_balance_overview(self.company, "Customer", FROM, TO, party=self.customer, hide_zero=0, page=1, page_length=1)
 		second = get_balance_overview(self.company, "Customer", FROM, TO, party=self.customer, hide_zero=0, page=2, page_length=1)
 		self.assertTrue(first["has_more"])
 		self.assertEqual(first["totals"], second["totals"])
-		self.assertNotEqual(first["rows"][0]["account"], second["rows"][0]["account"])
+		self.assertNotEqual(first["rows"][0]["currency"], second["rows"][0]["currency"])
 
 
 class TestPermissions(PartyAccountCase):
@@ -229,7 +226,7 @@ class TestPermissions(PartyAccountCase):
 		user = self.restricted_user(self.receivable)
 		frappe.set_user(user)
 		rows, data = self.overview_rows(hide_zero=0)
-		self.assertEqual({row["account"] for row in rows}, {self.receivable})
+		self.assertEqual([row["closing"] for row in rows], [10], "only the permitted account adds into the currency row")
 		self.assertEqual(sum(total["closing"] for total in data["totals"]), sum(row["closing"] for row in data["rows"]))
 		hidden = self.ledger(account=other)
 		self.assertEqual((hidden["summary"]["closing"], hidden["rows"]), (0, []))
@@ -280,7 +277,7 @@ class TestDrillDown(PartyAccountCase):
 		target = self.conversion_line(conversion, self.target_customer, self.target_receivable)
 		self.assertEqual((target["voucher_label"], target["document"]["name"]), ("تبدیل ارز", conversion.name))
 		self.assertTrue(target["detail_ref"].endswith("مقصد"))
-		self.assertTrue(target["rate"])
+		self.assertTrue(target["debit_base"] or target["credit_base"])
 		detail = get_document_detail(target["gl_entry"], self.company, "Customer", self.target_customer, self.target_receivable)
 		self.assertEqual(detail["resolver"], "receipt_conversion")
 		self.assertEqual(len([row for row in detail["sections"][0]["rows"] if row["is_current"]]), 1)

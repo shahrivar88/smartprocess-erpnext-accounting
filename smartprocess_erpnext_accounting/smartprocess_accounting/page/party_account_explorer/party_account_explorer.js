@@ -6,7 +6,7 @@
 
 const PAE_API = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account.";
 const PAE_ROUTE = "party-account-explorer";
-const PAE_LEDGER_KEYS = ["company", "party_type", "party", "account", "from_date", "to_date"];
+const PAE_LEDGER_KEYS = ["company", "party_type", "party", "currency", "account", "from_date", "to_date"];
 const PAE_PAGE_LENGTH = 100;
 const PAE_EMPTY = "-";
 
@@ -90,21 +90,6 @@ class PartyAccountExplorer {
 			fieldtype: "Data",
 			change: overview_change,
 		});
-		this.account = this.page.add_field({
-			fieldname: "account",
-			label: __("حساب"),
-			fieldtype: "Link",
-			options: "Account",
-			get_query: () => ({ filters: { company: this.company.get_value(), is_group: 0 } }),
-			change: overview_change,
-		});
-		this.currency = this.page.add_field({
-			fieldname: "currency",
-			label: __("ارز حساب"),
-			fieldtype: "Select",
-			options: [""],
-			change: overview_change,
-		});
 		this.from_date = this.page.add_field({
 			fieldname: "from_date",
 			label: __("از تاریخ"),
@@ -117,6 +102,21 @@ class PartyAccountExplorer {
 			fieldtype: "Date",
 			default: frappe.datetime.get_today(),
 			change: () => this.on_period_change(),
+		});
+		this.account = this.page.add_field({
+			fieldname: "account",
+			label: __("حساب معین (اختیاری)"),
+			fieldtype: "Link",
+			options: "Account",
+			get_query: () => ({ filters: { company: this.company.get_value(), is_group: 0 } }),
+			change: overview_change,
+		});
+		this.currency = this.page.add_field({
+			fieldname: "currency",
+			label: __("ارز حساب"),
+			fieldtype: "Select",
+			options: [""],
+			change: overview_change,
 		});
 		this.hide_zero = this.page.add_field({
 			fieldname: "hide_zero",
@@ -223,7 +223,7 @@ class PartyAccountExplorer {
 		}
 		if (route[1] === "ledger") {
 			const state = this.route_state();
-			if (state.party && state.account && state.company && state.party_type) {
+			if (state.party && (state.currency || state.account) && state.company && state.party_type) {
 				this.show_ledger(state);
 				return;
 			}
@@ -327,46 +327,13 @@ class PartyAccountExplorer {
 	render_overview() {
 		const data = this.overview;
 		const company_currency = data.company_currency;
-		const show_base = data.rows.some((row) => row.currency !== company_currency);
-		const columns = pae_ledger_view.overview_columns(show_base, company_currency);
-		const cell = (key, row) => {
-			switch (key) {
-				case "party":
-					return `<td><div class="sp-party-name">${pae_format.text(row.party_name)}</div><div class="sp-party-id">${pae_format.text(row.party)}</div></td>`;
-				case "account":
-					return `<td>${pae_format.text(row.account)}</td>`;
-				case "currency":
-					return `<td>${pae_ledger_view.currency_cell(row.currency, row.other_currency_rows)}</td>`;
-				case "opening":
-				case "closing":
-					return `<td class="${key === "closing" ? "sp-strong" : ""}">${pae_format.amount(row[key], row.currency, true)}</td>`;
-				case "period_debit":
-				case "period_credit":
-					return `<td>${pae_format.amount(row[key], row.currency)}</td>`;
-				case "nature":
-					return `<td>${pae_format.text(row.nature)}</td>`;
-				case "closing_base":
-					return `<td class="text-muted">${pae_format.amount(row.closing_base, company_currency, true)}</td>`;
-				default:
-					return "<td></td>";
-			}
-		};
+		const columns = pae_ledger_view.overview_columns();
+		const cells = (row) => columns.map((column) => pae_ledger_view.overview_cell(column.key, row, company_currency)).join("");
 		const rows = data.rows
-			.map((row, index) => `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش گردش حساب")}">${columns.map((column) => cell(column.key, row)).join("")}</tr>`)
+			.map((row, index) => `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش ریزگردش")}">${cells(row)}</tr>`)
 			.join("");
 		const totals = (data.totals || [])
-			.map(
-				(total) => `<tr class="sp-total-row">
-					<td colspan="2">${__("جمع")} (${total.row_count} ${__("ردیف")})</td>
-					<td>${pae_format.text(total.currency)}</td>
-					<td>${pae_format.amount(total.opening, total.currency, true)}</td>
-					<td>${pae_format.amount(total.period_debit, total.currency)}</td>
-					<td>${pae_format.amount(total.period_credit, total.currency)}</td>
-					<td>${pae_format.amount(total.closing, total.currency, true)}</td>
-					<td>${pae_format.text(total.nature)}</td>
-					${show_base ? `<td>${pae_format.amount(total.closing_base, company_currency, true)}</td>` : ""}
-				</tr>`
-			)
+			.map((total) => `<tr class="sp-total-row">${cells({ ...total, party_name: `${__("جمع")} (${total.row_count} ${__("ردیف")})` })}</tr>`)
 			.join("");
 		const period = `${pae_format.date(data.from_date) || "—"} ${__("تا")} ${pae_format.date(data.to_date)}`;
 		this.$overview.html(`
@@ -380,7 +347,7 @@ class PartyAccountExplorer {
 				</table>
 			</div>
 			${this.pager_html(data.page > 1, data.has_more, data.page)}
-			<p class="text-muted small">${__("برای دیدن گردش، روی ردیف طرف حساب کلیک کنید. ارز هر ردیف، ارز خود حساب است و هیچ ردیفی به خاطر ارز حذف نمی‌شود.")}</p>
+			<p class="text-muted small">${__("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.")}</p>
 		`);
 		this.prefs.attach(this.$overview.find("table.sp-overview-table"), "overview");
 	}
@@ -404,7 +371,8 @@ class PartyAccountExplorer {
 			company: filters.company,
 			party_type: filters.party_type,
 			party: row.party,
-			account: row.account,
+			currency: row.currency,
+			account: filters.account,
 			from_date: filters.from_date,
 			to_date: filters.to_date,
 		});
@@ -486,8 +454,8 @@ class PartyAccountExplorer {
 			${pae_ledger_view.toolbar(this.filters)}
 			<div class="sp-table-wrap sp-ledger-wrap"></div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
-			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}
-				${__("«سند ثبت» سندی است که ردیف دفتر کل را ثبت کرده است: ثبت حسابداری (SP-POST) برای رسید و پرداخت، سند روزنامه، یا خود فاکتور/سند.")}</p>
+			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها در هر دو ارز دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}
+				${__("ستون «جزئیات» حساب معین هر ردیف و سندی را که آن را ثبت کرده است نشان می‌دهد.")}</p>
 		`);
 		this.render_ledger_table();
 		if (focused) {
@@ -509,7 +477,6 @@ class PartyAccountExplorer {
 					label: this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره"),
 					date: this.page_index ? null : context.from_date,
 					balance: data.opening,
-					nature: data.opening_nature,
 					balance_base: data.opening_base,
 				})
 			);
@@ -525,6 +492,8 @@ class PartyAccountExplorer {
 					label: __("جمع {0} ردیف فیلترشده", [data.filter_totals.row_count]),
 					debit: data.filter_totals.debit,
 					credit: data.filter_totals.credit,
+					debit_base: data.filter_totals.debit_base,
+					credit_base: data.filter_totals.credit_base,
 				})
 			);
 		}
@@ -533,8 +502,9 @@ class PartyAccountExplorer {
 				label: __("جمع گردش کل دوره"),
 				debit: data.summary.period_debit,
 				credit: data.summary.period_credit,
+				debit_base: data.summary.period_debit_base,
+				credit_base: data.summary.period_credit_base,
 				balance: data.summary.closing,
-				nature: data.summary.nature,
 				balance_base: data.summary.closing_base,
 			})
 		);
@@ -546,13 +516,14 @@ class PartyAccountExplorer {
 			<tfoot>${footer.join("")}</tfoot>
 		</table>`);
 		this.prefs.attach($wrap.find("table"), "ledger");
-		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.filters, data.filter_totals, context.currency));
+		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.filters, data.filter_totals, context.currency, context.company_currency));
 	}
 
 	// ---- document details dialog ----
 
 	show_detail(gl_entry) {
 		const state = this.ledger_state;
+		const line = (this.ledger.rows || []).find((row) => row.gl_entry === gl_entry) || {};
 		const $body = $('<div class="sp-party-explorer sp-detail"></div>').html(pae_detail_view.loading());
 		const dialog = new frappe.ui.Dialog({ title: __("جزئیات سند"), size: "extra-large" });
 		$body.appendTo(dialog.body);
@@ -572,7 +543,7 @@ class PartyAccountExplorer {
 				company: state.company,
 				party_type: state.party_type,
 				party: state.party,
-				account: state.account,
+				account: line.account || state.account,
 			})
 			.then((detail) => {
 				dialog.set_title(pae_detail_view.title(detail));

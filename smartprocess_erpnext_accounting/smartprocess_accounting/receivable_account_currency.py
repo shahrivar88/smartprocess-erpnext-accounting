@@ -10,6 +10,7 @@ selects, replaces or corrects it. Draft saves and cancellations are not checked.
 
 import frappe
 from erpnext.accounts.doctype.account.account import get_account_currency
+from erpnext.accounts.party import get_party_gle_currency
 from frappe import _
 from frappe.utils import cint, escape_html
 
@@ -24,6 +25,11 @@ MSG_NO_ACCOUNT = (
 MSG_MISMATCH = (
 	"ارز حساب دریافتنی «{0}» {1} است، اما ارز مشتری «{2}» {3} است. "
 	"پیش از ثبت نهایی، در فیلد حساب دریافتنی (Debit To) حسابی با ارز {3} انتخاب کنید."
+)
+MSG_LEDGER_LOCK = (
+	"مشتری «{0}» در شرکت «{1}» از قبل سند حسابداری با ارز {2} دارد و ERPNext برای او فقط حساب دریافتنی با ارز {2} را می‌پذیرد، "
+	"اما ارز مشتری {3} است. برای فاکتورهای {3} از مشتری جداگانه‌ای استفاده کنید، "
+	"یا اگر حساب این مشتری باید {2} بماند، ارز صورتحساب (Billing Currency) آن را {2} کنید."
 )
 
 
@@ -49,6 +55,15 @@ def validate_receivable_account_currency(doc, method=None):
 
 	actual = get_account_currency(doc.debit_to)
 	if actual != expected:
+		# ERPNext's GL Entry accepts only the currency of the Customer's existing entries.
+		ledger = get_party_gle_currency("Customer", doc.customer, doc.company)
+		if ledger and ledger != expected:
+			frappe.throw(
+				_(MSG_LEDGER_LOCK).format(
+					escape_html(doc.customer_name or doc.customer), escape_html(doc.company), ledger, expected
+				),
+				title=_(MSG_TITLE),
+			)
 		frappe.throw(
 			_(MSG_MISMATCH).format(
 				escape_html(doc.debit_to), actual, escape_html(doc.customer_name or doc.customer), expected

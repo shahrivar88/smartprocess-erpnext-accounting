@@ -37,16 +37,19 @@ function invoice_line(extra) {
 		document: { doctype: "Sales Invoice", name: "ACC-SINV-2026-00012" },
 		voucher_no: "ACC-SINV-2026-00012",
 		voucher: { doctype: "Sales Invoice", name: "ACC-SINV-2026-00012" },
+		account: "Debtors - SP",
 		remarks: "No Remarks",
 		debit: 215000000,
 		credit: 0,
+		debit_base: 215000000,
+		credit_base: 0,
 		balance: -485000000,
 		nature: "بستانکار",
 		balance_base: -485000000,
 		detail_ref: null,
 		components: [
-			{ kind: "item", title: "DS-2CD2347G2-L (2.8mm)", item_code: "CAM-1", description: "", qty: 10, rate: 21000000, debit: 210000000, credit: 0, balance: -490000000, nature: "بستانکار" },
-			{ kind: "tax", title: "مالیات و عوارض", description: "", qty: null, rate: null, debit: 5000000, credit: 0, balance: -485000000, nature: "بستانکار" },
+			{ kind: "item", title: "DS-2CD2347G2-L (2.8mm)", item_code: "CAM-1", description: "", qty: 10, rate: 21000000, rate_base: 21000000, debit: 210000000, credit: 0, debit_base: 210000000, credit_base: 0, balance: -490000000, nature: "بستانکار", balance_base: -490000000 },
+			{ kind: "tax", title: "مالیات و عوارض", description: "", qty: null, rate: null, rate_base: null, debit: 5000000, credit: 0, debit_base: 5000000, credit_base: 0, balance: -485000000, nature: "بستانکار", balance_base: -485000000 },
 		],
 		...extra,
 	};
@@ -79,24 +82,34 @@ function invoice_line(extra) {
 	assert.equal(group.rows[0].qty * group.rows[0].rate, group.rows[0].debit);
 	assert.deepEqual([group.rows[0].first, group.rows[1].last], [true, true]);
 
+	const base_total = group.rows.reduce((sum, row) => sum + row.debit_base, 0);
+	assert.equal(base_total, 215000000, "split rows add up to the GL base debit too");
+	assert.equal(group.rows[0].rate_base, 21000000);
+
 	const html = pae_ledger_view.group_rows(group, pae_ledger_view.columns(CONTEXT), CONTEXT);
-	assert.equal((html.match(/href="\/desk\/sales-invoice\/ACC-SINV-2026-00012"/g) || []).length, 4, "document and posting links repeat on every row");
+	assert.equal((html.match(/href="\/desk\/sales-invoice\/ACC-SINV-2026-00012"/g) || []).length, 3, "the document repeats on every row, the posting voucher once in «جزئیات»");
 	assert.equal((html.match(/sp-detail-btn/g) || []).length, 1, "one details button per GL line");
+	assert.equal((html.match(/Debtors - SP/g) || []).length, 2, "the GL line's account is named once in «جزئیات» (text and tooltip)");
 	assert.equal(html.includes("CAM-1"), false, "no item code in the main table");
 	assert.equal(html.includes("عدد"), false, "no unit of measure in the main table");
 	assert.equal(html.includes("aria-expanded"), false, "no inline expansion");
 }
 
-// «نوع برگه» column: «رسید - SP-REC-…» where only the number links.
+// Page 2 columns, in report order: plain columns are GL base amounts, «ارزی» ones GL account-currency amounts.
 {
 	const columns = pae_ledger_view.columns(CONTEXT);
+	assert.deepEqual(
+		columns.map((column) => column.label),
+		["ردیف", "تاریخ", "نوع برگه", "شرح", "عنوان قلم", "مقدار", "فی", "بدهکار", "بستانکار", "مانده", "فی ارزی", "بدهکار ارزی", "بستانکار ارزی", "مانده ارزی", "جزئیات"]
+	);
+	assert.equal(columns.some((column) => column.key === "posting_rate"), false, "no rate derived from GL amounts");
 	assert.equal(columns.find((column) => column.key === "document").label, "نوع برگه");
 	assert.equal(columns.some((column) => column.key === "detail_ref"), false);
 	assert.equal(columns.some((column) => column.sort), false, "no visual sort: rows stay chronological");
 	assert.equal(pae_ledger_view.head(columns).includes("data-sort"), false);
 }
 
-// «سند ثبت»: the GL voucher (SP-POST / JE / invoice), linked when readable, with the row reference below.
+// «جزئیات»: the GL voucher (SP-POST / JE / invoice), linked when readable, with the row reference below.
 {
 	const receipt = {
 		gl_entry: "GL-9",
@@ -113,11 +126,12 @@ function invoice_line(extra) {
 		components: [],
 	};
 	const [group] = pae_ledger_rows.groups([receipt], 0, true);
-	const cell = pae_ledger_view.cell("voucher", group.rows[0], CONTEXT);
+	const cell = pae_ledger_view.cell("actions", group.rows[0], CONTEXT);
 	assert.match(cell, /href="\/desk\/smartprocess-accounting-posting\/SP-POST-2026-00007"[^>]*>SP-POST-2026-00007<\/a>/);
 	assert.match(cell, /sp-voucher-detail">ردیف 1 · پرداخت‌کننده/);
+	assert.match(cell, /sp-detail-btn/);
 	const hidden = pae_ledger_rows.groups([{ ...receipt, voucher: null }], 0, true)[0];
-	const plain = pae_ledger_view.cell("voucher", hidden.rows[0], CONTEXT);
+	const plain = pae_ledger_view.cell("actions", hidden.rows[0], CONTEXT);
 	assert.equal(plain.includes("<a "), false, "an unreadable posting stays plain text");
 	assert.match(plain, /SP-POST-2026-00007/);
 	assert.match(pae_ledger_view.cell("document", group.rows[0], CONTEXT), /رسید<\/span> - <a [^>]*>SP-REC-2026-00019<\/a>/);
@@ -128,9 +142,10 @@ function invoice_line(extra) {
 	assert.equal(pae_ledger_rows.is_filtered({ search: " ", side: "" }), false);
 	assert.equal(pae_ledger_rows.is_filtered({ search: "", side: "debit" }), true);
 	assert.equal(pae_ledger_view.status({ search: "", side: "" }, null, "IRR"), "");
-	const status = pae_ledger_view.status({ search: "2CD", side: "" }, { row_count: 3, debit: 215, credit: 0 }, "IRR");
+	const status = pae_ledger_view.status({ search: "2CD", side: "" }, { row_count: 3, debit: 215, credit: 0, debit_base: 9000, credit_base: 0 }, "USD", "IRR");
 	assert.match(status, /3 ردیف دفتر کل مطابق فیلتر/);
 	assert.match(status, />215</);
+	assert.match(status, />9000</);
 	assert.match(status, /به ترتیب زمانی/);
 	assert.equal(pae_ledger_view.toolbar({ search: "a\"b", side: "credit" }).includes('value="a&quot;b"'), true);
 }
@@ -162,7 +177,8 @@ function invoice_line(extra) {
 // Opening and totals rows put the label in the document column.
 {
 	const columns = pae_ledger_view.columns(CONTEXT);
-	const html = pae_ledger_view.balance_row("sp-total-row", columns, CONTEXT, { label: "جمع گردش کل دوره", debit: 5, credit: 0, balance: 15, nature: "بدهکار" });
+	const values = { label: "جمع گردش کل دوره", debit: 5, credit: 0, balance: 15, debit_base: 500, credit_base: 0, balance_base: 1500 };
+	const html = pae_ledger_view.balance_row("sp-total-row", columns, CONTEXT, values);
 	const cells = html.match(/<td[^>]*>.*?<\/td>/g);
 	const at = (key) => cells[columns.findIndex((column) => column.key === key)];
 	assert.equal(cells.length, columns.length);
@@ -170,15 +186,22 @@ function invoice_line(extra) {
 	assert.match(at("debit"), />5</);
 	assert.match(at("credit"), />0</);
 	assert.match(at("balance"), />15</);
+	assert.match(at("debit_base"), />500</);
+	assert.match(at("balance_base"), />1500</);
 }
 
-// The foreign view keeps the posting rate and the company-currency balance.
+// Page 1: party name only, the account currency, then base and account-currency columns; totals per currency.
 {
-	const foreign = { currency: "USD", company_currency: "IRR", is_foreign: true };
-	const keys = pae_ledger_view.columns(foreign).map((column) => column.key);
-	assert.ok(keys.includes("posting_rate"));
-	assert.equal(keys[keys.length - 2], "balance_base");
-	assert.equal(pae_ledger_view.columns(CONTEXT).some((column) => column.key === "balance_base"), false);
+	const columns = pae_ledger_view.overview_columns();
+	assert.deepEqual(
+		columns.map((column) => column.label),
+		["طرف حساب", "ارز حساب", "گردش بدهکار", "گردش بستانکار", "مانده", "گردش بدهکار ارزی", "گردش بستانکار ارزی", "مانده ارزی"]
+	);
+	const row = { party: "CUST-0001", party_name: "Customer One", currency: "USD", period_debit_base: 900, period_credit_base: 0, closing_base: 900, period_debit: 10, period_credit: 0, closing: 10 };
+	const html = columns.map((column) => pae_ledger_view.overview_cell(column.key, row, "IRR")).join("");
+	assert.match(html, /Customer One/);
+	assert.equal(html.includes("CUST-0001"), false, "the party code is not repeated under the name");
+	assert.equal(columns.some((column) => column.key === "account"), false, "no account column on page 1");
 }
 
 // Column widths: cleaned on load, clamped, saved per table without dropping the others.

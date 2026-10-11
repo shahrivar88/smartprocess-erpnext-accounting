@@ -18,7 +18,7 @@ from frappe import _
 from frappe.query_builder.functions import Count
 
 from .invoice_lines import plain_text
-from .invoice_presentation import amount_basis, invoice_components, with_running_balance
+from .invoice_presentation import amount_basis, both_currency_components, money_row, with_running_balance
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, RECEIPT_CONVERSION, voucher_label
 
 POSTING_ROW = "SmartProcess Accounting Posting Row"
@@ -111,11 +111,49 @@ def describe_invoice(voucher_type, lines, include_items, context=None):
 			continue
 		line["voucher_label"] = voucher_label(voucher_type, invoice.is_return)
 		line["document"] = line["voucher"] = own_voucher(line)
-		if sources and invoice.name not in split:
+		key = (invoice.name, line["account"])
+		if sources and key not in split:
 			rows = invoice_line_components(line, voucher_type, invoice, sources, context)
 			if rows:
 				line["components"] = with_running_balance(line, rows)
-				split.add(invoice.name)
+				split.add(key)
+
+
+def describe_payment_entry(voucher_type, lines, include_items, context=None):
+	"""The allocated invoices follow the GL line as text rows; they carry no amount."""
+	describe_generic(voucher_type, lines, include_items, context)
+	readable = list({line["voucher_no"] for line in lines if line["document"]})
+	if not include_items or not context or not readable:
+		return
+	references = defaultdict(list)
+	for row in frappe.get_all(
+		"Payment Entry Reference",
+		filters={"parenttype": voucher_type, "parent": ["in", readable]},
+		fields=["parent", "reference_doctype", "reference_name"],
+		order_by="parent asc, idx asc",
+	):
+		references[row.parent].append(row)
+	shown = set()
+	for line in lines:
+		allocated = references.get(line["voucher_no"])
+		if not allocated or line["voucher_no"] in shown:
+			continue
+		shown.add(line["voucher_no"])
+		rows = [{**money_row("line", "", "debit", 0), "description": line["remarks"] or "", **gl_amounts(line)}]
+		rows += [reference_row(row) for row in allocated]
+		with_running_balance(line, rows)
+		for row in rows[1:]:
+			row.update(balance=None, balance_base=None, nature=None)
+		line["components"] = rows
+
+
+def gl_amounts(line):
+	return {field: line[field] for field in ("debit", "credit", "debit_base", "credit_base")}
+
+
+def reference_row(row):
+	label = voucher_label(row.reference_doctype) or _(row.reference_doctype)
+	return {**money_row("reference", f"{_('تخصیص به')} {label} {row.reference_name}", "debit", 0), "debit_base": 0, "credit_base": 0}
 
 
 def invoice_sources(voucher_type, names, context):
@@ -126,6 +164,7 @@ def invoice_sources(voucher_type, names, context):
 		"inclusive_tax": inclusive_tax_invoices(voucher_type, names),
 		"party_lines": party_line_counts(voucher_type, names, context),
 		"precision": frappe.get_precision("GL Entry", "debit_in_account_currency", currency=context["currency"]),
+		"base_precision": frappe.get_precision("GL Entry", "debit", currency=context["company_currency"]),
 	}
 
 
@@ -133,15 +172,16 @@ def invoice_line_components(line, voucher_type, invoice, sources, context):
 	basis = amount_basis(invoice.currency, context["currency"], context["company_currency"])
 	if basis is None:
 		return None
-	return invoice_components(
+	return both_currency_components(
 		line,
 		voucher_type,
 		invoice,
 		sources["items"].get(invoice.name, []),
 		basis,
 		sources["precision"],
+		sources["base_precision"],
 		inclusive_tax=invoice.name in sources["inclusive_tax"],
-		only_line=sources["party_lines"].get(invoice.name) == 1,
+		only_line=sources["party_lines"].get((invoice.name, line["account"])) == 1,
 	)
 
 
@@ -172,24 +212,23 @@ def inclusive_tax_invoices(voucher_type, names):
 
 
 def party_line_counts(voucher_type, names, context):
-	"""Live GL lines per invoice on this exact Company + Party + Account."""
+	"""Live GL lines per (invoice, account) of this exact Company + Party."""
 	gle = frappe.qb.DocType("GL Entry")
 	rows = (
 		frappe.qb.from_(gle)
-		.select(gle.voucher_no, Count(gle.name))
+		.select(gle.voucher_no, gle.account, Count(gle.name))
 		.where(
 			(gle.voucher_type == voucher_type)
 			& gle.voucher_no.isin(names)
 			& (gle.company == context["company"])
 			& (gle.party_type == context["party_type"])
 			& (gle.party == context["party"])
-			& (gle.account == context["account"])
 			& (gle.is_cancelled == 0)
 		)
-		.groupby(gle.voucher_no)
+		.groupby(gle.voucher_no, gle.account)
 		.run()
 	)
-	return dict(rows)
+	return {(voucher_no, account): count for voucher_no, account, count in rows}
 
 
 def readable_rows(doctype, names, fields=None):
@@ -222,5 +261,6 @@ def row_reference(number, role):
 DESCRIBERS = {
 	ACCOUNTING_POSTING: describe_posting,
 	RECEIPT_CONVERSION: describe_conversion,
+	"Payment Entry": describe_payment_entry,
 	**{doctype: describe_invoice for doctype in INVOICE_TYPES},
 }

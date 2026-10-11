@@ -20,7 +20,7 @@ ACCOUNTS = {"Debtors USD": "USD", "Debtors IRR": "IRR"}
 
 
 class TestReceivableAccountCurrency(unittest.TestCase):
-	def submit(self, customer, account, enabled=True):
+	def submit(self, customer, account, enabled=True, ledger=None):
 		doc = frappe._dict(customer=customer, customer_name=customer, company="A", debit_to=account)
 		stored = {rac.FLAG: "1"} if enabled else {}
 		with (
@@ -28,6 +28,7 @@ class TestReceivableAccountCurrency(unittest.TestCase):
 			patch("frappe.db.get_value", side_effect=lambda _doctype, name, _field: CUSTOMERS[name]) as customer_lookup,
 			patch("frappe.get_cached_value", return_value=COMPANY_CURRENCY),
 			patch.object(rac, "get_account_currency", side_effect=ACCOUNTS.get),
+			patch.object(rac, "get_party_gle_currency", return_value=ledger),
 		):
 			try:
 				rac.validate_receivable_account_currency(doc)
@@ -35,11 +36,12 @@ class TestReceivableAccountCurrency(unittest.TestCase):
 				self.assertEqual(doc.debit_to, account, "the account is never selected, replaced or corrected")
 		return customer_lookup
 
-	def assert_blocked(self, customer, account, *fragments):
+	def assert_blocked(self, customer, account, *fragments, ledger=None):
 		with self.assertRaises(frappe.ValidationError) as caught:
-			self.submit(customer, account)
+			self.submit(customer, account, ledger=ledger)
 		for fragment in fragments:
 			self.assertIn(fragment, str(caught.exception))
+		return str(caught.exception)
 
 	def test_matching_currencies_submit(self):
 		self.submit("C-USD", "Debtors USD")
@@ -49,6 +51,16 @@ class TestReceivableAccountCurrency(unittest.TestCase):
 		mismatch = rac.MSG_MISMATCH.split("«")[0]
 		self.assert_blocked("C-USD", "Debtors IRR", mismatch, "Debtors IRR", "IRR", "USD")
 		self.assert_blocked("C-IRR", "Debtors USD", mismatch, "Debtors USD", "USD", "IRR")
+
+	def test_a_ledger_in_another_currency_explains_the_erpnext_lock(self):
+		lock = "ERPNext برای او فقط حساب دریافتنی"
+		self.assertIn(lock, rac.MSG_LEDGER_LOCK)
+		message = self.assert_blocked("C-USD", "Debtors IRR", lock, "C-USD", "سند حسابداری با ارز IRR", ledger="IRR")
+		self.assertNotIn(rac.MSG_MISMATCH.split("«")[0], message)
+		# A ledger in the Customer's own currency is not a lock: the ordinary guidance applies.
+		self.assertNotIn(lock, self.assert_blocked("C-USD", "Debtors IRR", "با ارز USD انتخاب کنید", ledger="USD"))
+		# The check passes a matching account; ERPNext's own GL check then decides.
+		self.submit("C-USD", "Debtors USD", ledger="IRR")
 
 	def test_empty_customer_currency_uses_the_company_currency(self):
 		self.submit("C-EMPTY", "Debtors IRR")

@@ -7,7 +7,9 @@ The GL line stays the authoritative amount. Its main side is split into one row
 per item plus discount, tax and rounding rows; its other side (a merged write-off
 or payment) into write-off and payment rows. A final «تعدیلات سند» row takes any
 remainder, so on each side the rows add up exactly to the GL debit or credit and
-the invoice moves the running balance once."""
+the invoice moves the running balance once. The account-currency rows and the
+company-currency rows are built separately from the invoice's own amount fields
+and matched by row; no exchange rate is applied."""
 
 from frappe.utils import flt
 
@@ -141,28 +143,60 @@ def money_row(kind, title, side, amount):
 		"description": "",
 		"qty": None,
 		"rate": None,
+		"rate_base": None,
 		"debit": amount if side == "debit" else 0,
 		"credit": amount if side == "credit" else 0,
 	}
 
 
-def with_running_balance(line, rows):
-	"""Balance after each row; the last one equals the GL line's own balance.
+def both_currency_components(line, voucher_type, invoice, items, basis, precision, base_precision, **options):
+	"""Rows in the account currency and in the company currency, each from the invoice's
+	own amounts; None (the line stays whole) unless both add up to their GL amounts."""
+	rows = invoice_components(line, voucher_type, invoice, items, basis, precision, **options)
+	base_line = {"debit": line["debit_base"], "credit": line["credit_base"]}
+	base_rows = invoice_components(base_line, voucher_type, invoice, items, "base_", base_precision, **options)
+	if not rows or not base_rows:
+		return None
+	return merge_currencies(rows, base_rows)
 
-	The company-currency balance moves at the GL line's own posting ratio and the last
-	row is set to the GL line's exact base balance, so no rounding drift survives."""
+
+def merge_currencies(rows, base_rows):
+	"""One row per item/adjustment with its account-currency and company-currency
+	amounts side by side; a row present in one currency only stays empty in the other."""
+	base_by_key = {row_key(row, index): row for index, row in enumerate(base_rows)}
+	merged = []
+	for index, row in enumerate(rows):
+		base = base_by_key.pop(row_key(row, index), None)
+		merged.append(with_base(row, base))
+	for row in base_by_key.values():
+		merged.append(with_base({**row, "debit": 0, "credit": 0, "rate": None}, row))
+	return merged
+
+
+def row_key(row, index):
+	if row["kind"] == "item":
+		return ("item", index)
+	return (row["kind"], "debit" if row["debit"] else "credit")
+
+
+def with_base(row, base):
+	return {
+		**row,
+		"rate_base": base["rate"] if base else None,
+		"debit_base": base["debit"] if base else 0,
+		"credit_base": base["credit"] if base else 0,
+	}
+
+
+def with_running_balance(line, rows):
+	"""Balance after each row in both currencies, each moved only by that currency's
+	own row amounts; on each side the rows add up to the GL line, so the last row
+	carries the GL line's own balances."""
 	balance = flt(line["balance"] - flt(line["debit"]) + flt(line["credit"]), 9)
-	amount = flt(line["debit"]) + flt(line["credit"])
-	base_amount = flt(line.get("debit_base")) + flt(line.get("credit_base"))
-	ratio = base_amount / amount if amount and line.get("balance_base") is not None else None
-	balance_base = (
-		flt(line["balance_base"] - flt(line.get("debit_base")) + flt(line.get("credit_base")), 9) if ratio is not None else None
-	)
+	balance_base = flt(line["balance_base"] - flt(line["debit_base"]) + flt(line["credit_base"]), 9)
 	for row in rows:
-		movement = row["debit"] - row["credit"]
-		balance = flt(balance + movement, 9)
-		if ratio is not None:
-			balance_base = flt(balance_base + movement * ratio, 9)
+		balance = flt(balance + row["debit"] - row["credit"], 9)
+		balance_base = flt(balance_base + row["debit_base"] - row["credit_base"], 9)
 		row.update(balance=balance, nature=balance_nature(balance), balance_base=balance_base)
-	rows[-1]["balance_base"] = line.get("balance_base")
+	rows[-1].update(balance=line["balance"], nature=balance_nature(line["balance"]), balance_base=line["balance_base"])
 	return rows

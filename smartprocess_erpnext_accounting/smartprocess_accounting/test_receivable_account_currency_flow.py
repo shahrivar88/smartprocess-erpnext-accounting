@@ -6,6 +6,7 @@ is rolled back.
 """
 
 import frappe
+from erpnext.exceptions import InvalidAccountCurrency
 from frappe.client import submit as api_submit
 from frappe.utils import nowdate
 
@@ -18,6 +19,7 @@ PREFERRED_FOREIGN = "USD"
 FOREIGN_RATE = 50000
 MISMATCH = rac.MSG_MISMATCH.split("«")[0]
 NO_ACCOUNT = rac.MSG_NO_ACCOUNT.split("(")[0]
+LEDGER_LOCK = "ERPNext برای او فقط حساب دریافتنی"
 
 
 class TestReceivableAccountCurrencyFlow(AccountingFixtureTestCase):
@@ -145,6 +147,17 @@ class TestReceivableAccountCurrencyFlow(AccountingFixtureTestCase):
 		doc = self.invoice(self.foreign, self.base_account).insert()
 		self.assert_blocked(doc, MISMATCH, submit=lambda: api_submit(doc.as_dict()))
 		self.assert_submitted(self.invoice(self.foreign, self.foreign_account).insert(), self.foreign_account)
+
+	def test_a_ledger_in_another_currency_reports_the_erpnext_lock(self):
+		self.enable(0)
+		first = self.invoice(self.foreign, self.base_account).insert()
+		first.submit()
+		self.enable(1)
+		doc = self.invoice(self.foreign, self.base_account, customer=first.customer).insert()
+		self.assert_blocked(doc, LEDGER_LOCK, f"سند حسابداری با ارز {self.base}")
+		# The account the check asks for elsewhere is refused by ERPNext itself for this Customer.
+		foreign = self.invoice(self.foreign, self.foreign_account, customer=first.customer).insert()
+		self.assertRaises(InvalidAccountCurrency, foreign.submit)
 
 	def test_insert_as_submitted_is_checked(self):
 		doc = self.invoice(self.foreign, self.base_account, docstatus=1)

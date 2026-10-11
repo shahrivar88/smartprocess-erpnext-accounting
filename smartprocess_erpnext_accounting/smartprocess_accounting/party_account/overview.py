@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Page 1: one GL balance row per Company + Party Type + Party + Account."""
+"""Page 1: one GL balance row per Company + Party Type + Party + Account currency."""
 
 import frappe
 from frappe.utils import cint, getdate
@@ -70,7 +70,7 @@ def get_balance_overview(
 
 
 def overview_rows(scope, period, hide_zero, limit=None, offset=0):
-	tail = "order by party_name, party, account"
+	tail = "order by party_name, party, currency"
 	params = dict(period.params)
 	if limit:
 		tail += " limit %(limit)s offset %(offset)s"
@@ -80,7 +80,6 @@ def overview_rows(scope, period, hide_zero, limit=None, offset=0):
 		{
 			"party": row.party,
 			"party_name": row.party_name or row.party,
-			"account": row.account,
 			"currency": row.currency,
 			"other_currency_rows": cint(row.other_currency_rows),
 			**balance_values(row),
@@ -104,16 +103,16 @@ def overview_totals(scope, period, hide_zero):
 
 
 def grouped_sql(scope, period, hide_zero):
-	"""One row per Party + Account in the Account's currency. GL rows posted in another
-	currency are counted, never split off or dropped."""
+	"""One row per Party + Account currency: every same-currency account of the party
+	adds into it. GL rows posted in another currency are counted, never split off or dropped."""
 	having = ""
 	if cint(hide_zero):
 		having = (
 			f" having sum({GL}.debit_in_account_currency - {GL}.credit_in_account_currency) != 0"
+			f" or sum({GL}.debit - {GL}.credit) != 0"
 		)
 	select = (
-		f"{GL}.party as party, max({scope.name_column}) as party_name, {GL}.account as account, "
-		f"max({ACCOUNT_CURRENCY}) as currency, "
+		f"{GL}.party as party, max({scope.name_column}) as party_name, {ACCOUNT_CURRENCY} as currency, "
 		f"sum(case when {POSTED_IN_OTHER_CURRENCY} then 1 else 0 end) as other_currency_rows, {balance_columns()}"
 	)
-	return scope.sql(select, period.until, f"group by {GL}.party, {GL}.account{having}")
+	return scope.sql(select, period.until, f"group by {GL}.party, {ACCOUNT_CURRENCY}{having}")

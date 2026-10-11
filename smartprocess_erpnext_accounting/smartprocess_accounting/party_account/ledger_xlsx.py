@@ -64,7 +64,7 @@ def build_party_item_ledger_xlsx(company, party_type, party, from_date=None, to_
 		line_count += count
 		for key in TOTAL_KEYS:
 			totals[key] = flt(totals[key] + ledger.summary[key], 9)
-	headers = ledger_headers(currency, company_currency, is_foreign)
+	headers = ledger_headers(currency, company_currency)
 	if several:
 		headers = ["حساب", *headers]
 	content = build_xlsx_bytes(

@@ -1,7 +1,8 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Page 2: detailed GL ledger of one Company + Party Type + Party + Account.
+"""Page 2: detailed GL ledger of one Company + Party Type + Party + Account currency,
+optionally narrowed to one Account.
 
 Totals come from independent SUMs, rows from keyset pages on
 (posting_date, creation, name), so every page has a correct opening."""
@@ -28,6 +29,7 @@ ROW_FIELDS = ", ".join(
 		"voucher_type",
 		"voucher_no",
 		"voucher_detail_no",
+		"account",
 		"against_voucher_type",
 		"against_voucher",
 		"debit",
@@ -51,7 +53,7 @@ def get_account_ledger(
 	company,
 	party_type,
 	party,
-	account,
+	account=None,
 	from_date=None,
 	to_date=None,
 	after=None,
@@ -59,22 +61,25 @@ def get_account_ledger(
 	show_items=1,
 	search=None,
 	side=None,
+	currency=None,
 ):
-	ledger = AccountLedger(company, party_type, party, account, from_date, to_date, search, side)
+	ledger = AccountLedger(company, party_type, party, account, from_date, to_date, search, side, currency)
 	page = ledger.page(after, min(max(cint(page_length), 1), MAX_PAGE_LENGTH))
 	decorate_lines(page["rows"], include_items=cint(show_items), context=ledger.context)
 	return {"context": ledger.context, "summary": ledger.summary, "filter_totals": ledger.filter_totals, **page}
 
 
 class AccountLedger:
-	def __init__(self, company, party_type, party, account, from_date=None, to_date=None, search=None, side=None):
-		if not party or not account:
-			frappe.throw(_("طرف حساب و حساب الزامی است."))
+	"""All GL rows of the party on accounts in one currency; `account` narrows it to one account."""
+
+	def __init__(self, company, party_type, party, account=None, from_date=None, to_date=None, search=None, side=None, currency=None):
+		if not party or not (account or currency):
+			frappe.throw(_("طرف حساب و ارز حساب (یا حساب) الزامی است."))
 		assert_report_access(company, party_type, party, account)
 		self.period = Period(from_date, to_date)
-		self.scope = GLScope(company, party_type, party=party, account=account)
+		self.currency = currency or frappe.get_cached_value("Account", account, "account_currency")
+		self.scope = GLScope(company, party_type, party=party, account=account, currency=self.currency)
 		self.filters = LedgerFilter(search, side)
-		self.currency = frappe.get_cached_value("Account", account, "account_currency")
 		self.company_currency = frappe.get_cached_value("Company", company, "default_currency")
 		self.context = {
 			"company": company,
@@ -101,12 +106,19 @@ class AccountLedger:
 			return None
 		condition, params = self.filters.condition(GL)
 		row = self.scope.query(
-			f"count(*) as row_count, sum({GL}.debit_in_account_currency) as debit, sum({GL}.credit_in_account_currency) as credit",
+			f"count(*) as row_count, sum({GL}.debit_in_account_currency) as debit, sum({GL}.credit_in_account_currency) as credit, "
+			f"sum({GL}.debit) as debit_base, sum({GL}.credit) as credit_base",
 			f"{self.period.inside} and {condition}",
 			**self.period.params,
 			**params,
 		)[0]
-		return {"row_count": cint(row.row_count), "debit": flt(row.debit), "credit": flt(row.credit)}
+		return {
+			"row_count": cint(row.row_count),
+			"debit": flt(row.debit),
+			"credit": flt(row.credit),
+			"debit_base": flt(row.debit_base),
+			"credit_base": flt(row.credit_base),
+		}
 
 	def page(self, after=None, page_length=PAGE_LENGTH):
 		if self.filters:
@@ -219,6 +231,7 @@ def ledger_line(row, balance, balance_base, is_foreign, currency):
 		"voucher_type": row.voucher_type,
 		"voucher_no": row.voucher_no,
 		"voucher_detail_no": row.voucher_detail_no,
+		"account": row.account,
 		"against_voucher_type": row.against_voucher_type,
 		"against_voucher": row.against_voucher,
 		"remarks": row.remarks,
@@ -226,7 +239,6 @@ def ledger_line(row, balance, balance_base, is_foreign, currency):
 		"credit": flt(row.credit_in_account_currency),
 		"debit_base": flt(row.debit),
 		"credit_base": flt(row.credit),
-		"rate": posting_rate(row) if is_foreign else None,
 		"balance": balance,
 		"balance_base": balance_base,
 		"nature": balance_nature(balance),
@@ -247,12 +259,6 @@ def currency_flags(row, currency):
 			else None
 		),
 	}
-
-
-def posting_rate(row):
-	amount = flt(row.debit_in_account_currency) or flt(row.credit_in_account_currency)
-	base = flt(row.debit) or flt(row.credit)
-	return flt(base / amount, 9) if amount else None
 
 
 def party_display_name(party_type, party):

@@ -156,3 +156,25 @@ class TestDefaultAccountPickerFilter(unittest.TestCase):
 	def test_client_account_types_match_the_server(self):
 		for purpose, account_type in da.ACCOUNT_TYPES.items():
 			self.assertEqual(self.filters({"account_purpose": purpose})["account_type"], account_type)
+
+
+@unittest.skipUnless(which("node"), "node is not available")
+class TestSettingsSaveRefreshesTheInvoiceFlag(unittest.TestCase):
+	def synced(self, doc, boot):
+		script = (
+			f"const {{ spSyncBootFlags }} = require({json.dumps(str(SETTINGS_JS))});"
+			f"const boot = {json.dumps(boot)}; spSyncBootFlags({json.dumps(doc)}, boot);"
+			"process.stdout.write(JSON.stringify(boot));"
+		)
+		return json.loads(subprocess.run(["node", "-e", script], capture_output=True, check=True, text=True).stdout)
+
+	def test_save_updates_the_flag_the_invoice_forms_read(self):
+		boot = {"smartprocess_accounting": {"central_default_accounts": 0, "live_number_separator": {"enabled": 1}}}
+		on = self.synced({"enable_central_default_accounts": 1}, boot)
+		self.assertEqual(on["smartprocess_accounting"]["central_default_accounts"], 1)
+		self.assertEqual(on["smartprocess_accounting"]["live_number_separator"], {"enabled": 1})
+		off = self.synced({"enable_central_default_accounts": 0}, on)
+		self.assertEqual(off["smartprocess_accounting"]["central_default_accounts"], 0)
+
+	def test_a_boot_without_the_flags_is_left_alone(self):
+		self.assertEqual(self.synced({"enable_central_default_accounts": 1}, {}), {})
