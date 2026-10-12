@@ -8,6 +8,7 @@ const spBalanceForm = {
 	BALANCE_SIDE_LABELS: { Debit: "بدهکار", Credit: "بستانکار" },
 	MESSAGES: {
 		legsLabel: "تخصیص‌های داخلی (فقط برای حسابرسی)",
+		currencyKept: "ارز پیشنهادی این طرف حساب {0} است. ارز مقصد انتخاب‌شده ({1}) تغییر نکرد.",
 		partial:
 			"بخشی از مانده حساب از اسنادی است که فعلاً قابل تبدیل نیستند (مثل اسناد استاندارد ERPNext یا سند ثبت مبهم). فقط «حداکثر قابل تبدیل» قابل تبدیل است.",
 	},
@@ -102,13 +103,38 @@ const spBalanceForm = {
 	},
 
 	async targetPartyChanged(frm) {
+		if (this.state(frm).prefilling || !frm.doc.target_party) {
+			return;
+		}
+		await this.suggestTargetCurrency(frm, frm.doc.target_party_type, frm.doc.target_party);
 		const doc = frm.doc;
-		if (this.state(frm).prefilling || !doc.target_party || doc.target_account || !doc.target_currency) {
+		if (!doc.target_party || doc.target_account || !doc.target_currency) {
 			return;
 		}
 		const account = await this.partyAccount(frm, doc.target_party_type, doc.target_party, doc.target_currency);
 		if (account && !frm.doc.target_account) {
 			await frm.set_value("target_account", account);
+		}
+	},
+
+	// A Party with a default currency fills only an empty Target Currency. A chosen
+	// currency is kept; the user only gets a note. The rate is never touched.
+	async suggestTargetCurrency(frm, partyType, party) {
+		if (!partyType || !frm.doc.company) {
+			return;
+		}
+		const currency = await frappe.xcall(
+			spConversionLegs.method("v2_api.get_party_suggested_currency"),
+			{ party_type: partyType, party, company: frm.doc.company },
+			"GET",
+		);
+		if (!currency || frm.doc.target_party !== party || currency === this.companyCurrency(frm)) {
+			return;
+		}
+		if (!frm.doc.target_currency) {
+			await frm.set_value("target_currency", currency);
+		} else if (frm.doc.target_currency !== currency) {
+			frappe.show_alert({ message: __(this.MESSAGES.currencyKept, [currency, frm.doc.target_currency]), indicator: "orange" });
 		}
 	},
 

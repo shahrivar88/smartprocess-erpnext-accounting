@@ -69,6 +69,34 @@ def validate_party_master(doc):
 		validate_party_accounts(doc)
 	for fieldname, link_doctype in LINKED_RECORDS:
 		validate_linked_record(doc, fieldname, link_doctype)
+	validate_default_currency(doc)
+
+
+def validate_default_currency(doc):
+	"""`default_currency` is a preference for new documents. Posted GL keeps its own
+	currency, so a change only warns about companies that already have history."""
+	currency = doc.get("default_currency")
+	if not currency or not doc.has_value_changed("default_currency"):
+		return
+	if not frappe.get_cached_value("Currency", currency, "enabled"):
+		frappe.throw(_("ارز {0} غیرفعال است.").format(currency))
+	if doc.is_new():
+		return
+	history = frappe.get_all(
+		"GL Entry",
+		filters={"party_type": doc.doctype, "party": doc.name, "is_cancelled": 0, "account_currency": ["!=", currency]},
+		fields=["company", "account_currency"],
+		distinct=True,
+		order_by="company asc",
+	)
+	if history:
+		lines = "".join(f"<li>{frappe.bold(row.company)}: {row.account_currency}</li>" for row in history)
+		frappe.msgprint(
+			_("ارز پیش‌فرض فقط برای سند جدید پیشنهاد می‌شود. گردش‌های قبلی و ثبت‌های بعدی این شرکت‌ها همچنان به ارز حساب خودشان است:")
+			+ f"<ul>{lines}</ul>",
+			title=_("سابقه حسابداری با ارز دیگر"),
+			indicator="orange",
+		)
 
 
 def validate_account_row(row, account_type):

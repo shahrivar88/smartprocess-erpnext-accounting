@@ -52,6 +52,51 @@ class TestPartyMasterRules(unittest.TestCase):
 		self.assertNotIn("email_id", fields)
 		writers = {row["role"] for row in meta["permissions"] if row.get("write")}
 		self.assertEqual(writers, {"Accounts Manager", "System Manager"})
+		currency = fields["default_currency"]
+		self.assertEqual((currency["fieldtype"], currency["options"], currency["label"]), ("Link", "Currency", "ارز پیش‌فرض"))
+		self.assertFalse(currency.get("reqd"))
+		order = meta["field_order"]
+		self.assertEqual(order.index("default_currency"), order.index("default_company") + 1)
+
+	def test_default_currency_change_only_warns_about_history(self):
+		def make(value="USD", new=False, changed=True):
+			return SimpleNamespace(doctype=DOCTYPE, name="X", get=lambda field: value, is_new=lambda: new, has_value_changed=lambda field: changed)
+
+		with patch.object(frappe, "get_all") as get_all:
+			party_profile.validate_default_currency(make(changed=False))
+			party_profile.validate_default_currency(make(value=None))
+		get_all.assert_not_called()
+		with patch.object(frappe, "get_cached_value", return_value=0), self.assertRaises(frappe.ValidationError):
+			party_profile.validate_default_currency(make())
+		with patch.object(frappe, "get_cached_value", return_value=1), patch.object(frappe, "get_all") as get_all:
+			party_profile.validate_default_currency(make(new=True))
+		get_all.assert_not_called()
+		history = [frappe._dict(company="C1", account_currency="IRR")]
+		with (
+			patch.object(frappe, "get_cached_value", return_value=1),
+			patch.object(frappe, "get_all", return_value=history) as get_all,
+			patch.object(frappe, "msgprint") as msgprint,
+		):
+			party_profile.validate_default_currency(make())
+		self.assertEqual(get_all.call_args.kwargs["filters"]["account_currency"], ["!=", "USD"])
+		self.assertIn("C1", msgprint.call_args.args[0])
+		self.assertEqual(msgprint.call_args.kwargs["indicator"], "orange")
+
+	def test_suggested_currency_api_follows_the_canonical_rule(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting import v2_api
+
+		meta = SimpleNamespace(has_field=lambda field: True)
+		with (
+			patch.object(v2_api, "_require_party") as require,
+			patch.object(frappe, "get_meta", return_value=meta),
+			patch.object(v2_api, "resolve_party_currency", return_value="EUR") as resolve,
+		):
+			with patch.object(frappe.db, "get_value", return_value=None):
+				self.assertIsNone(v2_api.get_party_suggested_currency(DOCTYPE, "X", "C"))
+			resolve.assert_not_called()
+			with patch.object(frappe.db, "get_value", return_value="USD"):
+				self.assertEqual(v2_api.get_party_suggested_currency(DOCTYPE, "X", "C"), "EUR")
+		require.assert_called_with(DOCTYPE, "X", "C")
 
 	def test_account_row_rules(self):
 		cases = [
@@ -202,14 +247,94 @@ class TestFinancialIntermediarySite(unittest.TestCase):
 		frappe.db.rollback()
 
 	def intermediary(self, name="_SP Test Intermediary", account=None, **values):
-		doc = {"doctype": DOCTYPE, "intermediary_name": name, "default_company": self.company, **values}
+		doc = {"doctype": DOCTYPE, "intermediary_name": name, "default_company": self.company}
 		if self.synced:
 			doc.update(
 				intermediary_type="Legal Entity",
 				intermediary_category="Exchange Office",
 				accounts=[{"company": self.company, "account": account or self.irr}],
 			)
-		return frappe.get_doc(doc).insert()
+		return frappe.get_doc({**doc, **values}).insert()
+
+	def require_currency_schema(self):
+		self.require_schema()
+		if not frappe.db.has_column(DOCTYPE, "default_currency"):
+			self.skipTest("default_currency is not synced yet.")
+
+	def currencies(self):
+		return frappe.get_cached_value("Company", self.company, "default_currency"), frappe.get_cached_value(
+			"Account", self.usd, "account_currency"
+		)
+
+	def listed(self, name, currency):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import party_currency_query
+
+		rows = party_currency_query(DOCTYPE, name, "name", 0, 20, {"company": self.company, "currency": currency, "party_type": DOCTYPE})
+		return name in [row[0] for row in rows]
+
+	def test_default_currency_is_the_suggestion_for_a_party_without_history(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
+			get_party_suggested_currency,
+			get_receipt_party_account_suggestion,
+		)
+
+		self.require_currency_schema()
+		base, foreign = self.currencies()
+		party = self.intermediary(default_currency=foreign, accounts=[])
+		self.assertEqual(frappe.db.get_value(DOCTYPE, party.name, "default_currency"), foreign)
+		self.assertEqual(get_party_suggested_currency(DOCTYPE, party.name, self.company), foreign)
+		self.assertEqual(v2_validation.resolve_party_currency(DOCTYPE, party.name, self.company), foreign)
+		self.assertTrue(self.listed(party.name, foreign), "the Receipt party list shows it under its default currency")
+		self.assertFalse(self.listed(party.name, base))
+		self.assertIsNone(get_receipt_party_account_suggestion(DOCTYPE, party.name, self.company, foreign), "no mapping, no account")
+		v2_validation.validate_party_ledger_currency(DOCTYPE, party.name, self.company, foreign)
+		with self.assertRaises(frappe.ValidationError):
+			v2_validation.validate_party_ledger_currency(DOCTYPE, party.name, self.company, base)
+
+	def test_default_currency_edit_and_party_without_default(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
+			get_party_suggested_currency,
+		)
+
+		self.require_currency_schema()
+		base, foreign = self.currencies()
+		plain = self.intermediary(name="_SP Test Plain", accounts=[])
+		self.assertIsNone(get_party_suggested_currency(DOCTYPE, plain.name, self.company))
+		self.assertEqual(v2_validation.resolve_party_currency(DOCTYPE, plain.name, self.company), base, "unchanged fallback")
+		self.assertTrue(self.listed(plain.name, base))
+		plain.default_currency = foreign
+		plain.save()
+		plain.reload()
+		self.assertEqual(plain.default_currency, foreign)
+		plain.default_currency = None
+		plain.save()
+		self.assertIsNone(frappe.db.get_value(DOCTYPE, plain.name, "default_currency"))
+		disabled = frappe.db.get_value("Currency", {"enabled": 0}, "name")
+		if disabled:
+			plain.default_currency = disabled
+			with self.assertRaises(frappe.ValidationError):
+				plain.save()
+
+	def test_party_account_currency_wins_over_the_default(self):
+		self.require_currency_schema()
+		base, foreign = self.currencies()
+		mapped = self.intermediary(account=self.usd, default_currency=base)
+		self.assertEqual(v2_validation.resolve_party_currency(DOCTYPE, mapped.name, self.company), foreign)
+		global_company = frappe.db.get_default("Company") or self.company
+		if frappe.get_cached_value("Company", global_company, "default_currency") != foreign:
+			with self.assertRaises(frappe.ValidationError):
+				self.intermediary(name="_SP Test Conflict", account=self.irr, default_currency=foreign)
+
+	def test_suggested_currency_needs_party_read_permission(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
+			get_party_suggested_currency,
+		)
+
+		self.require_currency_schema()
+		party = self.intermediary(default_currency=self.currencies()[1], accounts=[])
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			get_party_suggested_currency(DOCTYPE, party.name, self.company)
 
 	def linked(self, doctype, values, party):
 		return frappe.get_doc({"doctype": doctype, **values, "links": [{"link_doctype": DOCTYPE, "link_name": party.name}]}).insert()

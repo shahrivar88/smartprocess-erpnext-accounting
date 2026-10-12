@@ -6,7 +6,7 @@
  "document_type": "Master",
  "engine": "InnoDB",
  "field_order": [
-  "identity_section", "intermediary_name", "intermediary_type", "intermediary_category", "identity_column", "legal_name", "default_company", "disabled",
+  "identity_section", "intermediary_name", "intermediary_type", "intermediary_category", "identity_column", "legal_name", "default_company", "default_currency", "disabled",
   "registration_section", "tax_id", "registration_column", "national_id",
   "contact_section", "address_html", "contact_column", "contact_html",
   "primary_section", "primary_contact", "primary_column", "primary_address",
@@ -22,6 +22,7 @@
   {"fieldname":"identity_column","fieldtype":"Column Break"},
   {"fieldname":"legal_name","fieldtype":"Data","in_global_search":1,"label":"نام حقوقی / تجاری"},
   {"description":"شرکتی که هنگام ایجاد سند برای این واسطه پیشنهاد می‌شود.","fieldname":"default_company","fieldtype":"Link","label":"شرکت پیش‌فرض","options":"Company"},
+  {"description":"ارز پیشنهادی برای سند جدید، وقتی واسطه در آن شرکت هنوز گردش یا حساب پیش‌فرض ندارد. ارز ثبت همیشه ارز حساب معین است.","fieldname":"default_currency","fieldtype":"Link","ignore_user_permissions":1,"in_standard_filter":1,"label":"ارز پیش‌فرض","no_copy":1,"options":"Currency"},
   {"default":"0","description":"واسطه غیرفعال در اسناد جدید قابل انتخاب نیست؛ اسناد و مانده‌های قبلی دست نمی‌خورند.","fieldname":"disabled","fieldtype":"Check","in_list_view":1,"in_standard_filter":1,"label":"غیرفعال"},
   {"collapsible":1,"fieldname":"registration_section","fieldtype":"Section Break","label":"شناسه‌های قانونی"},
   {"fieldname":"tax_id","fieldtype":"Data","label":"کد اقتصادی"},
@@ -43,7 +44,7 @@
   {"fieldname":"notes","fieldtype":"Small Text","label":"توضیحات"}
  ],
  "links": [],
- "modified": "2026-10-12 15:00:00.000000",
+ "modified": "2026-10-12 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "SmartProcess Accounting",
  "name": "SmartProcess Financial Intermediary",

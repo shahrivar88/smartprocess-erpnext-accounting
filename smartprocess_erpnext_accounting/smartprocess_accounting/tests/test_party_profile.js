@@ -20,7 +20,7 @@ const tools = {
 	url: (doctype, name) => `/app/${doctype}/${name}`,
 };
 
-function make_form(doc = {}, fields = ["accounts", "primary_contact", "primary_address"]) {
+function make_form(doc = {}, fields = ["accounts", "default_currency", "primary_contact", "primary_address"]) {
 	return {
 		doctype: DOCTYPE,
 		doc: { name: "P1", ...doc },
@@ -37,6 +37,7 @@ function make_form(doc = {}, fields = ["accounts", "primary_contact", "primary_a
 	spPartyProfile.setup(frm);
 	const filters = queries.account(frm.doc, "Party Account", "row1").filters;
 	assert.deepEqual(filters, { company: "C1", is_group: 0, disabled: 0, account_type: "Receivable" });
+	assert.deepEqual(queries.default_currency().filters, { enabled: 1 });
 	assert.deepEqual(queries.primary_contact().filters, { link_doctype: DOCTYPE, link_name: "P1" });
 	assert.equal(queries.primary_address().query, "frappe.contacts.doctype.address.address.address_query");
 }

@@ -39,7 +39,16 @@ Then ERPNext `validate_party_accounts` runs. It allows one row per Company. It a
 rejects an Account whose currency differs from the currency of existing GL rows.
 
 One intermediary has one accounting currency in each Company. This is the SmartProcess
-rule in `v2_validation.resolve_party_currency`. To work in a second currency, create a
+rule in `v2_validation.resolve_party_currency`. The rule reads, in this order: the
+currency of active GL rows, the currency of the `accounts` row, `default_currency`,
+and the Company currency.
+
+`default_currency` is the same field as Customer `default_currency`. It only sets the
+currency of a party without GL history and without an `accounts` row in a Company.
+The GL currency always comes from `Account.account_currency`. When a user changes
+`default_currency` and the party has GL in another currency, the form shows a warning.
+The Smart Receipt lists the party under this currency. A Balance Conversion fills an
+empty Target Currency from it (`v2_api.get_party_suggested_currency`). To work in a second currency, create a
 second intermediary record. A change of the default account changes only new
 documents. It never changes posted GL rows.
 

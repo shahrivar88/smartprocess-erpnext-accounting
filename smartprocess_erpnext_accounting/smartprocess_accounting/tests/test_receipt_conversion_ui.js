@@ -529,6 +529,48 @@ test("Balance summary errors are shown on the source and a stale answer is dropp
 	assert.equal(frm.tableProperties["max_convertible:description"], "", "equal balance and maximum: no note");
 });
 
+test("a Party default currency fills only an empty Balance Target Currency and never the rate", async () => {
+	globalThis.__ = (text, args) => text.replace(/\{(\d+)\}/g, (_match, index) => args[index]);
+	try {
+		responses.get_party_suggested_currency = "USD";
+		responses.get_receipt_party_account_suggestion = "Debtors USD - SP";
+		const frm = balanceForm({ target_currency: "", target_rate: 0, target_party_type: "SmartProcess Financial Intermediary", target_party: "FI-USD" });
+		spConversionForm.state(frm).companyCurrency = "IRR";
+		await spBalanceForm.targetPartyChanged(frm);
+		const call = calls.xcall.find((entry) => entry.method.endsWith("get_party_suggested_currency"));
+		assert.deepEqual(call.args, { party_type: "SmartProcess Financial Intermediary", party: "FI-USD", company: "SP" });
+		assert.deepEqual([frm.doc.target_currency, frm.doc.target_account, frm.doc.target_rate], ["USD", "Debtors USD - SP", 0]);
+		assert.equal(frm.doc.source_account, "Debtors - SP", "the source side never changes");
+
+		reset();
+		responses.get_party_suggested_currency = "USD";
+		responses.get_receipt_party_account_suggestion = null;
+		const chosen = balanceForm({ target_currency: "EUR", target_party_type: "SmartProcess Financial Intermediary", target_party: "FI-USD" });
+		spConversionForm.state(chosen).companyCurrency = "IRR";
+		await spBalanceForm.targetPartyChanged(chosen);
+		assert.equal(chosen.doc.target_currency, "EUR", "a chosen currency is kept");
+		assert.match(calls.alerts.at(-1).message, /USD.*EUR/);
+
+		for (const suggestion of [null, "IRR"]) {
+			reset();
+			responses.get_party_suggested_currency = suggestion;
+			const empty = balanceForm({ target_currency: "", target_party_type: "Customer", target_party: "CUST-1" });
+			spConversionForm.state(empty).companyCurrency = "IRR";
+			await spBalanceForm.targetPartyChanged(empty);
+			assert.equal(empty.doc.target_currency, "", "no default currency, or the source currency: nothing is filled");
+			assert.equal(calls.alerts.length, 0);
+		}
+
+		reset();
+		const prefilling = balanceForm({ target_currency: "", target_party: "FI-USD", target_party_type: "SmartProcess Financial Intermediary" });
+		spBalanceForm.state(prefilling).prefilling = true;
+		await spBalanceForm.targetPartyChanged(prefilling);
+		assert.equal(calls.xcall.length, 0, "a server prefill asks nothing");
+	} finally {
+		delete globalThis.__;
+	}
+});
+
 test("the full-maximum button uses max_convertible, never the account balance", async () => {
 	const frm = balanceForm({ as_of_balance: 150000000, max_convertible: 100000000 });
 	await spBalanceForm.fillMax(frm);

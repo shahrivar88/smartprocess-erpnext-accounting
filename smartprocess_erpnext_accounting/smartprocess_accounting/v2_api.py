@@ -179,6 +179,21 @@ def get_receipt_party_account_suggestion(
 	return _get_exact_party_account(party_type, party, company, currency)
 
 
+@frappe.whitelist(methods=["GET"])
+def get_party_suggested_currency(party_type: str, party: str, company: str) -> str | None:
+	"""The currency to suggest for a Party that has a `default_currency`.
+
+	Returns the canonical ``resolve_party_currency``, so GL history and the Party
+	Account mapping still win over the preference. A Party without a default
+	currency gets no suggestion."""
+	_require_party(party_type, party, company)
+	if not frappe.get_meta(party_type).has_field("default_currency"):
+		return None
+	if not frappe.db.get_value(party_type, party, "default_currency"):
+		return None
+	return resolve_party_currency(party_type, party, company)
+
+
 def _get_exact_party_account(party_type: str, party: str, company: str, currency: str) -> str | None:
 	_require_party(party_type, party, company, currency)
 	if resolve_party_currency(party_type, party, company) not in (None, currency):

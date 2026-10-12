@@ -27,6 +27,9 @@ const spPartyProfile = {
 				};
 			});
 		}
+		if (frm.fields_dict.default_currency) {
+			frm.set_query("default_currency", () => ({ filters: { enabled: 1 } }));
+		}
 		for (const [field, query] of Object.entries(this.LINK_QUERIES)) {
 			if (frm.fields_dict[field]) {
 				frm.set_query(field, () => ({ query, filters: { link_doctype: frm.doctype, link_name: frm.doc.name } }));
