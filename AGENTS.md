@@ -45,3 +45,4 @@ This repository extends Frappe and ERPNext. The detailed V2 contract lives in
 - [Permissions](docs/v2/PERMISSIONS.md)
 - [Test matrix](docs/v2/TEST_MATRIX.md)
 - [Migration and rollback](docs/v2/MIGRATION_AND_ROLLBACK.md)
+- [Custom party types](docs/v2/PARTY_TYPES.md)

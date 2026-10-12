@@ -14,6 +14,8 @@ ALLOWED_PARTY_TYPES = (
 	"Employee",
 	"SmartProcess Financial Intermediary",
 )
+# ERPNext validates the status of these Party Types itself.
+NATIVE_PARTY_STATUS = ("Customer", "Supplier", "Employee")
 
 
 def get_company_currency(company: str) -> str:
@@ -85,9 +87,22 @@ def validate_party(party_type: str | None, party: str | None, account_type: str 
 				account_type or _("blank"),
 			)
 		)
-	if party_type == "SmartProcess Financial Intermediary":
-		if frappe.get_cached_value(party_type, party, "disabled"):
-			frappe.throw(_("Financial Intermediary {0} is disabled.").format(party))
+	assert_party_enabled(party_type, party)
+
+
+def assert_party_enabled(party_type: str | None, party: str | None) -> None:
+	"""Custom Party Types with a `disabled` field cannot take new postings.
+
+	ERPNext checks its own Party Types (`validate_party_frozen_disabled`); cancellation
+	never calls this, so history stays reversible."""
+	if not party_type or not party or party_type in NATIVE_PARTY_STATUS:
+		return
+	if not frappe.db.exists("DocType", party_type) or not frappe.get_meta(party_type).has_field("disabled"):
+		return
+	if frappe.get_cached_value(party_type, party, "disabled"):
+		from erpnext.accounts.party import PartyDisabled
+
+		frappe.throw(_("{0} {1} غیرفعال است و در سند جدید قابل استفاده نیست.").format(_(party_type), party), PartyDisabled)
 
 
 def resolve_party_currency(party_type: str | None, party: str | None, company: str | None) -> str | None:

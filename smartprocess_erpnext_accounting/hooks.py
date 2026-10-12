@@ -58,5 +58,8 @@ doc_events = {
 		"before_validate": "smartprocess_erpnext_accounting.smartprocess_accounting.purchase_invoice_default_account.set_default_payable_account",
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 	},
+	"Journal Entry": {
+		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.journal_entry_party.validate_disabled_parties",
+	},
 }
 

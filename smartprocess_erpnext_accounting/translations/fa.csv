@@ -162,3 +162,10 @@ Receivable,فاکتور فروش,SmartProcess Default Account
 Payable,فاکتور خرید,SmartProcess Default Account
 The account of related return invoices is taken from the original invoice.,"حساب فاکتورهای برگشتی مرتبط، از فاکتور اصلی گرفته می‌شود.",
 "Please set {0} to {1}, the same account that was used in the original invoice {2}.","فیلد {0} را برابر {1} قرار دهید؛ این همان حسابی است که در فاکتور اصلی {2} استفاده شده است.",
+Legal Entity,شخص حقوقی,
+Natural Person,شخص حقیقی,
+Exchange Office,صرافی,
+Money Transfer Agent,حواله‌دار,
+Brokerage Firm,کارگزاری,
+Payment Agent,عامل پرداخت,
+Other Intermediary,سایر واسطه‌ها,
