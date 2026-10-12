@@ -4,13 +4,14 @@
 """On-demand drill-down of one ledger line.
 
 The client sends only the GL Entry name and the account context. The GL line
-must belong to that Company + Party Type + Party + Account and to the caller's
-permission scope; the source document is resolved from that GL line."""
+must belong to that Company + Party Type + Party + Account (or, for an account
+ledger, to that Account) and to the caller's permission scope; the source document
+is resolved from that GL line."""
 
 import frappe
 from frappe import _
 
-from .access import GL, GLScope, assert_report_access, can_read, deny
+from .access import ACCOUNT_LEDGER, GL, GLScope, assert_report_access, can_read, deny
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, RECEIPT_CONVERSION, voucher_label
 from .resolvers import RESOLVERS, resolve_generic
 
@@ -50,7 +51,11 @@ GL_FIELDS = ", ".join(
 
 
 @frappe.whitelist()
-def get_document_detail(gl_entry, company, party_type, party, account):
+def get_document_detail(gl_entry, company, party_type, party=None, account=None):
+	if party_type == ACCOUNT_LEDGER and not account:
+		frappe.throw(_("حساب الزامی است."))
+	if party_type != ACCOUNT_LEDGER and not party:
+		frappe.throw(_("طرف حساب الزامی است."))
 	assert_report_access(company, party_type, party, account)
 	gl = verified_gl_line(gl_entry, company, party_type, party, account)
 	context = {"company": company, "party_type": party_type, "party": party, "account": account}

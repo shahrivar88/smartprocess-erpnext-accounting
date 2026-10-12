@@ -49,7 +49,7 @@ TABS = {
 	"حساب‌های پیش‌فرض": ["enable_central_default_accounts", "default_account_priority", "default_accounts"],
 	"پیشرفته": ["enable_templates", DEPRECATED],
 }
-SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش و مانده طرف حساب", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
+SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش حساب", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
 
 
 class TestSmartProcessAccountingSettings(unittest.TestCase):

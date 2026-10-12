@@ -1,7 +1,8 @@
-// Ledger page → display groups. One group per GL line, always in chronological
-// order (posting date, creation, name) so the running balance is never misleading;
-// a split invoice line keeps its item/adjustment rows, each repeating the date and
-// the document. Search and debit/credit filters run on the server.
+// Ledger page → display groups. One group per GL line, in the server's order
+// (chronological unless a column sort is active); each balance is the real
+// chronological balance after its row, computed on the server. A split invoice line
+// keeps its item/adjustment rows, each repeating the date and the document. Search,
+// debit/credit filters and sorting run on the server.
 const pae_ledger_rows = {
 	groups(lines, offset, split) {
 		return (lines || []).map((line, index) => pae_ledger_rows.group(line, offset + index + 1, split));
@@ -33,11 +34,11 @@ const pae_ledger_rows = {
 			doc,
 			voucher,
 			account: line.account,
-			description: entry.description || "",
-			title: entry.title || "",
+			description: pae_ledger_rows.description(entry.title, entry.description),
 			qty: entry.qty,
 			rate: entry.rate,
 			rate_base: entry.rate_base,
+			exchange_rate: line.exchange_rate || null,
 			debit: flt(entry.debit),
 			credit: flt(entry.credit),
 			debit_base: flt(entry.debit_base),
@@ -48,6 +49,19 @@ const pae_ledger_rows = {
 			badges: index === 0 ? badges : [],
 		}));
 		return { gl_entry: line.gl_entry, position, line, doc, voucher, rows };
+	},
+
+	// «شرح»: the item/adjustment title and its own description, once each.
+	description(title, description) {
+		title = String(title || "").trim();
+		description = String(description || "").trim();
+		if (!title || description.includes(title)) {
+			return description;
+		}
+		if (!description || title.includes(description)) {
+			return title;
+		}
+		return `${title} · ${description}`;
 	},
 
 	plain_entry(line) {

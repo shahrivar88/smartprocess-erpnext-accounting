@@ -41,15 +41,23 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.repor
 	CREDIT_BASE,
 	DEBIT,
 	DEBIT_BASE,
+	DESCRIPTION,
 	DETAILS,
+	EXCHANGE_RATE,
+	NO_RATE,
+	QTY,
 	RATE,
 	RATE_BASE,
 	SheetRow,
+	entry_description,
 	ledger_headers,
 	ledger_rows,
 	overview_table,
 )
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import RESOLVERS, resolve_generic
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.resolvers import (
+	RESOLVERS,
+	resolve_generic,
+)
 
 PA = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account"
 PAGE_JS = os.path.join(
@@ -379,7 +387,9 @@ class TestVoucherLinks(unittest.TestCase):
 
 class TestLedgerFilter(unittest.TestCase):
 	def condition(self, search=None, side=None, readable=True):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import (
+			LedgerFilter,
+		)
 
 		with patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=readable):
 			return LedgerFilter(search, side).condition("gle")
@@ -393,7 +403,9 @@ class TestLedgerFilter(unittest.TestCase):
 		self.assertNotIn("default_currency", scope.where, "the party's own currency never filters GL rows")
 
 	def test_no_filter_is_falsy_and_matches_everything(self):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import (
+			LedgerFilter,
+		)
 
 		self.assertFalse(LedgerFilter("  ", "sideways"))
 		self.assertEqual(self.condition(), ("1 = 1", {}))
@@ -604,12 +616,12 @@ class TestExports(unittest.TestCase):
 				"تاریخ",
 				"نوع برگه",
 				"شرح",
-				"عنوان قلم",
 				"مقدار",
 				"فی (IRR)",
 				"بدهکار (IRR)",
 				"بستانکار (IRR)",
 				"مانده (IRR)",
+				"نرخ ارز (IRR برای 1 USD)",
 				"فی ارزی (USD)",
 				"بدهکار ارزی (USD)",
 				"بستانکار ارزی (USD)",
@@ -636,10 +648,11 @@ class TestExports(unittest.TestCase):
 			self.assertEqual(row[2], "فاکتور فروش - SINV-1")
 			self.assertEqual(row[DETAILS], "حساب: AR · سند ثبت: SINV-1")
 			self.assertTrue(row[DEBIT] or row[CREDIT], "every line row carries an amount")
-		self.assertEqual(item[4:6], ["I1", 3])
+		self.assertEqual([item[DESCRIPTION], item[QTY]], ["I1", 3], "the item title is the description")
 		self.assertEqual([item[RATE_BASE], item[DEBIT_BASE], item[CREDIT_BASE], item[BALANCE_BASE]], [20, 60, "", 160])
 		self.assertEqual([item[RATE], item[DEBIT], item[CREDIT], item[BALANCE]], [2, 6, "", 16])
-		self.assertEqual(adjustment[4], "تخفیف")
+		self.assertEqual(adjustment[DESCRIPTION], "تخفیف")
+		self.assertEqual([item[EXCHANGE_RATE], adjustment[EXCHANGE_RATE]], [NO_RATE, NO_RATE], "no stored rate: «—»")
 		self.assertEqual(sum(row[DEBIT] or 0 for row in rows[0:2]), 5, "split rows add up to the GL debit")
 		self.assertEqual(sum(row[DEBIT_BASE] or 0 for row in rows[0:2]), 50, "and to the GL base debit")
 		self.assertEqual((rows[-3][BALANCE], rows[-3][BALANCE_BASE]), (10, 100), "opening")
@@ -693,7 +706,26 @@ class TestExports(unittest.TestCase):
 		self.assertTrue(all(len(row) == len(headers) for row in rows))
 		self.assertEqual([rows[0][DEBIT_BASE], rows[0][BALANCE_BASE], rows[0][DEBIT], rows[0][BALANCE]], [3_000_000, 9_000_000, 5, 15])
 		self.assertEqual((rows[0][RATE_BASE], rows[0][RATE]), ("", ""), "a GL line without a source rate stays empty")
+		self.assertEqual(rows[0][EXCHANGE_RATE], NO_RATE, "no rate is derived from the two amounts")
 		self.assertEqual((rows[-1][BALANCE_BASE], rows[-1][BALANCE]), (9_000_000, 15))
+		self.assertTrue(all(row[EXCHANGE_RATE] == "" for row in rows[1:]), "summary rows carry no rate")
+
+	def test_export_shows_the_stored_exchange_rate_next_to_the_account_currency_columns(self):
+		headers = ledger_headers("USD", "IRR")
+		self.assertEqual(headers.index("نرخ ارز (IRR برای 1 USD)") + 1, headers.index("فی ارزی (USD)"))
+		with decorated():
+			rows, _count = ledger_rows(export_ledger([export_line(exchange_rate=600_000)]))
+		self.assertEqual(rows[0][EXCHANGE_RATE], 600_000)
+
+	def test_description_merges_title_and_text_without_repeating(self):
+		self.assertEqual(entry_description("Camera", ""), "Camera")
+		self.assertEqual(entry_description(None, "Payment"), "Payment")
+		self.assertEqual(entry_description("Camera", "Camera 2.8mm"), "Camera 2.8mm")
+		self.assertEqual(entry_description("Camera 2.8mm", "Camera"), "Camera 2.8mm")
+		self.assertEqual(entry_description("Camera", "Outdoor"), "Camera · Outdoor")
+		with decorated():
+			rows, _count = ledger_rows(export_ledger([export_line(remarks="Paid by cheque 12")]))
+		self.assertEqual(rows[0][DESCRIPTION], "Paid by cheque 12", "a non-invoice line keeps the GL remarks")
 
 	def test_export_refuses_more_rows_than_the_limit_instead_of_truncating(self):
 		with decorated(), self.assertRaises(frappe.ValidationError):
@@ -762,7 +794,9 @@ class TestExports(unittest.TestCase):
 		self.assertNotIn("/desk/", parts["xl/sharedStrings.xml"])
 
 	def test_xlsx_table_names_are_unique_and_never_empty(self):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import unique_headers
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.excel_bytes import (
+			unique_headers,
+		)
 
 		self.assertEqual(unique_headers(["حساب", "", "حساب"], 4), ["حساب", "ستون 2", "حساب 2", "ستون 4"])
 
@@ -808,7 +842,9 @@ class TestCurrencyNeverHidesRows(unittest.TestCase):
 	def test_site_currency_filters_partition_every_balance_row(self):
 		"""Read-only: per-currency overviews together list every party/currency row with the same amounts."""
 		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.gl_period import Period
-		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import overview_rows
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import (
+			overview_rows,
+		)
 
 		period = Period(None, frappe.utils.today())
 
@@ -821,6 +857,175 @@ class TestCurrencyNeverHidesRows(unittest.TestCase):
 				currencies = {row["currency"] for row in every}
 				split = [row for currency in currencies for row in overview_rows(GLScope(company, party_type, currency=currency), period, 0)]
 				self.assertEqual(sorted(map(key, split)), sorted(map(key, every)))
+
+
+class TestStoredExchangeRate(unittest.TestCase):
+	def rate(self, currency="USD", **values):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import (
+			stored_exchange_rate,
+		)
+
+		row = frappe._dict({"transaction_exchange_rate": 600_000, "account_currency": "USD", "transaction_currency": "USD", **values})
+		return stored_exchange_rate(row, currency, "IRR")
+
+	def test_the_stored_rate_of_a_row_posted_in_the_ledger_currency(self):
+		self.assertEqual(self.rate(), 600_000)
+
+	def test_no_rate_when_it_is_not_reliable_for_this_ledger(self):
+		self.assertIsNone(self.rate(currency="IRR", account_currency="IRR", transaction_currency="IRR"), "company currency: «—»")
+		self.assertIsNone(self.rate(transaction_currency="EUR"), "another currency pair is never substituted")
+		self.assertIsNone(self.rate(account_currency="IRR"), "a row posted in another currency")
+		self.assertIsNone(self.rate(transaction_exchange_rate=0))
+		self.assertIsNone(self.rate(transaction_exchange_rate=None))
+
+	def test_running_lines_carry_the_stored_rate_never_a_ratio(self):
+		row = gl_row("A", debit=10, debit_base=7_000_000, account_currency="USD", transaction_currency="USD", transaction_exchange_rate=650_000)
+		lines = running_lines([row], 0, 0, True, "USD", "IRR")
+		self.assertEqual(lines[0]["exchange_rate"], 650_000, "the stored rate, not 7,000,000 / 10")
+
+	def confirm(self, voucher_type, rate, candidates):
+		line = {"voucher_no": "V-1", "account": "AR-USD", "exchange_rate": rate}
+		with patch.dict(voucher_links.RATE_SOURCES, {voucher_type: lambda names: candidates}):
+			voucher_links.confirm_exchange_rates(voucher_type, [line])
+		return line["exchange_rate"]
+
+	def test_journal_and_payment_entries_keep_a_rate_only_when_their_own_row_agrees(self):
+		for voucher_type in ("Journal Entry", "Payment Entry"):
+			self.assertEqual(self.confirm(voucher_type, 600_000, {("V-1", "AR-USD"): {600_000.0}}), 600_000)
+			self.assertIsNone(self.confirm(voucher_type, 600_000, {("V-1", "AR-USD"): {1.0}}), "the row's own document rate differs")
+			self.assertIsNone(self.confirm(voucher_type, 600_000, {("V-1", "AR-USD"): {600_000.0, 610_000.0}}), "ambiguous rows")
+			self.assertIsNone(self.confirm(voucher_type, 600_000, {}), "no document row for the account")
+
+	def test_payment_entry_rate_follows_its_side(self):
+		entry = frappe._dict(name="PE-1", paid_from="Bank USD", paid_to="AR-USD", source_exchange_rate=600_000, target_exchange_rate=1)
+		with patch(f"{PA}.voucher_links.frappe.get_all", return_value=[entry]):
+			rates = voucher_links.payment_entry_rates(["PE-1"])
+		self.assertEqual(rates[("PE-1", "Bank USD")], {600_000.0})
+		self.assertEqual(rates[("PE-1", "AR-USD")], {1.0})
+
+
+class TestSortAllowlist(unittest.TestCase):
+	def test_overview_sort_keys_never_reach_sql(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import (
+			TIE_BREAK,
+			overview_order,
+		)
+
+		self.assertEqual(overview_order("closing_base", "desc"), f"order by (opening_base + period_debit_base - period_credit_base) desc, {TIE_BREAK}")
+		self.assertEqual(overview_order("party", "sideways"), f"order by party_name asc, {TIE_BREAK}")
+		self.assertEqual(overview_order("1; drop table x", "desc"), f"order by {TIE_BREAK}")
+		self.assertEqual(overview_order(None, None), f"order by {TIE_BREAK}")
+
+	def test_ledger_sort_uses_known_columns_with_a_chronological_tie_break(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import ledger
+
+		self.assertTrue(all(re.fullmatch(r"[a-z_]+", column) for columns in ledger.LEDGER_SORT.values() for column in columns))
+		self.assertEqual(ledger.LEDGER_SORT["balance_base"], ("running_base",), "balances sort by the chronological running sum")
+
+		def make(sort_by, sort_order):
+			with (
+				patch.object(ledger, "assert_report_access"),
+				patch.object(ledger, "GLScope"),
+				patch.object(ledger, "party_display_name", return_value="C1"),
+				patch.object(ledger.frappe, "get_cached_value", return_value="IRR"),
+			):
+				return ledger.AccountLedger("Co", "Customer", "C1", None, None, "2026-12-31", currency="USD", sort_by=sort_by, sort_order=sort_order)
+
+		self.assertEqual((make("date", "desc").sort, make("date", "desc").descending), ("date", True))
+		self.assertEqual((make("posting_date desc; --", "desc").sort, make("posting_date desc; --", "desc").descending), (None, False))
+
+
+class TestAccountLedgerMode(unittest.TestCase):
+	def scope(self, **kwargs):
+		def match(doctype):
+			return "`tabAccount`.`company` in ('Co')" if doctype == "Account" else ""
+
+		with patch(f"{PA}.access.build_match_conditions", side_effect=match):
+			return GLScope("Co", "Account", **kwargs)
+
+	def test_account_scope_reads_real_gl_rows_without_a_party(self):
+		scope = self.scope(account_type="Bank", search="10")
+		self.assertTrue(scope.by_account)
+		self.assertIsNone(scope.party_table)
+		self.assertEqual(scope.key_column, f"{GL}.account")
+		self.assertNotIn("party", scope.where, "rows without a party are part of the account ledger")
+		self.assertIn("`sp_account`.account_type = %(scope_account_type)s", scope.where)
+		self.assertEqual(scope.params["scope_account_type"], "Bank")
+		self.assertIn("`sp_account`.account_number like %(scope_search)s", scope.where)
+		self.assertNotIn("left join `tabCustomer`", scope.source)
+
+	def test_account_permissions_apply_through_the_joined_alias(self):
+		scope = self.scope()
+		self.assertIn("(`sp_account`.`company` in ('Co'))", scope.where)
+		self.assertNotIn("`tabAccount`", scope.where)
+
+	def test_account_currency_comes_from_the_account(self):
+		scope = self.scope(account="Bank USD - SP", currency="USD")
+		self.assertIn(f"{ACCOUNT_CURRENCY} = %(scope_account_currency)s", scope.where)
+		self.assertIn(f"{GL}.account = %(scope_account)s", scope.where)
+
+	def test_account_mode_rejects_a_party_and_unknown_account_types(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.access import (
+			assert_report_access,
+		)
+
+		with patch(f"{PA}.access.frappe.has_permission", return_value=True):
+			with self.assertRaises(frappe.ValidationError):
+				assert_report_access("Co", "Account", account_type="Receivable")
+			with self.assertRaises(frappe.ValidationError):
+				assert_report_access("Co", "Account", party="C1")
+
+	def test_unknown_party_types_never_become_a_table(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.access import (
+			is_party_type,
+			party_name_field,
+		)
+
+		self.assertFalse(is_party_type("Customer`; drop table x"))
+		self.assertFalse(is_party_type("Account"))
+		self.assertIsNone(party_name_field("No Such Party Type"))
+
+	def test_site_account_ledger_matches_the_gl_sum(self):
+		"""Read-only: an account ledger's closing equals the plain GL sum of that account."""
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import AccountLedger
+
+		rows = frappe.db.sql(
+			"""select company, account, sum(debit - credit) as base, sum(debit_in_account_currency - credit_in_account_currency) as amount
+			from `tabGL Entry` where is_cancelled = 0 and posting_date <= %s group by company, account order by count(*) desc limit 3""",
+			frappe.utils.today(),
+			as_dict=True,
+		)
+		if not rows:
+			self.skipTest("no GL rows on this site")
+		for row in rows:
+			ledger = AccountLedger(row.company, "Account", None, row.account, None, frappe.utils.today())
+			self.assertAlmostEqual(ledger.summary["closing_base"], frappe.utils.flt(row.base), places=4)
+			self.assertAlmostEqual(ledger.summary["closing"], frappe.utils.flt(row.amount), places=4)
+			lines = [line for page in ledger.iter_lines() for line in page["rows"]]
+			self.assertEqual(len(lines), len({line["gl_entry"] for line in lines}), "no duplicated GL rows")
+			self.assertAlmostEqual(lines[-1]["balance_base"], frappe.utils.flt(row.base), places=4)
+
+	def test_site_sorted_ledger_keeps_every_row_and_its_chronological_balance(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import AccountLedger
+
+		rows = frappe.get_all("GL Entry", filters={"is_cancelled": 0, "party_type": "Customer"}, fields=["company", "party", "account"], limit=1)
+		if not rows:
+			self.skipTest("no Customer GL rows on this site")
+		row = rows[0]
+
+		def lines(**kwargs):
+			ledger = AccountLedger(row.company, "Customer", row.party, row.account, None, frappe.utils.today(), **kwargs)
+			return [line for page in ledger.iter_lines(chunk=2) for line in page["rows"]]
+
+		chronological = {line["gl_entry"]: (line["balance"], line["balance_base"]) for line in lines()}
+		for sort_by in ("debit_base", "date", "balance", "description"):
+			for order in ("asc", "desc"):
+				shown = lines(sort_by=sort_by, sort_order=order)
+				self.assertEqual(sorted(line["gl_entry"] for line in shown), sorted(chronological), f"{sort_by} {order}: no row lost or repeated")
+				for line in shown:
+					self.assertEqual((line["balance"], line["balance_base"]), chronological[line["gl_entry"]])
+		descending = [line["debit_base"] for line in lines(sort_by="debit_base", sort_order="desc")]
+		self.assertEqual(descending, sorted(descending, reverse=True), "amounts sort as numbers")
 
 
 class TestExplorerPage(unittest.TestCase):
@@ -863,7 +1068,7 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertNotIn(".uom", self.js)
 		self.assertNotIn("component_row_html", self.js, "no separate header/component row layout")
 		self.assertIn("pae_format.document(row.doc)", self.js)
-		self.assertIn('<td class="sp-component-title">${pae_format.text(row.title)}</td>', self.js)
+		self.assertNotIn("sp-component-title", self.js, "«عنوان قلم» is merged into «شرح»")
 
 	def test_back_button_is_a_standard_page_action(self):
 		self.assertIn('this.page.set_secondary_action(__("بازگشت به مانده‌ها")', self.js)
@@ -882,8 +1087,19 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertIn("search: this.filters.search.trim() || null", self.js)
 		self.assertIn("side: this.filters.side || null", self.js)
 		self.assertNotIn("pae_ledger_rows.view(", self.js, "no client-side filtering of one page")
-		self.assertNotIn("sp-sortable", self.js, "no visual sort that would break the running balance")
 		self.assertIn("args.search = this.filters.search.trim()", self.js, "exports use the same filter")
+
+	def test_sorting_goes_to_the_server(self):
+		self.assertIn("sp-sortable", self.js)
+		self.assertIn("pae_ledger_view.next_sort(", self.js)
+		self.assertIn("sort_by", self.js)
+		self.assertNotIn(".sort((", self.js, "rows are never sorted on the client")
+
+	def test_default_period_comes_from_the_fiscal_year_and_keeps_user_dates(self):
+		self.assertIn("as_of: frappe.datetime.get_today()", self.js)
+		self.assertIn("dates_touched", self.js)
+		self.assertIn("sessionStorage", self.js)
+		self.assertIn('const PAE_TITLE = "گردش حساب";', self.js)
 
 	def test_compact_row_height_contract(self):
 		with open(PAGE_CSS, encoding="utf-8") as handle:

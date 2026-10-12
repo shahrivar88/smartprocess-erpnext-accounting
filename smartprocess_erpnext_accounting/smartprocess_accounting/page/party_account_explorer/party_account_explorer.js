@@ -6,14 +6,19 @@
 
 const PAE_API = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account.";
 const PAE_ROUTE = "party-account-explorer";
+const PAE_TITLE = "گردش حساب";
+// The account-ledger kind: every GL row of one Account, no party.
+const PAE_ACCOUNT = "Account";
 const PAE_LEDGER_KEYS = ["company", "party_type", "party", "currency", "account", "from_date", "to_date"];
 const PAE_PAGE_LENGTH = 100;
 const PAE_EMPTY = "-";
+// The dates a user picked, kept for this browser tab only (survives a page refresh).
+const PAE_PERIOD_KEY = "pae_period";
 
 frappe.pages[PAE_ROUTE].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
-		title: __("گردش و مانده طرف حساب"),
+		title: __(PAE_TITLE),
 		single_column: true,
 	});
 	frappe.party_account_explorer = new PartyAccountExplorer(page);
@@ -30,11 +35,15 @@ class PartyAccountExplorer {
 		this.page = page;
 		this.overview_page = 1;
 		this.overview = null;
+		this.overview_key = null;
+		this.overview_sort = null;
 		this.ledger = null;
 		this.ledger_key = null;
 		this.cursors = [null];
 		this.page_index = 0;
 		this.opened_from_overview = false;
+		this.dates_touched = false;
+		this.ledger_types = [];
 		this.prefs = new PaeColumnPrefs(frappe.model.user_settings);
 		this.reset_ledger_view();
 		this.make_filters();
@@ -48,12 +57,13 @@ class PartyAccountExplorer {
 				this.show_route();
 			}
 		});
-		this.ready = Promise.all([this.load_defaults(), this.prefs.load()]);
+		this.ready = Promise.all([this.restore_period(), this.load_defaults(), this.prefs.load()]);
 		this.show_route();
 	}
 
 	reset_ledger_view() {
 		this.filters = { search: "", side: "" };
+		this.ledger_sort = null;
 	}
 
 	make_filters() {
@@ -75,7 +85,7 @@ class PartyAccountExplorer {
 		});
 		this.party_type = this.page.add_field({
 			fieldname: "party_type",
-			label: __("نوع طرف حساب"),
+			label: __("نوع طرف حساب / حساب"),
 			fieldtype: "Select",
 			options: [
 				{ value: "Customer", label: __("مشتری") },
@@ -86,7 +96,7 @@ class PartyAccountExplorer {
 		});
 		this.party = this.page.add_field({
 			fieldname: "party",
-			label: __("جستجوی طرف حساب (نام یا کد)"),
+			label: __("جستجو (نام یا کد)"),
 			fieldtype: "Data",
 			change: overview_change,
 		});
@@ -100,7 +110,6 @@ class PartyAccountExplorer {
 			fieldname: "to_date",
 			label: __("تا تاریخ"),
 			fieldtype: "Date",
-			default: frappe.datetime.get_today(),
 			change: () => this.on_period_change(),
 		});
 		this.account = this.page.add_field({
@@ -150,8 +159,17 @@ class PartyAccountExplorer {
 		this.$overview.on("click", "tr.sp-row-link", (event) => {
 			this.open_ledger(this.overview.rows[cint($(event.currentTarget).attr("data-index"))]);
 		});
+		this.$overview.on("click", "th.sp-sortable", (event) => {
+			this.overview_sort = pae_ledger_view.next_sort(this.overview_sort, $(event.currentTarget).attr("data-sort-key"));
+			this.refresh_overview(1);
+		});
 		this.$overview.on("click", ".sp-page-prev", () => this.refresh_overview(this.overview_page - 1));
 		this.$overview.on("click", ".sp-page-next", () => this.refresh_overview(this.overview_page + 1));
+		this.$ledger.on("click", "th.sp-sortable", (event) => {
+			this.ledger_sort = pae_ledger_view.next_sort(this.ledger_sort, $(event.currentTarget).attr("data-sort-key"));
+			this.cursors = [null];
+			this.load_ledger_page(0);
+		});
 		this.$ledger.on("click", ".sp-detail-btn", (event) => this.show_detail($(event.currentTarget).closest("tr").attr("data-gl")));
 		this.$ledger.on("input", ".sp-ledger-search", (event) => {
 			clearTimeout(this.search_timer);
@@ -172,7 +190,7 @@ class PartyAccountExplorer {
 			const exists = data.items.some((item) => item.link_to === PAE_ROUTE);
 			if (!exists) {
 				data.items.push({
-					label: __("گردش و مانده طرف حساب"),
+					label: __(PAE_TITLE),
 					type: "Link",
 					link_type: "Page",
 					link_to: PAE_ROUTE,
@@ -185,17 +203,23 @@ class PartyAccountExplorer {
 		}
 	}
 
+	// Company defaults: the fiscal year that contains the user's today, the ledger
+	// kinds and currencies. Dates the user already picked are never overwritten.
 	load_defaults() {
 		const company = this.company.get_value();
 		if (!company) {
 			return Promise.resolve();
 		}
 		return frappe
-			.xcall(PAE_API + "overview.get_report_defaults", { company })
+			.xcall(PAE_API + "overview.get_report_defaults", { company, as_of: frappe.datetime.get_today() })
 			.then((defaults) => {
 				this.defaults = defaults;
 				this.currency.df.options = [""].concat(defaults.currencies || []);
 				this.currency.refresh();
+				this.set_ledger_types(defaults.ledger_types || []);
+				if (this.dates_touched) {
+					return;
+				}
 				if (defaults.warning) {
 					frappe.show_alert({ message: defaults.warning, indicator: "orange" });
 				}
@@ -203,11 +227,61 @@ class PartyAccountExplorer {
 			});
 	}
 
+	set_ledger_types(options) {
+		if (!options.length) {
+			return;
+		}
+		this.ledger_types = options;
+		const current = this.party_type.get_value();
+		this.party_type.df.options = options.map((option) => ({ value: option.value, label: option.label }));
+		this.party_type.refresh();
+		const value = options.some((option) => option.value === current) ? current : options[0].value;
+		this.muted = true;
+		Promise.resolve(this.party_type.set_value(value)).finally(() => setTimeout(() => (this.muted = false), 50));
+	}
+
+	// The selected kind: a Party Type, or the account ledger with an optional account type.
+	ledger_choice() {
+		const value = this.party_type.get_value() || "Customer";
+		const option = this.ledger_types.find((entry) => entry.value === value);
+		if (option) {
+			return { party_type: option.party_type, account_type: option.account_type || null };
+		}
+		const [party_type, account_type] = value.split(":");
+		return { party_type, account_type: account_type || null };
+	}
+
 	set_period(from_date, to_date) {
 		this.muted = true;
 		return Promise.all([this.from_date.set_value(from_date || ""), this.to_date.set_value(to_date || "")]).finally(() => {
 			setTimeout(() => (this.muted = false), 50);
 		});
+	}
+
+	restore_period() {
+		let stored = null;
+		try {
+			stored = JSON.parse(window.sessionStorage.getItem(PAE_PERIOD_KEY) || "null");
+		} catch (error) {
+			stored = null;
+		}
+		if (!stored || !(stored.from_date || stored.to_date)) {
+			return Promise.resolve();
+		}
+		this.dates_touched = true;
+		return this.set_period(stored.from_date, stored.to_date);
+	}
+
+	remember_period() {
+		this.dates_touched = true;
+		try {
+			window.sessionStorage.setItem(
+				PAE_PERIOD_KEY,
+				JSON.stringify({ from_date: this.from_date.get_value() || null, to_date: this.to_date.get_value() || null })
+			);
+		} catch (error) {
+			// Storage can be unavailable (private mode); the dates still apply to this view.
+		}
 	}
 
 	// ---- routing ----
@@ -223,7 +297,8 @@ class PartyAccountExplorer {
 		}
 		if (route[1] === "ledger") {
 			const state = this.route_state();
-			if (state.party && (state.currency || state.account) && state.company && state.party_type) {
+			const target = state.party_type === PAE_ACCOUNT ? state.account : state.party && (state.currency || state.account);
+			if (target && state.company && state.party_type) {
 				this.show_ledger(state);
 				return;
 			}
@@ -253,7 +328,7 @@ class PartyAccountExplorer {
 		this.show_items.$wrapper.toggle(mode === "ledger");
 		this.$overview.toggle(mode === "overview");
 		this.$ledger.toggle(mode === "ledger");
-		this.page.set_title(mode === "ledger" ? __("گردش حساب طرف حساب") : __("گردش و مانده طرف حساب"));
+		this.page.set_title(__(PAE_TITLE));
 		if (mode === "ledger") {
 			this.page.set_secondary_action(__("بازگشت به مانده‌ها"), () => this.back_to_overview());
 		} else {
@@ -273,12 +348,13 @@ class PartyAccountExplorer {
 		if (this.muted) {
 			return;
 		}
+		this.remember_period();
+		const dates = { from_date: this.from_date.get_value(), to_date: this.to_date.get_value() };
 		if (this.mode === "ledger" && this.ledger_state) {
-			this.set_ledger_route({
-				...this.ledger_state,
-				from_date: this.from_date.get_value(),
-				to_date: this.to_date.get_value(),
-			});
+			if (this.ledger_dates) {
+				this.ledger_dates = dates;
+			}
+			this.set_ledger_route({ ...this.ledger_state, ...dates });
 		} else if (this.mode === "overview") {
 			this.refresh_overview(1);
 		}
@@ -288,19 +364,21 @@ class PartyAccountExplorer {
 
 	show_overview() {
 		this.set_mode("overview");
-		if (this.ledger_dates) {
-			this.set_period(this.ledger_dates.from_date, this.ledger_dates.to_date);
-			this.ledger_dates = null;
-		}
-		if (!this.overview) {
-			this.refresh_overview(1);
-		}
+		const dates = this.ledger_dates;
+		this.ledger_dates = null;
+		return Promise.resolve(dates && this.set_period(dates.from_date, dates.to_date)).then(() => {
+			if (!this.overview || this.overview_key !== JSON.stringify(this.overview_filters())) {
+				this.refresh_overview(1);
+			}
+		});
 	}
 
 	overview_filters() {
+		const choice = this.ledger_choice();
 		return {
 			company: this.company.get_value(),
-			party_type: this.party_type.get_value(),
+			party_type: choice.party_type,
+			account_type: choice.account_type,
 			from_date: this.from_date.get_value() || null,
 			to_date: this.to_date.get_value() || null,
 			party: (this.party.get_value() || "").trim() || null,
@@ -310,14 +388,24 @@ class PartyAccountExplorer {
 		};
 	}
 
+	sort_args(sort) {
+		return sort ? { sort_by: sort.key, sort_order: sort.order } : {};
+	}
+
 	refresh_overview(page) {
 		const filters = this.overview_filters();
 		if (!filters.company || !filters.party_type) {
 			return;
 		}
 		this.overview_page = Math.max(cint(page), 1);
+		this.overview_key = JSON.stringify(filters);
 		frappe
-			.xcall(PAE_API + "overview.get_balance_overview", { ...filters, page: this.overview_page, page_length: PAE_PAGE_LENGTH })
+			.xcall(PAE_API + "overview.get_balance_overview", {
+				...filters,
+				...this.sort_args(this.overview_sort),
+				page: this.overview_page,
+				page_length: PAE_PAGE_LENGTH,
+			})
 			.then((data) => {
 				this.overview = data;
 				this.render_overview();
@@ -327,7 +415,7 @@ class PartyAccountExplorer {
 	render_overview() {
 		const data = this.overview;
 		const company_currency = data.company_currency;
-		const columns = pae_ledger_view.overview_columns();
+		const columns = pae_ledger_view.overview_columns(data.by_account);
 		const cells = (row) => columns.map((column) => pae_ledger_view.overview_cell(column.key, row, company_currency)).join("");
 		const rows = data.rows
 			.map((row, index) => `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش ریزگردش")}">${cells(row)}</tr>`)
@@ -336,18 +424,21 @@ class PartyAccountExplorer {
 			.map((total) => `<tr class="sp-total-row">${cells({ ...total, party_name: `${__("جمع")} (${total.row_count} ${__("ردیف")})` })}</tr>`)
 			.join("");
 		const period = `${pae_format.date(data.from_date) || "—"} ${__("تا")} ${pae_format.date(data.to_date)}`;
+		const note = data.by_account
+			? __("برای دیدن ریزگردش، روی ردیف حساب کلیک کنید. هر ردیف همه ردیف‌های دفتر کل یک حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.")
+			: __("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.");
 		this.$overview.html(`
 			<div class="sp-ledger-meta"><span>${__("دوره")}: ${period}</span></div>
 			<div class="sp-table-wrap">
 				<table class="table sp-table sp-overview-table">
 					${pae_ledger_view.colgroup(columns, this.prefs, "overview")}
-					<thead><tr>${pae_ledger_view.head(columns)}</tr></thead>
+					<thead><tr>${pae_ledger_view.head(columns, this.overview_sort)}</tr></thead>
 					<tbody>${rows || `<tr><td colspan="${columns.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`}</tbody>
 					<tfoot>${totals}</tfoot>
 				</table>
 			</div>
 			${this.pager_html(data.page > 1, data.has_more, data.page)}
-			<p class="text-muted small">${__("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.")}</p>
+			<p class="text-muted small">${note}</p>
 		`);
 		this.prefs.attach(this.$overview.find("table.sp-overview-table"), "overview");
 	}
@@ -365,14 +456,15 @@ class PartyAccountExplorer {
 
 	open_ledger(row) {
 		const filters = this.overview_filters();
+		const by_account = filters.party_type === PAE_ACCOUNT;
 		this.opened_from_overview = true;
 		this.ledger_dates = { from_date: filters.from_date, to_date: filters.to_date };
 		this.set_ledger_route({
 			company: filters.company,
 			party_type: filters.party_type,
-			party: row.party,
+			party: by_account ? null : row.party,
 			currency: row.currency,
-			account: filters.account,
+			account: by_account ? row.account : filters.account,
 			from_date: filters.from_date,
 			to_date: filters.to_date,
 		});
@@ -422,6 +514,7 @@ class PartyAccountExplorer {
 				page_length: PAE_PAGE_LENGTH,
 				search: this.filters.search.trim() || null,
 				side: this.filters.side || null,
+				...this.sort_args(this.ledger_sort),
 			})
 			.then((data) => {
 				if (request !== this.ledger_request) {
@@ -455,6 +548,7 @@ class PartyAccountExplorer {
 			<div class="sp-table-wrap sp-ledger-wrap"></div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
 			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها در هر دو ارز دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}
+				${__("ستون «نرخ ارز» نرخ ذخیره‌شده در همان ردیف دفتر کل است (ارز پایه به ازای یک واحد ارز حساب)؛ اگر نرخ قابل اتکایی ثبت نشده باشد «—» نمایش داده می‌شود.")}
 				${__("ستون «جزئیات» حساب معین هر ردیف و سندی را که آن را ثبت کرده است نشان می‌دهد.")}</p>
 		`);
 		this.render_ledger_table();
@@ -470,8 +564,9 @@ class PartyAccountExplorer {
 		const context = data.context;
 		const columns = this.columns;
 		const rows = [];
-		// A filtered page after the first has no meaningful carry-forward row.
-		if (!(data.filtered && this.page_index > 0)) {
+		// A filtered or sorted page after the first has no meaningful carry-forward row.
+		const windowed = data.filtered || data.sorted;
+		if (!(windowed && this.page_index > 0)) {
 			rows.push(
 				pae_ledger_view.balance_row("sp-opening-row", columns, context, {
 					label: this.page_index ? __("نقل از صفحه قبل") : __("مانده اول دوره"),
@@ -511,12 +606,14 @@ class PartyAccountExplorer {
 		const $wrap = this.$ledger.find(".sp-ledger-wrap");
 		$wrap.html(`<table class="table sp-table sp-ledger-table">
 			${pae_ledger_view.colgroup(columns, this.prefs, "ledger")}
-			<thead><tr>${pae_ledger_view.head(columns)}</tr></thead>
+			<thead><tr>${pae_ledger_view.head(columns, this.ledger_sort)}</tr></thead>
 			<tbody>${rows.join("")}</tbody>
 			<tfoot>${footer.join("")}</tfoot>
 		</table>`);
 		this.prefs.attach($wrap.find("table"), "ledger");
-		this.$ledger.find(".sp-ledger-status").html(pae_ledger_view.status(this.filters, data.filter_totals, context.currency, context.company_currency));
+		this.$ledger
+			.find(".sp-ledger-status")
+			.html(pae_ledger_view.status(this.filters, data.filter_totals, context.currency, context.company_currency, data.sorted));
 	}
 
 	// ---- document details dialog ----
@@ -567,6 +664,7 @@ class PartyAccountExplorer {
 				file_type,
 				...this.ledger_state,
 				show_items: this.show_items.get_value() ? 1 : 0,
+				...this.sort_args(this.ledger_sort),
 			};
 			if (this.filters.search.trim()) {
 				args.search = this.filters.search.trim();
@@ -578,7 +676,7 @@ class PartyAccountExplorer {
 			open_url_post(frappe.request.url, args);
 			return;
 		}
-		const filters = this.overview_filters();
+		const filters = { ...this.overview_filters(), ...this.sort_args(this.overview_sort) };
 		Object.keys(filters).forEach((key) => filters[key] === null && delete filters[key]);
 		open_url_post(frappe.request.url, { cmd: PAE_API + "excel_export.export_balance_overview", file_type, ...filters });
 	}

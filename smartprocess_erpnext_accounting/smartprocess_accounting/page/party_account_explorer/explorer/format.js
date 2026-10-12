@@ -25,6 +25,14 @@ const pae_format = {
 		}
 		return `<span class="sp-num">${frappe.format(flt(value), { fieldtype: "Float", precision: 9 }, { inline: true })}</span>`;
 	},
+	// A stored exchange rate with the decimals it was stored with (GL keeps 9); «—» when absent.
+	exchange_rate(value) {
+		if (!flt(value)) {
+			return "—";
+		}
+		const decimals = (Number(value).toFixed(9).replace(/\.?0+$/, "").split(".")[1] || "").length;
+		return `<span class="sp-num">${frappe.format(flt(value), { fieldtype: "Float", precision: decimals }, { inline: true })}</span>`;
+	},
 	number(value) {
 		if (value === null || value === undefined || value === "") {
 			return "";

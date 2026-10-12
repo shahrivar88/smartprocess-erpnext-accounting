@@ -16,6 +16,7 @@ from collections import defaultdict
 import frappe
 from frappe import _
 from frappe.query_builder.functions import Count
+from frappe.utils import flt
 
 from .invoice_lines import plain_text
 from .invoice_presentation import amount_basis, both_currency_components, money_row, with_running_balance
@@ -41,7 +42,46 @@ def decorate_lines(lines, include_items=True, context=None):
 	for voucher_type, group in groups.items():
 		describe = DESCRIBERS.get(voucher_type, describe_generic)
 		describe(voucher_type, group, include_items, context)
+		if voucher_type in RATE_SOURCES:
+			confirm_exchange_rates(voucher_type, group)
 	return lines
+
+
+def confirm_exchange_rates(voucher_type, lines):
+	"""Journal Entry and Payment Entry store one transaction rate on all their GL rows,
+	even on a row whose own document rate differs. A line keeps its stored rate only
+	when every document row of the same account carries exactly that rate."""
+	rated = [line for line in lines if line.get("exchange_rate")]
+	if not rated:
+		return
+	candidates = RATE_SOURCES[voucher_type](voucher_numbers(rated))
+	for line in rated:
+		rates = candidates.get((line["voucher_no"], line["account"]), set())
+		if rates != {flt(line["exchange_rate"], 9)}:
+			line["exchange_rate"] = None
+
+
+def journal_entry_rates(names):
+	rates = defaultdict(set)
+	for row in frappe.get_all(
+		"Journal Entry Account",
+		filters={"parenttype": "Journal Entry", "parent": ["in", names]},
+		fields=["parent", "account", "exchange_rate"],
+	):
+		rates[(row.parent, row.account)].add(flt(row.exchange_rate, 9))
+	return rates
+
+
+def payment_entry_rates(names):
+	rates = defaultdict(set)
+	for row in frappe.get_all(
+		"Payment Entry",
+		filters={"name": ["in", names]},
+		fields=["name", "paid_from", "paid_to", "source_exchange_rate", "target_exchange_rate"],
+	):
+		rates[(row.name, row.paid_from)].add(flt(row.source_exchange_rate, 9))
+		rates[(row.name, row.paid_to)].add(flt(row.target_exchange_rate, 9))
+	return rates
 
 
 def describe_generic(voucher_type, lines, include_items, context=None):
@@ -102,8 +142,11 @@ def describe_conversion(voucher_type, lines, include_items, context=None):
 
 
 def describe_invoice(voucher_type, lines, include_items, context=None):
+	"""Item rows only split the party's own invoice line; an account ledger keeps every
+	GL line whole, because an income or tax line is not the invoice total."""
 	invoices = readable_rows(voucher_type, voucher_numbers(lines), [*INVOICE_FIELDS, PAYMENT_FLAG[voucher_type]])
-	sources = invoice_sources(voucher_type, list(invoices), context) if include_items and context else None
+	split_items = include_items and context and context.get("party")
+	sources = invoice_sources(voucher_type, list(invoices), context) if split_items else None
 	split = set()
 	for line in lines:
 		invoice = invoices.get(line["voucher_no"])
@@ -257,6 +300,8 @@ def row_reference(number, role):
 		return role
 	return f"ردیف {number} · {role}"
 
+
+RATE_SOURCES = {"Journal Entry": journal_entry_rates, "Payment Entry": payment_entry_rates}
 
 DESCRIBERS = {
 	ACCOUNTING_POSTING: describe_posting,

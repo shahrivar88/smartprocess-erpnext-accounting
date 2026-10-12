@@ -17,7 +17,12 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.invoi
 	with_running_balance,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import running_lines
-from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import ledger_rows
+from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import (
+	BALANCE_BASE,
+	CREDIT_BASE,
+	DEBIT_BASE,
+	ledger_rows,
+)
 
 PA = "smartprocess_erpnext_accounting.smartprocess_accounting.party_account"
 PRECISION = 2
@@ -302,12 +307,12 @@ class TestLedgerReconciliation(unittest.TestCase):
 			rows, _count = ledger_rows(ledger)
 		body = [row for row in rows if row.kind == "line"]
 		self.assertEqual([row.kind for row in rows[len(body) :]], ["opening", "total", "closing"])
-		self.assertTrue(all(row[7] or row[8] for row in body), "every body row carries an amount")
-		self.assertEqual(sum(row[7] or 0 for row in body), 174_000_000)
-		self.assertEqual(sum(row[8] or 0 for row in body), 20_000_000)
-		self.assertEqual(rows[-2][7:9], [174_000_000, 20_000_000])
-		self.assertEqual(rows[-1][9], summary["closing"])
-		self.assertEqual(body[-1][9], summary["closing"], "the running balance ends on the GL closing")
+		self.assertTrue(all(row[DEBIT_BASE] or row[CREDIT_BASE] for row in body), "every body row carries an amount")
+		self.assertEqual(sum(row[DEBIT_BASE] or 0 for row in body), 174_000_000)
+		self.assertEqual(sum(row[CREDIT_BASE] or 0 for row in body), 20_000_000)
+		self.assertEqual(rows[-2][DEBIT_BASE : CREDIT_BASE + 1], [174_000_000, 20_000_000])
+		self.assertEqual(rows[-1][BALANCE_BASE], summary["closing"])
+		self.assertEqual(body[-1][BALANCE_BASE], summary["closing"], "the running balance ends on the GL closing")
 		self.assertEqual({row[2] for row in body}, {"فاکتور فروش - SINV-1", "برگشت از فروش - SINV-2", "فاکتور فروش - SINV-3"})
 
 	def test_items_split_once_per_invoice(self):

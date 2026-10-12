@@ -21,6 +21,22 @@ OPERATION_LABELS = {
 	"Payment": "پرداخت",
 }
 
+# Party Types without a label here show their translated DocType name.
+PARTY_TYPE_LABELS = {
+	"Customer": "مشتری",
+	"Supplier": "تأمین‌کننده",
+	"Employee": "کارمند",
+	"Shareholder": "سهامدار",
+	"SmartProcess Financial Intermediary": "واسطه مالی",
+}
+
+# Account-ledger choices: (Account.account_type or None for every account, label).
+ACCOUNT_LEDGER_CHOICES = (
+	("Bank", "حساب بانکی"),
+	("Cash", "صندوق"),
+	(None, "همه حساب‌های دفتر کل"),
+)
+
 CONVERSION_MODE_LABELS = {
 	"Receipt": "تبدیل از رسید",
 	"Balance": "تبدیل از مانده حساب",

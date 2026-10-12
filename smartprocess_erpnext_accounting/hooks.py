@@ -20,7 +20,7 @@ add_to_apps_screen = [
 after_migrate = "smartprocess_erpnext_accounting.install.after_migrate"
 
 app_include_css = [
-	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.10.3",
+	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.11.0",
 	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.9.2",
 ]
 

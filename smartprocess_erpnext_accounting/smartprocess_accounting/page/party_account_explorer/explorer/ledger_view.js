@@ -1,25 +1,32 @@
 // HTML for the two explorer tables. Every column has a stable key and a default
-// width (overridable per user). Ledger rows stay in chronological order: no column
-// sorts, because the running balance only holds in that order. Plain columns show
-// the GL company-currency amounts, «ارزی» columns the GL account-currency amounts.
+// width (overridable per user). `sortable` columns sort on the server; ledger
+// balances stay the chronological balances whatever the display order. Plain columns
+// show the GL company-currency amounts, «ارزی» columns the GL account-currency amounts.
 const pae_ledger_view = {
 	columns(context) {
 		return [
-			{ key: "number", label: __("ردیف"), width: 64 },
-			{ key: "date", label: __("تاریخ"), width: 104 },
-			{ key: "document", label: __("نوع برگه"), width: 230 },
-			{ key: "description", label: __("شرح"), width: 220 },
-			{ key: "title", label: __("عنوان قلم"), width: 200 },
+			{ key: "number", label: __("ردیف"), width: 64, sortable: true, help: __("ترتیب زمانی ثبت در دفتر کل") },
+			{ key: "date", label: __("تاریخ"), width: 104, sortable: true },
+			{ key: "document", label: __("نوع برگه"), width: 230, sortable: true },
+			{ key: "description", label: __("شرح"), width: 300, sortable: true },
 			{ key: "qty", label: __("مقدار"), width: 80, numeric: true },
 			{ key: "rate_base", label: __("فی"), width: 130, numeric: true },
-			{ key: "debit_base", label: __("بدهکار"), width: 140, numeric: true },
-			{ key: "credit_base", label: __("بستانکار"), width: 140, numeric: true },
-			{ key: "balance_base", label: __("مانده"), width: 150, numeric: true },
+			{ key: "debit_base", label: __("بدهکار"), width: 140, numeric: true, sortable: true },
+			{ key: "credit_base", label: __("بستانکار"), width: 140, numeric: true, sortable: true },
+			{ key: "balance_base", label: __("مانده"), width: 150, numeric: true, sortable: true },
+			{
+				key: "exchange_rate",
+				label: __("نرخ ارز"),
+				width: 120,
+				numeric: true,
+				sortable: true,
+				help: __("نرخ ثبت‌شده در دفتر کل: هر ۱ {0} برابر چند {1}", [context.currency, context.company_currency]),
+			},
 			{ key: "rate", label: __("فی ارزی"), width: 120, numeric: true },
-			{ key: "debit", label: __("بدهکار ارزی"), width: 130, numeric: true },
-			{ key: "credit", label: __("بستانکار ارزی"), width: 130, numeric: true },
-			{ key: "balance", label: __("مانده ارزی"), width: 140, numeric: true },
-			{ key: "actions", label: __("جزئیات"), width: 230, help: __("حساب معین و سندی که این ردیف دفتر کل را ثبت کرده است") },
+			{ key: "debit", label: __("بدهکار ارزی"), width: 130, numeric: true, sortable: true },
+			{ key: "credit", label: __("بستانکار ارزی"), width: 130, numeric: true, sortable: true },
+			{ key: "balance", label: __("مانده ارزی"), width: 140, numeric: true, sortable: true },
+			{ key: "actions", label: __("جزئیات"), width: 230, sortable: true, help: __("حساب معین و سندی که این ردیف دفتر کل را ثبت کرده است") },
 		];
 	},
 
@@ -45,7 +52,7 @@ const pae_ledger_view = {
 				<div class="sp-ledger-meta">
 					${meta(__("شرکت"), pae_format.text(context.company))}
 					${meta(__("ارز حساب"), pae_format.text(currency))}
-					${context.account ? meta(__("حساب"), pae_format.text(context.account)) : ""}
+					${context.account && !context.by_account ? meta(__("حساب"), pae_format.text(context.account)) : ""}
 					${meta(__("دوره"), period)}
 				</div>
 			</div>
@@ -72,9 +79,9 @@ const pae_ledger_view = {
 
 	// Filtering runs on the whole period server-side; shown balances remain the real
 	// chronological balances after each row.
-	status(filters, totals, currency, company_currency) {
+	status(filters, totals, currency, company_currency, sorted) {
 		if (!pae_ledger_rows.is_filtered(filters) || !totals) {
-			return "";
+			return sorted ? __("ترتیب ردیف‌ها مرتب‌سازی نمایشی است؛ مانده هر ردیف، مانده واقعی پس از آن ردیف به ترتیب زمانی است.") : "";
 		}
 		const base = company_currency || currency;
 		return `${__("{0} ردیف دفتر کل مطابق فیلتر", [totals.row_count])} ·
@@ -90,13 +97,28 @@ const pae_ledger_view = {
 		return `<colgroup>${columns.map((column) => `<col data-col="${column.key}" style="width:${prefs.width(table, column.key, column.width)}px">`).join("")}</colgroup>`;
 	},
 
-	head(columns) {
+	// `sort`: { key, order } of the active server sort, or null.
+	head(columns, sort) {
 		return columns
 			.map((column) => {
 				const help = column.help ? ` title="${pae_format.text(column.help)}"` : "";
-				return `<th data-col="${column.key}" data-default-width="${column.width}"${help}>${pae_format.text(column.label)}</th>`;
+				if (!column.sortable) {
+					return `<th data-col="${column.key}" data-default-width="${column.width}"${help}>${pae_format.text(column.label)}</th>`;
+				}
+				const order = sort && sort.key === column.key ? sort.order : "";
+				const aria = order === "asc" ? "ascending" : order === "desc" ? "descending" : "none";
+				const icon = order === "asc" ? "▲" : order === "desc" ? "▼" : "↕";
+				return `<th class="sp-sortable${order ? " sp-sorted" : ""}" data-col="${column.key}" data-sort-key="${column.key}" data-default-width="${column.width}" aria-sort="${aria}"${help}>${pae_format.text(column.label)}<span class="sp-sort-icon">${icon}</span></th>`;
 			})
 			.join("");
+	},
+
+	// Header click: ascending, then descending, then back to the default order.
+	next_sort(sort, key) {
+		if (!sort || sort.key !== key) {
+			return { key, order: "asc" };
+		}
+		return sort.order === "asc" ? { key, order: "desc" } : null;
 	},
 
 	voucher(voucher) {
@@ -130,12 +152,12 @@ const pae_ledger_view = {
 				return `<td>${pae_format.document(row.doc)}</td>`;
 			case "description":
 				return `<td class="sp-remarks">${pae_format.text(row.description)}${pae_ledger_view.badges(row.badges)}</td>`;
-			case "title":
-				return `<td class="sp-component-title">${pae_format.text(row.title)}</td>`;
 			case "qty":
 				return `<td>${pae_format.number(row.qty)}</td>`;
 			case "rate_base":
 				return `<td>${pae_format.amount(row.rate_base, base)}</td>`;
+			case "exchange_rate":
+				return row.kind === "reference" ? "<td></td>" : `<td class="sp-exchange-rate">${pae_format.exchange_rate(row.exchange_rate)}</td>`;
 			case "rate":
 				return `<td>${pae_format.amount(row.rate, currency)}</td>`;
 			case "debit_base":
@@ -193,16 +215,17 @@ const pae_ledger_view = {
 		return `<tr class="${css}">${cells.join("")}</tr>`;
 	},
 
-	overview_columns() {
+	// Every page 1 column sorts on the server. `by_account`: one row per Account.
+	overview_columns(by_account) {
 		return [
-			{ key: "party", label: __("طرف حساب"), width: 240 },
-			{ key: "currency", label: __("ارز حساب"), width: 110 },
-			{ key: "period_debit_base", label: __("گردش بدهکار"), width: 150, numeric: true },
-			{ key: "period_credit_base", label: __("گردش بستانکار"), width: 150, numeric: true },
-			{ key: "closing_base", label: __("مانده"), width: 160, numeric: true },
-			{ key: "period_debit", label: __("گردش بدهکار ارزی"), width: 150, numeric: true },
-			{ key: "period_credit", label: __("گردش بستانکار ارزی"), width: 150, numeric: true },
-			{ key: "closing", label: __("مانده ارزی"), width: 160, numeric: true },
+			{ key: "party", label: by_account ? __("حساب") : __("طرف حساب"), width: 240, sortable: true },
+			{ key: "currency", label: __("ارز حساب"), width: 110, sortable: true },
+			{ key: "period_debit_base", label: __("گردش بدهکار"), width: 150, numeric: true, sortable: true },
+			{ key: "period_credit_base", label: __("گردش بستانکار"), width: 150, numeric: true, sortable: true },
+			{ key: "closing_base", label: __("مانده"), width: 160, numeric: true, sortable: true },
+			{ key: "period_debit", label: __("گردش بدهکار ارزی"), width: 150, numeric: true, sortable: true },
+			{ key: "period_credit", label: __("گردش بستانکار ارزی"), width: 150, numeric: true, sortable: true },
+			{ key: "closing", label: __("مانده ارزی"), width: 160, numeric: true, sortable: true },
 		];
 	},
 

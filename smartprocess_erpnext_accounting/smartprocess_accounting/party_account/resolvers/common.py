@@ -9,7 +9,7 @@ A row with `is_current` is the one GL line, Pair or leg the user clicked."""
 import frappe
 from frappe.utils import flt
 
-from ..access import PARTY_NAME_FIELD
+from ..access import party_name_field
 
 GL_LINE_FIELDS = [
 	"name",
@@ -91,11 +91,13 @@ def line_side(line):
 def party_titles(rows, type_key="party_type", party_key="party"):
 	wanted = {}
 	for row in rows:
-		if row.get(type_key) in PARTY_NAME_FIELD and row.get(party_key):
+		if row.get(type_key) and row.get(party_key):
 			wanted.setdefault(row.get(type_key), set()).add(row.get(party_key))
 	titles = {}
 	for party_type, names in wanted.items():
-		field = PARTY_NAME_FIELD[party_type]
+		field = party_name_field(party_type)
+		if not field:
+			continue
 		for name, title in frappe.get_all(party_type, filters={"name": ["in", list(names)]}, fields=["name", field], as_list=True):
 			titles[(party_type, name)] = title or name
 	return titles

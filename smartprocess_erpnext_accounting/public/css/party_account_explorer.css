@@ -176,6 +176,26 @@
 	border-bottom: 1px solid var(--border-color, #d1d8dd);
 }
 
+.sp-party-explorer .sp-table thead th.sp-sortable {
+	cursor: pointer;
+}
+
+.sp-party-explorer .sp-table thead th.sp-sortable:hover,
+.sp-party-explorer .sp-table thead th.sp-sorted {
+	color: var(--text-color, #1f272e);
+}
+
+.sp-party-explorer .sp-sort-icon {
+	margin-inline-start: 4px;
+	font-size: 0.68rem;
+	opacity: 0.4;
+}
+
+.sp-party-explorer th.sp-sorted .sp-sort-icon {
+	opacity: 1;
+	color: var(--primary-color, #2490ef);
+}
+
 .sp-party-explorer .sp-col-resizer {
 	position: absolute;
 	top: 0;
@@ -234,10 +254,6 @@ body.sp-col-resizing {
 
 .sp-party-explorer tr.sp-gl-row:not(.sp-group-first) .sp-cell-number {
 	padding-inline-start: 18px;
-}
-
-.sp-party-explorer tr.sp-gl-row:not(.sp-kind-item):not(.sp-kind-line) td.sp-component-title {
-	color: var(--text-muted, #6c7680);
 }
 
 .sp-party-explorer .sp-doc-type {

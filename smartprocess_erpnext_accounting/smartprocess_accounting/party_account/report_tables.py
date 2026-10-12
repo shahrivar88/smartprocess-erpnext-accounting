@@ -18,8 +18,12 @@ from .voucher_links import decorate_lines
 MAX_EXPORT_LINES = 50000
 DOCUMENT_HEADER = "نوع برگه"
 DETAILS_HEADER = "جزئیات"
-# Ledger cells: company-currency amounts first, then the account-currency ones.
-RATE_BASE, DEBIT_BASE, CREDIT_BASE, BALANCE_BASE = 6, 7, 8, 9
+NO_RATE = "—"
+# Ledger cells: company-currency amounts first, the stored exchange rate, then the
+# account-currency ones.
+NUMBER, DATE, DOCUMENT, DESCRIPTION, QTY = 0, 1, 2, 3, 4
+RATE_BASE, DEBIT_BASE, CREDIT_BASE, BALANCE_BASE = 5, 6, 7, 8
+EXCHANGE_RATE = 9
 RATE, DEBIT, CREDIT, BALANCE, DETAILS = 10, 11, 12, 13, 14
 LEDGER_WIDTH = 15
 
@@ -32,9 +36,9 @@ class SheetRow(list):
 		self.kind = kind
 
 
-def overview_headers(company_currency):
+def overview_headers(company_currency, entity_label="طرف حساب"):
 	return [
-		"طرف حساب",
+		entity_label,
 		"ارز حساب",
 		f"گردش بدهکار ({company_currency})",
 		f"گردش بستانکار ({company_currency})",
@@ -45,13 +49,13 @@ def overview_headers(company_currency):
 	]
 
 
-def overview_table(rows, totals, company_currency):
-	"""Party rows, then one total row per account currency; currencies never add up together."""
+def overview_table(rows, totals, company_currency, entity_label="طرف حساب"):
+	"""Party (or account) rows, then one total row per account currency; currencies never add up together."""
 	if len(rows) > MAX_EXPORT_LINES:
 		too_large()
 	table = [SheetRow([row["party_name"], currency_text(row["currency"], row.get("other_currency_rows")), *overview_amounts(row)]) for row in rows]
 	table += [SheetRow([f"جمع ({total['row_count']} ردیف)", total["currency"], *overview_amounts(total)], "total") for total in totals]
-	return overview_headers(company_currency), table
+	return overview_headers(company_currency, entity_label), table
 
 
 def overview_amounts(row):
@@ -71,12 +75,12 @@ def ledger_headers(currency, company_currency):
 		"تاریخ",
 		DOCUMENT_HEADER,
 		"شرح",
-		"عنوان قلم",
 		"مقدار",
 		f"فی ({company_currency})",
 		f"بدهکار ({company_currency})",
 		f"بستانکار ({company_currency})",
 		f"مانده ({company_currency})",
+		f"نرخ ارز ({company_currency} برای 1 {currency})",
 		f"فی ارزی ({currency})",
 		f"بدهکار ارزی ({currency})",
 		f"بستانکار ارزی ({currency})",
@@ -128,11 +132,12 @@ def line_rows(line, position):
 	rows = []
 	for index, entry in enumerate(entries, start=1):
 		row = blank("line")
-		row[0] = f"{position}.{index}" if len(entries) > 1 else str(position)
-		row[1], row[2] = date_text(line["posting_date"]), document_text(line)
-		row[3] = join_text(entry["description"], note if index == 1 else "")
-		row[4], row[5] = entry["title"], number(entry["qty"])
+		row[NUMBER] = f"{position}.{index}" if len(entries) > 1 else str(position)
+		row[DATE], row[DOCUMENT] = date_text(line["posting_date"]), document_text(line)
+		row[DESCRIPTION] = join_text(entry_description(entry.get("title"), entry["description"]), note if index == 1 else "")
+		row[QTY] = number(entry["qty"])
 		row[RATE_BASE], row[RATE] = number(entry.get("rate_base")), number(entry["rate"])
+		row[EXCHANGE_RATE] = exchange_rate_cell(line, entry)
 		row[DEBIT_BASE], row[CREDIT_BASE] = side_amount(entry["debit_base"]), side_amount(entry["credit_base"])
 		row[DEBIT], row[CREDIT] = side_amount(entry["debit"]), side_amount(entry["credit"])
 		row[BALANCE_BASE], row[BALANCE] = number(entry["balance_base"]), number(entry["balance"])
@@ -141,8 +146,28 @@ def line_rows(line, position):
 	return rows
 
 
+def entry_description(title, description):
+	"""«شرح» of a row: the item/adjustment title and its own description, once each."""
+	title, description = (title or "").strip(), (description or "").strip()
+	if not title or title in description:
+		return description
+	if not description or description in title:
+		return title
+	return f"{title} · {description}"
+
+
+def exchange_rate_cell(line, entry):
+	"""The GL line's stored rate on each of its money rows; «—» when none is reliable.
+	An allocation text row carries no amount and so no rate."""
+	if entry.get("kind") == "reference":
+		return ""
+	rate = line.get("exchange_rate")
+	return number(rate) if rate else NO_RATE
+
+
 def plain_entry(line):
 	return {
+		"kind": "line",
 		"description": line["remarks"] or "",
 		"title": "",
 		"qty": None,
@@ -186,14 +211,14 @@ def join_text(*parts):
 
 def balance_row(kind, label, date, balance, balance_base):
 	row = blank(kind)
-	row[1], row[2] = date_text(date), label
+	row[DATE], row[DOCUMENT] = date_text(date), label
 	row[BALANCE_BASE], row[BALANCE] = number(balance_base), number(balance)
 	return row
 
 
 def totals_row(kind, label, debit_base, credit_base, debit, credit):
 	row = blank(kind)
-	row[2] = label
+	row[DOCUMENT] = label
 	row[DEBIT_BASE], row[CREDIT_BASE] = number(debit_base), number(credit_base)
 	row[DEBIT], row[CREDIT] = number(debit), number(credit)
 	return row

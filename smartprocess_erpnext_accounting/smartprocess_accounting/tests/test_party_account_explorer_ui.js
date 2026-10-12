@@ -78,7 +78,8 @@ function invoice_line(extra) {
 	});
 	const total = group.rows.reduce((sum, row) => sum + row.debit, 0);
 	assert.equal(total, 215000000, "split rows add up to the GL line");
-	assert.equal(group.rows[0].title, "DS-2CD2347G2-L (2.8mm)", "the item name only");
+	assert.equal(group.rows[0].description, "DS-2CD2347G2-L (2.8mm)", "the item name is the description");
+	assert.equal("title" in group.rows[0], false, "no separate item-title column");
 	assert.equal(group.rows[0].qty * group.rows[0].rate, group.rows[0].debit);
 	assert.deepEqual([group.rows[0].first, group.rows[1].last], [true, true]);
 
@@ -100,13 +101,63 @@ function invoice_line(extra) {
 	const columns = pae_ledger_view.columns(CONTEXT);
 	assert.deepEqual(
 		columns.map((column) => column.label),
-		["ردیف", "تاریخ", "نوع برگه", "شرح", "عنوان قلم", "مقدار", "فی", "بدهکار", "بستانکار", "مانده", "فی ارزی", "بدهکار ارزی", "بستانکار ارزی", "مانده ارزی", "جزئیات"]
+		["ردیف", "تاریخ", "نوع برگه", "شرح", "مقدار", "فی", "بدهکار", "بستانکار", "مانده", "نرخ ارز", "فی ارزی", "بدهکار ارزی", "بستانکار ارزی", "مانده ارزی", "جزئیات"]
 	);
 	assert.equal(columns.some((column) => column.key === "posting_rate"), false, "no rate derived from GL amounts");
 	assert.equal(columns.find((column) => column.key === "document").label, "نوع برگه");
 	assert.equal(columns.some((column) => column.key === "detail_ref"), false);
-	assert.equal(columns.some((column) => column.sort), false, "no visual sort: rows stay chronological");
-	assert.equal(pae_ledger_view.head(columns).includes("data-sort"), false);
+	assert.equal(columns.some((column) => column.key === "title"), false, "«عنوان قلم» is merged into «شرح»");
+	assert.deepEqual(
+		columns.filter((column) => !column.sortable).map((column) => column.key),
+		["qty", "rate_base", "rate"],
+		"every per-line column sorts; item quantities and unit prices are not GL line values"
+	);
+}
+
+// Column sort: clickable headers with an indicator; asc → desc → default order.
+{
+	const columns = pae_ledger_view.columns(CONTEXT);
+	const plain = pae_ledger_view.head(columns, null);
+	assert.equal((plain.match(/class="sp-sortable"/g) || []).length, 12);
+	assert.match(plain, /data-sort-key="debit_base"[^>]*aria-sort="none"[^>]*>بدهکار<span class="sp-sort-icon">↕<\/span>/);
+	assert.equal(/data-sort-key="qty"/.test(plain), false);
+	const sorted = pae_ledger_view.head(columns, { key: "date", order: "desc" });
+	assert.match(sorted, /class="sp-sortable sp-sorted" data-col="date" data-sort-key="date"[^>]*aria-sort="descending"[^>]*>تاریخ<span class="sp-sort-icon">▼<\/span>/);
+	assert.equal((sorted.match(/sp-sorted/g) || []).length, 1, "one active sort");
+	assert.deepEqual(pae_ledger_view.next_sort(null, "date"), { key: "date", order: "asc" });
+	assert.deepEqual(pae_ledger_view.next_sort({ key: "date", order: "asc" }, "date"), { key: "date", order: "desc" });
+	assert.equal(pae_ledger_view.next_sort({ key: "date", order: "desc" }, "date"), null);
+	assert.deepEqual(pae_ledger_view.next_sort({ key: "date", order: "desc" }, "debit"), { key: "debit", order: "asc" });
+	assert.match(pae_ledger_view.status({ search: "", side: "" }, null, "USD", "IRR", true), /مانده واقعی پس از آن ردیف به ترتیب زمانی/);
+}
+
+// «شرح»: item title and description merged without repeating either.
+{
+	const merge = pae_ledger_rows.description;
+	assert.equal(merge("Camera", ""), "Camera");
+	assert.equal(merge("", "Payment from customer"), "Payment from customer");
+	assert.equal(merge("Camera", "Camera 2.8mm lens"), "Camera 2.8mm lens");
+	assert.equal(merge("Camera 2.8mm", "Camera"), "Camera 2.8mm");
+	assert.equal(merge("Camera", "Outdoor"), "Camera · Outdoor");
+	assert.equal(merge(null, undefined), "");
+}
+
+// «نرخ ارز»: the stored rate only; «—» when the server sent none; blank on reference rows.
+{
+	const usd = { currency: "USD", company_currency: "IRR", is_foreign: true };
+	const [group] = pae_ledger_rows.groups([invoice_line({ components: [], exchange_rate: 1050000 })], 0, true);
+	assert.equal(group.rows[0].exchange_rate, 1050000);
+	assert.match(pae_ledger_view.cell("exchange_rate", group.rows[0], usd), />1050000</);
+	const [none] = pae_ledger_rows.groups([invoice_line({ components: [] })], 0, true);
+	assert.match(pae_ledger_view.cell("exchange_rate", none.rows[0], CONTEXT), /<td[^>]*>—<\/td>/);
+	assert.equal(pae_ledger_view.cell("exchange_rate", { kind: "reference", exchange_rate: 5 }, usd), "<td></td>");
+	assert.equal(pae_format.exchange_rate(0), "—");
+	assert.match(pae_format.exchange_rate(1.25), />1.25</);
+	const column = pae_ledger_view.columns(usd).find((item) => item.key === "exchange_rate");
+	assert.match(column.help, /USD/);
+	assert.match(column.help, /IRR/);
+	const order = pae_ledger_view.columns(usd).map((item) => item.key);
+	assert.equal(order.indexOf("exchange_rate") + 1, order.indexOf("rate"), "«نرخ ارز» sits right before «فی ارزی»");
 }
 
 // «جزئیات»: the GL voucher (SP-POST / JE / invoice), linked when readable, with the row reference below.
@@ -202,6 +253,8 @@ function invoice_line(extra) {
 	assert.match(html, /Customer One/);
 	assert.equal(html.includes("CUST-0001"), false, "the party code is not repeated under the name");
 	assert.equal(columns.some((column) => column.key === "account"), false, "no account column on page 1");
+	assert.equal(columns.every((column) => column.sortable), true, "every page 1 column sorts");
+	assert.equal(pae_ledger_view.overview_columns(true)[0].label, "حساب", "account mode names the Account column");
 }
 
 // Column widths: cleaned on load, clamped, saved per table without dropping the others.
