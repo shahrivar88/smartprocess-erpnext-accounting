@@ -17,7 +17,7 @@ from .pdf_html import build_pdf_html
 from .report_tables import MAX_EXPORT_LINES, ledger_headers, ledger_rows, overview_table
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def export_balance_overview(
 	file_type,
 	company,
@@ -44,7 +44,7 @@ def export_balance_overview(
 	send_file(file_type, headers, rows, "گردش-حساب", "گردش حساب", subtitle)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def export_account_ledger(
 	file_type,
 	company,

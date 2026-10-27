@@ -21,6 +21,15 @@ def after_migrate():
 	_ensure_number_separator_defaults()
 
 
+def reload_number_display_settings():
+	"""Sync only the Settings Single metadata and missing display defaults."""
+	if not frappe.db.exists("DocType", "SmartProcess Accounting Settings"):
+		return
+	frappe.reload_doc("smartprocess_accounting", "doctype", "smartprocess_accounting_settings", force=True)
+	_ensure_number_separator_defaults()
+	frappe.clear_cache()
+
+
 def _ensure_number_separator_defaults():
 	doctype = "SmartProcess Accounting Settings"
 	if not frappe.db.exists("DocType", doctype):
@@ -32,6 +41,16 @@ def _ensure_number_separator_defaults():
 		"number_separator",
 		"hide_insignificant_trailing_zeros",
 		"allow_exchange_rate_editing",
+		"hide_trailing_zeros_sales_invoice",
+		"hide_trailing_zeros_purchase_invoice",
+		"hide_trailing_zeros_quotation",
+		"hide_trailing_zeros_sales_order",
+		"hide_trailing_zeros_purchase_order",
+		"live_separator_sales_invoice",
+		"live_separator_purchase_invoice",
+		"live_separator_quotation",
+		"live_separator_sales_order",
+		"live_separator_purchase_order",
 	):
 		df = meta.get_field(fieldname)
 		if not df or df.default is None or fieldname in present:

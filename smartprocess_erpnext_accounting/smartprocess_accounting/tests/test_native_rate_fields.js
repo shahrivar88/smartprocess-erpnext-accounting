@@ -57,14 +57,22 @@ const lock = (doctype, values, fieldname = "conversion_rate", write = 1) => {
 test("1 each native DocType registers its handlers once, however often the file runs", () => {
 	native.register(frappe);
 	native.register(frappe);
-	assert.deepEqual(registrations.map(([doctype]) => doctype), [
+	assert.equal(registrations[0][0], "*");
+	assert.deepEqual(Object.keys(registrations[0][1]), ["setup", "refresh", "form_render"]);
+	assert.deepEqual(registrations.slice(1).map(([doctype]) => doctype), [
 		"Sales Invoice",
 		"Purchase Invoice",
 		"Payment Entry",
+		"Quotation",
+		"Sales Order",
+		"Purchase Order",
 		"Sales Invoice Item",
 		"Purchase Invoice Item",
+		"Quotation Item",
+		"Sales Order Item",
+		"Purchase Order Item",
 	]);
-	for (const [doctype, events] of registrations) {
+	for (const [doctype, events] of registrations.slice(1)) {
 		assert.deepEqual(Object.keys(events), doctype.endsWith(" Item") ? ["form_render"] : ["setup", "refresh"]);
 	}
 });
@@ -172,13 +180,51 @@ test("7 SmartProcess forms keep their own rate locks; only UI code reads the set
 		assert.ok(!fs.readFileSync(file, "utf-8").includes("allow_exchange_rate_editing"), file);
 	}
 	const hooks = fs.readFileSync(path.join(APP_DIR, "hooks.py"), "utf-8");
-	for (const doctype of Object.keys(native.RATE_FIELDS)) {
+	for (const doctype of Object.keys(native.DISPLAY_RATE_FIELDS)) {
 		assert.match(hooks, new RegExp(`"${doctype}": (?:\\[[^\\]]*|[^\\n]*)native_rate_fields\\.js`), doctype);
 	}
 	const source = fs.readFileSync(path.join(APP_DIR, "public", "js", "native_rate_fields.js"), "utf-8");
 	for (const forbidden of ["prototype", "eval(", "set_value(", "innerHTML", ".html("]) {
 		assert.ok(!source.includes(forbidden), forbidden);
 	}
+	assert.match(source, /typeof root\?\.frappe\?\.ui\?\.form\?\.on === "function"/);
+	assert.match(source, /!root\?\.document/);
+	assert.ok(source.includes(";(function (root, factory)"), "defensive semicolon before IIFE");
+	assert.match(hooks, /native_rate_fields\.js\?v=0\.9\.4/);
+});
+
+test("10 a prior form.on closing plus this IIFE does not throw after concatenation", () => {
+	const source = fs.readFileSync(path.join(APP_DIR, "public", "js", "native_rate_fields.js"), "utf-8");
+	const prelude = "frappe.ui.form.on('Quotation', { refresh() {} })\n";
+	assert.doesNotThrow(() => new Function(prelude + source)());
+	assert.ok(globalThis.smartprocessAccounting.nativeRateWildcard);
+});
+
+test("8 first refresh binds without a second open when layout already has fields", () => {
+	flags({ hide_insignificant_trailing_zeros: 1, live_number_separator: { enabled: 1 } });
+	const rate = control(15, "15.000000000");
+	const frm = {
+		doctype: "Quotation",
+		doc: { doctype: "Quotation", docstatus: 0, company: "SP", currency: "IRR" },
+		perm: [{ write: 1 }],
+		fields_dict: { conversion_rate: rate },
+		wrapper: { nodeType: 1 },
+		set_df_property() {},
+	};
+	native.bindOpenForm(frm);
+	assert.equal(rate.format_for_input(15), "15");
+	assert.equal(rate.value, 15);
+	native.bindOpenForm(frm);
+	assert.deepEqual(rate.listeners, ["input"], "the input listener is attached once");
+});
+
+test("9 a Desk-like document skips module.exports so Quotation __js cannot clobber form.on", () => {
+	const before = module.exports;
+	const deskRoot = { document: {}, frappe: { ui: { form: { on: () => {} } } } };
+	const factoryPath = path.join(APP_DIR, "public", "js", "native_rate_fields.js");
+	const text = fs.readFileSync(factoryPath, "utf-8");
+	assert.match(text, /!root\?\.document/);
+	assert.equal(module.exports, before);
 });
 
 (async () => {

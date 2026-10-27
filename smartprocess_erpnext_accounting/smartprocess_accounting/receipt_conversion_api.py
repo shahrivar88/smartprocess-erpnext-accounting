@@ -59,7 +59,7 @@ def make_receipt_conversion(source_receipt: str, target_currency: str | None = N
 	return doc
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_receipt_conversion_status(source_receipt: str) -> dict:
 	"""Read-only status derived from the posted ledger on every call; nothing is stored.
 
@@ -89,7 +89,7 @@ def conversion_status(balances: list[tuple]) -> str | None:
 	return PARTIALLY_CONVERTED
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_conversion_legs(source_receipt: str, target_currency: str | None = None) -> dict:
 	"""Draft legs for the form, with Party display titles for the source summaries.
 
@@ -112,7 +112,7 @@ def get_conversion_legs(source_receipt: str, target_currency: str | None = None)
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_foreign_side_count(source_receipt: str) -> int:
 	"""Receipt sides left out of Receipt Conversion because they are not in the Company currency.
 
@@ -129,7 +129,7 @@ def get_foreign_side_count(source_receipt: str) -> int:
 	return sum(1 for source in sides if source.account_currency != company_currency)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def preview_target_amounts(company: str, target_currency: str, legs: str | list) -> dict:
 	"""Target Amount per leg name with the submit rounding rule; ``None`` where a leg cannot post yet."""
 	company_currency = get_company_currency(company)

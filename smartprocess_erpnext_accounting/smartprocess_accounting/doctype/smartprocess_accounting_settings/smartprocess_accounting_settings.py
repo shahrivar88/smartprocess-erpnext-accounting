@@ -12,6 +12,27 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts im
 
 SETTINGS = "SmartProcess Accounting Settings"
 
+# Independent display keys: master Check AND per-DocType Check. Slug is the
+# suffix of hide_trailing_zeros_<slug> / live_separator_<slug>.
+DISPLAY_DOCTYPE_KEYS = (
+	("sales_invoice", "Sales Invoice", "فاکتور فروش"),
+	("purchase_invoice", "Purchase Invoice", "فاکتور خرید"),
+	("quotation", "Quotation", "پیش‌فاکتور"),
+	("sales_order", "Sales Order", "سفارش فروش"),
+	("purchase_order", "Purchase Order", "سفارش خرید"),
+)
+
+# Already wired (Payment Entry) or owned by this app. They follow the master
+# flag only; no extra Settings Check is created for them.
+MASTER_FOLLOW_DOCTYPES = (
+	"Payment Entry",
+	"SmartProcess Accounting Document",
+	"SmartProcess Accounting Posting",
+	"SmartProcess Receipt Conversion",
+	"SmartProcess Currency Conversion",
+)
+
+
 class SmartProcessAccountingSettings(Document):
 	def validate(self):
 		self.validate_number_separator()
@@ -47,7 +68,7 @@ class SmartProcessAccountingSettings(Document):
 			)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_number_input_settings():
 	"""Live number-separator config for client-side numeric inputs (presentation only)."""
 	return number_input_settings()
@@ -72,7 +93,8 @@ def display_flag(fieldname):
 	"""A display-only Check of the Settings; a value never saved yet uses the field default."""
 	value = _stored(SETTINGS).get(fieldname)
 	if value is None:
-		value = frappe.get_meta(SETTINGS).get_field(fieldname).default
+		df = frappe.get_meta(SETTINGS).get_field(fieldname)
+		value = df.default if df else 0
 	return cint(value)
 
 
@@ -80,8 +102,101 @@ def hide_insignificant_trailing_zeros():
 	return display_flag("hide_insignificant_trailing_zeros")
 
 
+def doctype_display_map(master_field, prefix):
+	"""DocType → 1 only when the master Check and that DocType Check are both on."""
+	master = display_flag(master_field)
+	mapping = {}
+	for slug, doctype, _label in DISPLAY_DOCTYPE_KEYS:
+		mapping[doctype] = 1 if master and display_flag(f"{prefix}_{slug}") else 0
+	for doctype in MASTER_FOLLOW_DOCTYPES:
+		mapping[doctype] = 1 if master else 0
+	return mapping
+
+
 def _stored(doctype):
 	return frappe.db.get_singles_dict(doctype, cast=False)
+
+
+def cross_app_impacts():
+	"""Desk-facing inventory of features that reach outside this module."""
+	zeros_map = doctype_display_map("hide_insignificant_trailing_zeros", "hide_trailing_zeros")
+	sep_map = doctype_display_map("enable_live_number_separator", "live_separator")
+	zeros_on = [label for slug, doctype, label in DISPLAY_DOCTYPE_KEYS if zeros_map.get(doctype)]
+	sep_on = [label for slug, doctype, label in DISPLAY_DOCTYPE_KEYS if sep_map.get(doctype)]
+	return [
+		{
+			"feature": "حذف صفرهای اعشاری غیرضروری",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "، ".join(zeros_on) or "هیچ سندی",
+			"effect": "فقط متن نمایش اعداد را در فرم و جدول ردیف کوتاه می‌کند. مقدار ذخیره‌شده، دقت و محاسبات تغییر نمی‌کنند.",
+			"status": "فعال" if hide_insignificant_trailing_zeros() else "غیرفعال",
+			"rollback": "کلید اصلی یا کلید همان سند را در «نمایش اعداد» خاموش کنید تا رفتار استاندارد ERPNext برگردد.",
+			"optional": 1,
+		},
+		{
+			"feature": "جداکننده زنده هزارگان",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "، ".join(sep_on) or "هیچ سندی",
+			"effect": "هنگام ورود عدد، جداکننده هزارگان را فقط در ورودی نشان می‌دهد. مقدار خام ارسالی به سرور بدون جداکننده می‌ماند.",
+			"status": "فعال" if display_flag("enable_live_number_separator") else "غیرفعال",
+			"rollback": "کلید اصلی یا کلید همان سند را در «نمایش اعداد» خاموش کنید تا ورودی استاندارد ERPNext برگردد.",
+			"optional": 1,
+		},
+		{
+			"feature": "حساب‌های پیش‌فرض مرکزی",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "فاکتور فروش، فاکتور خرید",
+			"effect": "در پیش‌نویس غیربرگشتی، حساب دریافتنی یا پرداختنی هم‌شرکت و هم‌ارز جدول تنظیمات را به‌جای پیشنهاد خودکار ERPNext پیشنهاد می‌کند. انتخاب دستی و اسناد ثبت‌شده تغییر نمی‌کنند.",
+			"status": "فعال" if cint(central_default_accounts_enabled()) else "غیرفعال",
+			"rollback": "گزینه «فعال‌سازی حساب‌های پیش‌فرض مرکزی» را خاموش کنید.",
+			"optional": 1,
+		},
+		{
+			"feature": "جلوگیری از ثبت فاکتور با حساب معین غیرهم‌ارز",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "فاکتور فروش",
+			"effect": "ثبت نهایی فاکتور فروش فقط وقتی انجام می‌شود که ارز حساب دریافتنی با ارز صورتحساب یکی باشد. هیچ حسابی خودکار عوض نمی‌شود.",
+			"status": "فعال" if display_flag("prevent_receivable_currency_mismatch") else "غیرفعال",
+			"rollback": "گزینه «جلوگیری از ثبت فاکتور با حساب معین غیرهم‌ارز» را خاموش کنید.",
+			"optional": 1,
+		},
+		{
+			"feature": "الزام ورود دستی نرخ تبدیل فاکتور",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "فاکتور فروش، فاکتور خرید",
+			"effect": "در فاکتور ارزی، نرخ خودکار پاک می‌شود تا کاربر نرخ را دستی وارد کند. فاکتور بدون نرخ بزرگ‌تر از صفر ذخیره نمی‌شود.",
+			"status": "فعال" if display_flag("enable_manual_invoice_rate_feature") else "غیرفعال",
+			"rollback": "گزینه «الزام ورود دستی نرخ تبدیل فاکتور» را خاموش کنید.",
+			"optional": 1,
+		},
+		{
+			"feature": "محافظ حذف شرکت و اسناد وابسته",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "Transaction Deletion Record، شرکت، اسناد اختصاصی حسابداری، واسطه مالی",
+			"effect": "حذف شرکت یا اجرای Transaction Deletion Record وقتی سند اختصاصی یا واسطه مالی به آن شرکت وصل است متوقف می‌شود. این محافظ مالی است و کلید خاموش‌کردن ناامن ندارد.",
+			"status": "فعال (محافظ الزامی)",
+			"rollback": "غیرفعال‌سازی از تنظیمات مجاز نیست. فقط با مجوز جداگانه و تغییر کنترل‌شده در اپ.",
+			"optional": 0,
+		},
+		{
+			"feature": "محافظ حذف اپ حسابداری",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "تمام اسناد اختصاصی حسابداری",
+			"effect": "حذف اپ وقتی سند اختصاصی باقی مانده باشد متوقف می‌شود تا دفتر کل یتیم نشود.",
+			"status": "فعال (محافظ الزامی)",
+			"rollback": "غیرفعال‌سازی از تنظیمات مجاز نیست.",
+			"optional": 0,
+		},
+		{
+			"feature": "قفل آزمایشگاهی نویسنده استاندارد",
+			"owner_module": "حسابداری هوشمند",
+			"doctypes": "سند حسابداری هوشمند، پرداخت، سند حسابداری (فقط آزمایشگاه)",
+			"effect": "فقط روی سایت آزمایشگاهی و با پرچم جداگانه فعال می‌شود. روی این سایت زنده خاموش است و بدون تأیید جداگانه روشن نمی‌شود.",
+			"status": "غیرفعال روی این سایت",
+			"rollback": "فعال‌سازی روی سایت زنده نیاز به تأیید جداگانه دارد. کلید خاموش‌کردن در تنظیمات وجود ندارد.",
+			"optional": 0,
+		},
+	]
 
 
 def extend_bootinfo(bootinfo):
@@ -91,4 +206,9 @@ def extend_bootinfo(bootinfo):
 		"allow_exchange_rate_editing": display_flag("allow_exchange_rate_editing"),
 		"live_number_separator": number_input_settings(),
 		"central_default_accounts": cint(central_default_accounts_enabled()),
+		"hide_trailing_zeros_doctypes": doctype_display_map(
+			"hide_insignificant_trailing_zeros", "hide_trailing_zeros"
+		),
+		"live_separator_doctypes": doctype_display_map("enable_live_number_separator", "live_separator"),
+		"cross_app_impacts": cross_app_impacts(),
 	}

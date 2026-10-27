@@ -11,7 +11,7 @@ import frappe
 from smartprocess_erpnext_accounting.smartprocess_accounting import party_default_account as pda
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def propose_for_draft(
 	company: str,
 	supplier: str,

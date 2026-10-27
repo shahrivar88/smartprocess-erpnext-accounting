@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import frappe
+from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting import default_accounts as da
 from smartprocess_erpnext_accounting.smartprocess_accounting.fixture_guard import (
@@ -56,7 +57,7 @@ def temporary_company(country, currency):
 	"""Inserts a Company that the test rolls back; a commit during its creation fails the test."""
 	assert_accounting_fixtures_authorized()
 	with no_commit():
-		return frappe.get_doc(
+		company = frappe.get_doc(
 			{
 				"doctype": "Company",
 				"company_name": TEMP_COMPANY,
@@ -67,6 +68,31 @@ def temporary_company(country, currency):
 				"chart_of_accounts": "Standard",
 			}
 		).insert()
+		attach_company_to_open_fiscal_year(company.name)
+		return company
+
+
+def attach_company_to_open_fiscal_year(company):
+	today = nowdate()
+	year_name = frappe.db.get_value(
+		"Fiscal Year",
+		{"year_start_date": ["<=", today], "year_end_date": [">=", today], "disabled": 0},
+		"name",
+	)
+	if not year_name:
+		year = frappe.get_doc(
+			{
+				"doctype": "Fiscal Year",
+				"year": f"SP-LAB-{today[:4]}",
+				"year_start_date": f"{today[:4]}-01-01",
+				"year_end_date": f"{today[:4]}-12-31",
+			}
+		).insert()
+		year_name = year.name
+	year = frappe.get_doc("Fiscal Year", year_name)
+	if company not in {row.company for row in year.companies}:
+		year.append("companies", {"company": company})
+		year.save()
 
 
 class TestDefaultAccountsOnSite(unittest.TestCase):

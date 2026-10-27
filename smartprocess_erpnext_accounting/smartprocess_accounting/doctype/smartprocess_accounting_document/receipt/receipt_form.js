@@ -124,7 +124,7 @@ const spReceiptForm = {
 		for (const [fieldname, property, value] of latest.values()) {
 			changed = this.setGridProperty(frm, grid, fieldname, property, value) || changed;
 		}
-		if (changed) {
+		if (changed && !grid.open_grid_row && !document.querySelector(".jalali-picker:not(.pwt-hide)")) {
 			grid.reset_grid();
 		}
 	},

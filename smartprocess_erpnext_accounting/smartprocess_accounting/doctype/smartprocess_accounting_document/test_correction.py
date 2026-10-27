@@ -31,7 +31,7 @@ class TestV2Correction(V2IntegrationTestCase):
 		self.assertIn("[1, 2].includes(frm.doc.docstatus)", source)
 
 	def test_correction_requires_reason_and_protects_direct_updates(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		with self.assertRaisesRegex(frappe.ValidationError, "Correction Reason is required"):
 			doc.start_correction("   ")
 		doc.correction_reason = "Direct edit"
@@ -39,7 +39,7 @@ class TestV2Correction(V2IntegrationTestCase):
 			doc.save()
 
 	def test_correction_cancels_source_and_creates_linked_draft_with_gate_off(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		manager = self.create_user(["Accounts Manager"])
 		settings = frappe.get_single("SmartProcess Accounting Settings")
 		settings.enable_v2_posting = 0
@@ -66,14 +66,14 @@ class TestV2Correction(V2IntegrationTestCase):
 		self.assertTrue(any(row.owner == manager for row in versions))
 
 	def test_cancellation_failure_rolls_back_reason_and_creates_no_replacement(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		with patch(CONTROLLER_PATH, side_effect=RuntimeError("forced cancellation failure")):
 			with self.assertRaisesRegex(RuntimeError, "forced cancellation failure"):
 				doc.start_correction("Rollback cancellation")
 		self._assert_unchanged_source(doc)
 
 	def test_replacement_failure_rolls_back_cancel_and_native_reversal(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		with patch.object(
 			CorrectionService,
 			"_make_replacement",
@@ -84,7 +84,7 @@ class TestV2Correction(V2IntegrationTestCase):
 		self._assert_unchanged_source(doc)
 
 	def test_repeated_correction_does_not_create_duplicate_replacement(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		first = doc.start_correction("First correction")
 		with self.assertRaisesRegex(frappe.ValidationError, "already has a correction"):
 			frappe.get_doc(doc.doctype, doc.name).start_correction("Duplicate correction")
@@ -92,7 +92,7 @@ class TestV2Correction(V2IntegrationTestCase):
 		self.assertEqual(replacements, [first["name"]])
 
 	def test_manually_cancelled_document_can_create_one_amended_draft(self):
-		doc = self.submit_document([self.base_pair()])
+		doc = self.submit_base_receipt()
 		doc.cancel()
 		cancelled_gl = self.all_gl(doc)
 		result = doc.start_correction("Amend after manual cancellation")
@@ -109,7 +109,7 @@ class TestV2Correction(V2IntegrationTestCase):
 		accounts_settings.enable_immutable_ledger = 1
 		accounts_settings.save()
 		try:
-			doc = self.submit_document([self.base_pair()])
+			doc = self.submit_base_receipt()
 			result = doc.start_correction("Immutable correction")
 			rows = self.all_gl(doc)
 			self.assertEqual(len(rows), 4)

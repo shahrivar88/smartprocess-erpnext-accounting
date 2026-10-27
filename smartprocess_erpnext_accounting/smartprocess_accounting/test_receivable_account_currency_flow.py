@@ -193,6 +193,18 @@ def _foreign_currency(base):
 	return frappe.get_all("Currency", filters={"enabled": 1, "name": ("!=", base)}, limit=1, pluck="name")[0]
 
 
+def invoice_test_currencies(base):
+	"""A mapped foreign currency and an unmapped one, neither equal to company currency."""
+	enabled = set(frappe.get_all("Currency", filters={"enabled": 1}, pluck="name"))
+	for foreign, unmapped in (("USD", "EUR"), ("EUR", "GBP"), ("GBP", "EUR"), ("IRR", "EUR")):
+		if foreign != base and foreign in enabled and unmapped != base and unmapped != foreign and unmapped in enabled:
+			return foreign, unmapped
+	others = [name for name in sorted(enabled) if name != base]
+	if len(others) < 2:
+		raise AssertionError(f"need two enabled currencies besides {base}")
+	return others[0], others[1]
+
+
 def _foreign_account(company, currency, sibling):
 	"""An existing receivable in `currency`, else a new one next to the company default."""
 	existing = frappe.get_all(

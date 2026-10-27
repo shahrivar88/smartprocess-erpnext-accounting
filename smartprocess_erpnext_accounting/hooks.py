@@ -18,6 +18,20 @@ add_to_apps_screen = [
 ]
 
 after_migrate = "smartprocess_erpnext_accounting.install.after_migrate"
+before_uninstall = "smartprocess_erpnext_accounting.uninstall_guard.before_uninstall"
+
+company_data_to_be_ignored = [
+	"SmartProcess Accounting Document",
+	"SmartProcess Accounting Posting",
+	"SmartProcess Receipt Conversion",
+	"SmartProcess Currency Conversion",
+]
+
+extend_doctype_class = {
+	"Transaction Deletion Record": [
+		"smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_guard.SmartProcessTransactionDeletionGuard",
+	],
+}
 
 app_include_css = [
 	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.11.0",
@@ -25,7 +39,8 @@ app_include_css = [
 ]
 
 app_include_js = [
-	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.9.2",
+	"/assets/smartprocess_erpnext_accounting/js/smartprocess_numeric.js?v=0.9.4",
+	"/assets/smartprocess_erpnext_accounting/js/native_rate_fields.js?v=0.9.4",
 ]
 
 extend_bootinfo = [
@@ -46,6 +61,9 @@ doctype_js = {
 		"public/js/purchase_invoice_default_account.js",
 	],
 	"Payment Entry": "public/js/native_rate_fields.js",
+	"Quotation": "public/js/native_rate_fields.js",
+	"Sales Order": "public/js/native_rate_fields.js",
+	"Purchase Order": "public/js/native_rate_fields.js",
 }
 
 doc_events = {
@@ -60,6 +78,10 @@ doc_events = {
 	},
 	"Journal Entry": {
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.journal_entry_party.validate_disabled_parties",
+	},
+	"Transaction Deletion Record": {
+		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_guard.validate_transaction_deletion_record",
+		"before_submit": "smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_guard.validate_transaction_deletion_record",
 	},
 }
 

@@ -18,8 +18,12 @@ BASE_CLEARING = "Proof Base Clearing - SPV2"
 FOREIGN_A_ACCOUNT = "Proof Foreign A - SPV2"
 FOREIGN_B_ACCOUNT = "Proof Foreign B - SPV2"
 OTHER_COMPANY = "_Test Company"
+OTHER_ABBR = "_TC"
 OTHER_DEBIT_ACCOUNT = "Cash - _TC"
 OTHER_CREDIT_ACCOUNT = "Earnest Money - _TC"
+OTHER_CUSTOMER = "SP SC Other Customer"
+LEGACY_CUSTOMER = "SP MC Customer"
+ABBR = "SPV2"
 
 # One committed Party record per accounting currency (native single-currency behavior).
 CUSTOMER_BASE = "SP SC Customer Base"
@@ -41,6 +45,160 @@ SINGLE_CURRENCY_PARTIES = (
 	("Supplier", SUPPLIER_BASE, PAYABLE_BASE),
 	("Supplier", SUPPLIER_A, PAYABLE_A),
 )
+
+
+def _attach_company_to_open_fiscal_year(company: str) -> None:
+	today = nowdate()
+	year_name = frappe.db.get_value(
+		"Fiscal Year",
+		{"year_start_date": ["<=", today], "year_end_date": [">=", today], "disabled": 0},
+		"name",
+	)
+	if not year_name:
+		year = frappe.get_doc(
+			{
+				"doctype": "Fiscal Year",
+				"year": f"SP-V2-{today[:4]}",
+				"year_start_date": f"{today[:4]}-01-01",
+				"year_end_date": f"{today[:4]}-12-31",
+			}
+		).insert()
+		year_name = year.name
+	year = frappe.get_doc("Fiscal Year", year_name)
+	if company not in {row.company for row in year.companies}:
+		year.append("companies", {"company": company})
+		year.save()
+
+
+def _ensure_currency(code: str) -> None:
+	if frappe.db.exists("Currency", code):
+		if not frappe.db.get_value("Currency", code, "enabled"):
+			frappe.db.set_value("Currency", code, "enabled", 1)
+		return
+	frappe.get_doc(
+		{
+			"doctype": "Currency",
+			"currency_name": code,
+			"symbol": code,
+			"enabled": 1,
+			"number_format": "#,###.##",
+		}
+	).insert()
+
+
+def _ensure_account(company: str, abbr: str, account_name: str, root_type: str, currency: str, account_type=None) -> str:
+	full_name = f"{account_name} - {abbr}"
+	if frappe.db.exists("Account", full_name):
+		return full_name
+	parent = frappe.db.get_value(
+		"Account",
+		{"company": company, "root_type": root_type, "is_group": 1},
+		"name",
+		order_by="lft desc",
+	)
+	frappe.get_doc(
+		{
+			"doctype": "Account",
+			"account_name": account_name,
+			"parent_account": parent,
+			"company": company,
+			"root_type": root_type,
+			"report_type": "Profit and Loss" if root_type in ("Expense", "Income") else "Balance Sheet",
+			"account_currency": currency,
+			"account_type": account_type,
+			"is_group": 0,
+		}
+	).insert()
+	return full_name
+
+
+def _ensure_company(name: str, abbr: str, currency: str) -> None:
+	if frappe.db.exists("Company", name):
+		_attach_company_to_open_fiscal_year(name)
+		return
+	existing = frappe.get_all(
+		"Company",
+		fields=["country", "default_currency", "valuation_method"],
+		limit=1,
+	)
+	country = (existing[0].country if existing else None) or "Iran"
+	valuation = (existing[0].valuation_method if existing else None) or "FIFO"
+	frappe.get_doc(
+		{
+			"doctype": "Company",
+			"company_name": name,
+			"abbr": abbr,
+			"default_currency": currency,
+			"country": country,
+			"valuation_method": valuation,
+			"create_chart_of_accounts_based_on": "Standard Template",
+			"chart_of_accounts": "Standard",
+		}
+	).insert()
+	_attach_company_to_open_fiscal_year(name)
+
+
+def ensure_v2_proof_fixtures() -> None:
+	"""Create the isolated proof Company and parties on an authorized lab site."""
+	assert_accounting_fixtures_authorized()
+	if frappe.local.site != "lab.localhost":
+		return
+	frappe.flags.in_import = True
+	try:
+		for code in (BASE, FOREIGN_A, FOREIGN_B):
+			_ensure_currency(code)
+		if not frappe.db.exists("Gender", "Other"):
+			frappe.get_doc({"doctype": "Gender", "gender": "Other"}).insert()
+		existing = frappe.get_all("Company", fields=["default_currency"], limit=1)
+		base_company = (existing[0].default_currency if existing else None) or "USD"
+		_ensure_company(COMPANY, ABBR, BASE)
+		_ensure_company(OTHER_COMPANY, OTHER_ABBR, base_company)
+		_ensure_account(COMPANY, ABBR, "Proof Bank Base", "Asset", BASE, "Bank")
+		_ensure_account(COMPANY, ABBR, "Proof Base Clearing", "Asset", BASE)
+		_ensure_account(COMPANY, ABBR, "Proof Foreign A", "Asset", FOREIGN_A)
+		_ensure_account(COMPANY, ABBR, "Proof Foreign B", "Asset", FOREIGN_B)
+		_ensure_account(COMPANY, ABBR, "MC Receivable Base", "Asset", BASE, "Receivable")
+		_ensure_account(COMPANY, ABBR, "MC Receivable A", "Asset", FOREIGN_A, "Receivable")
+		_ensure_account(COMPANY, ABBR, "MC Receivable B", "Asset", FOREIGN_B, "Receivable")
+		_ensure_account(COMPANY, ABBR, "MC Payable Base", "Liability", BASE, "Payable")
+		_ensure_account(COMPANY, ABBR, "MC Payable A", "Liability", FOREIGN_A, "Payable")
+		if not frappe.db.exists("Account", OTHER_DEBIT_ACCOUNT):
+			_ensure_account(OTHER_COMPANY, OTHER_ABBR, "Cash", "Asset", base_company, "Cash")
+		if not frappe.db.exists("Account", OTHER_CREDIT_ACCOUNT):
+			_ensure_account(OTHER_COMPANY, OTHER_ABBR, "Earnest Money", "Asset", base_company)
+		other_receivable = frappe.db.get_value(
+			"Account",
+			{"company": OTHER_COMPANY, "account_type": "Receivable", "is_group": 0},
+			"name",
+		)
+		if not other_receivable:
+			other_receivable = _ensure_account(
+				OTHER_COMPANY, OTHER_ABBR, "Debtors", "Asset", base_company, "Receivable"
+			)
+		ensure_single_currency_parties()
+		if not frappe.db.exists("Customer", OTHER_CUSTOMER):
+			frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": OTHER_CUSTOMER,
+					"customer_type": "Company",
+					"default_currency": base_company,
+					"accounts": [{"company": OTHER_COMPANY, "account": other_receivable}],
+				}
+			).insert()
+		if not frappe.db.exists("Customer", LEGACY_CUSTOMER):
+			frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": LEGACY_CUSTOMER,
+					"customer_type": "Company",
+					"default_currency": BASE,
+					"accounts": [{"company": COMPANY, "account": RECEIVABLE_BASE}],
+				}
+			).insert()
+	finally:
+		frappe.flags.in_import = False
+	frappe.db.commit()
 
 
 def ensure_single_currency_parties() -> None:
@@ -107,6 +265,11 @@ class AccountingFixtureTestCase(FrappeTestCase):
 
 
 class V2IntegrationTestCase(AccountingFixtureTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_v2_proof_fixtures()
+
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self._require_fixture()
@@ -130,10 +293,84 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 			}
 		)
 
-	def submit_document(self, pairs, *, operation_type="Transfer", company=COMPANY):
+	def submit_document(self, pairs, *, operation_type="Receipt", company=COMPANY):
+		if operation_type in ("Transfer", "Currency Conversion"):
+			raise AssertionError(
+				f"{operation_type} submit is blocked on purpose; use Receipt or Payment"
+			)
 		doc = self.document(pairs, operation_type=operation_type, company=company).insert()
 		doc.submit()
 		return doc
+
+	def submit_base_receipt(self):
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": "Receipt",
+				"company": COMPANY,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": BASE,
+				"receipt_payer_account": RECEIVABLE_BASE,
+				"receipt_payer_exchange_rate": 1,
+				"receipt_credit_currency": BASE,
+				"receipt_payer_type": "Customer",
+				"receipt_payer": CUSTOMER_BASE,
+				"receipt_receiver_kind": "Customer",
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Account",
+						"receipt_currency": BASE,
+						"credit_account": BASE_BANK,
+						"credit_amount": 100,
+						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		).insert().submit()
+
+	def insert_blocked_operation(self, operation_type):
+		doc = self.document([self.base_pair()], operation_type=operation_type).insert()
+		with self.assertRaises(frappe.ValidationError):
+			doc.submit()
+		doc.reload()
+		return doc
+
+	def other_company_receipt(self):
+		receivable = frappe.db.get_value(
+			"Account",
+			{"company": OTHER_COMPANY, "account_type": "Receivable", "is_group": 0},
+			"name",
+		)
+		currency = frappe.get_cached_value("Company", OTHER_COMPANY, "default_currency")
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": "Receipt",
+				"company": OTHER_COMPANY,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": currency,
+				"receipt_payer_account": receivable,
+				"receipt_payer_exchange_rate": 1,
+				"receipt_credit_currency": currency,
+				"receipt_payer_type": "Customer",
+				"receipt_payer": OTHER_CUSTOMER,
+				"receipt_receiver_kind": "Customer",
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Account",
+						"receipt_currency": currency,
+						"credit_account": OTHER_DEBIT_ACCOUNT,
+						"credit_amount": 100,
+						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		)
+
+	def submit_other_company_receipt(self):
+		return self.other_company_receipt().insert().submit()
 
 	def pair(
 		self,

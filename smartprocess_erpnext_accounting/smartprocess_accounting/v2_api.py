@@ -108,7 +108,7 @@ def get_receipt_recipient_type_options() -> list[dict]:
 	return _receipt_row_type_options()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_company_currency(company: str) -> str:
 	return _get_company_currency(company)
 
@@ -144,7 +144,7 @@ def get_receipt_currency_options(company: str) -> list[str]:
 	return [*ordered, *sorted(enabled - {company_currency})]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_account_details(account: str, company: str) -> dict:
 	account_doc = validate_account(account, company)
 	return {
@@ -154,7 +154,7 @@ def get_account_details(account: str, company: str) -> dict:
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_party_account_suggestion(
 	party_type: str,
 	party: str,
@@ -168,7 +168,7 @@ def get_party_account_suggestion(
 	return _get_exact_party_account(party_type, party, company, currency)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_receipt_party_account_suggestion(
 	party_type: str,
 	party: str,
@@ -322,7 +322,7 @@ def _eligible_bank_ledger_accounts(company: str, currency: str | None) -> list[s
 	return frappe.get_all("Account", filters=filters, pluck="name", limit=0)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_bank_account_details(bank_account: str, company: str) -> dict:
 	"""Ledger Account mapped from a company Bank Account (ERPNext-native bank picker)."""
 	if not bank_account or not company:

@@ -28,7 +28,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion 
 	validate_target,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
-	BALANCE_MODE,
 	lock_source_receipt,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups

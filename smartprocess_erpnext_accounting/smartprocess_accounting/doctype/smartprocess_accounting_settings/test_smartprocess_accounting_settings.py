@@ -21,6 +21,16 @@ DISPLAY_FLAGS = {
 	"enable_live_number_separator": "جداکننده زنده هزارگان",
 	"hide_insignificant_trailing_zeros": "حذف صفرهای اعشاری غیرضروری",
 	"allow_exchange_rate_editing": "اجازه ویرایش نرخ ارز",
+	"hide_trailing_zeros_sales_invoice": "فاکتور فروش — حذف صفرهای اعشاری",
+	"hide_trailing_zeros_purchase_invoice": "فاکتور خرید — حذف صفرهای اعشاری",
+	"hide_trailing_zeros_quotation": "پیش‌فاکتور — حذف صفرهای اعشاری",
+	"hide_trailing_zeros_sales_order": "سفارش فروش — حذف صفرهای اعشاری",
+	"hide_trailing_zeros_purchase_order": "سفارش خرید — حذف صفرهای اعشاری",
+	"live_separator_sales_invoice": "فاکتور فروش — جداکننده زنده",
+	"live_separator_purchase_invoice": "فاکتور خرید — جداکننده زنده",
+	"live_separator_quotation": "پیش‌فاکتور — جداکننده زنده",
+	"live_separator_sales_order": "سفارش فروش — جداکننده زنده",
+	"live_separator_purchase_order": "سفارش خرید — جداکننده زنده",
 }
 APP_DIR = Path(__file__).resolve().parents[3]
 DISPLAY_ONLY_NOTE = "فقط نحوه نمایش را تغییر می‌دهد و روی مقدار واقعی، دقت محاسبه یا مقدار ذخیره‌شده اثری ندارد."
@@ -42,11 +52,22 @@ TABS = {
 		"enable_live_number_separator",
 		"number_separator",
 		"hide_insignificant_trailing_zeros",
+		"hide_trailing_zeros_sales_invoice",
+		"hide_trailing_zeros_purchase_invoice",
+		"hide_trailing_zeros_quotation",
+		"hide_trailing_zeros_sales_order",
+		"hide_trailing_zeros_purchase_order",
+		"live_separator_sales_invoice",
+		"live_separator_purchase_invoice",
+		"live_separator_quotation",
+		"live_separator_sales_order",
+		"live_separator_purchase_order",
 		"monetary_display_precision",
 		"exchange_rate_display_precision",
 	],
 	"نرخ ارز و تبدیل": ["allow_exchange_rate_editing", "enable_manual_invoice_rate_feature", "base_currency_rounding_tolerance"],
 	"حساب‌های پیش‌فرض": ["enable_central_default_accounts", "default_account_priority", "default_accounts"],
+	"تأثیرات بر سایر ماژول‌ها": ["cross_app_impact_html"],
 	"پیشرفته": ["enable_templates", DEPRECATED],
 }
 SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش حساب", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
@@ -111,8 +132,14 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 				"allow_exchange_rate_editing",
 				"live_number_separator",
 				"central_default_accounts",
+				"hide_trailing_zeros_doctypes",
+				"live_separator_doctypes",
+				"cross_app_impacts",
 			},
 		)
+		self.assertIn("Sales Invoice", payload["hide_trailing_zeros_doctypes"])
+		self.assertIn("Quotation", payload["live_separator_doctypes"])
+		self.assertTrue(payload["cross_app_impacts"])
 		self.assertEqual(payload["hide_insignificant_trailing_zeros"], hide_insignificant_trailing_zeros())
 		self.assertIn(payload["allow_exchange_rate_editing"], (0, 1))
 		self.assertEqual(payload["central_default_accounts"], int(default_accounts.is_enabled()))
@@ -138,10 +165,12 @@ class TestSettingsLayout(unittest.TestCase):
 			elif df.fieldtype not in LAYOUT_TYPES:
 				placed.setdefault(tab, []).append(df.fieldname)
 		self.assertEqual(placed, TABS)
-		self.assertEqual(
-			[df.label for df in self.fields if df.fieldtype == "Section Break"][3:5],
-			["قالب نمایش اعداد", "دقت نمایش"],
-		)
+		section_labels = [df.label for df in self.fields if df.fieldtype == "Section Break"]
+		self.assertEqual(section_labels[3], "قالب نمایش اعداد")
+		self.assertIn("اسناد — حذف صفرهای اعشاری", section_labels)
+		self.assertIn("اسناد — جداکننده زنده", section_labels)
+		self.assertIn("دقت نمایش", section_labels)
+		self.assertIn("فهرست تأثیرات", section_labels)
 
 	def test_two_column_sections_have_no_empty_column(self):
 		two_column = 0
@@ -172,8 +201,9 @@ class TestSettingsLayout(unittest.TestCase):
 		self.assertIn("منسوخ", df.label)
 		self.assertIn("اثری", df.description)
 		for path in [*APP_DIR.rglob("*.py"), *APP_DIR.rglob("*.js")]:
-			if not path.name.startswith("test_"):
-				self.assertNotIn(DEPRECATED, path.read_text(encoding="utf-8"), path.name)
+			if path.name.startswith(("test_", "archived_")):
+				continue
+			self.assertNotIn(DEPRECATED, path.read_text(encoding="utf-8"), path.name)
 
 	def test_no_property_setter_reshapes_the_settings(self):
 		self.assertEqual(frappe.get_all("Property Setter", filters={"doc_type": SETTINGS}, pluck="name"), [])

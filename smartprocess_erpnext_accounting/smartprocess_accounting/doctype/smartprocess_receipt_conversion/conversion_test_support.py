@@ -18,6 +18,136 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 from ..smartprocess_accounting_document.v2_test_support import AccountingFixtureTestCase
 
+def ensure_lab_conversion_masters(company: str, base: str) -> None:
+	"""Idempotent lab masters so ConversionFixtures can run without Transfer submit."""
+	from smartprocess_erpnext_accounting.smartprocess_accounting.fixture_guard import (
+		assert_accounting_fixtures_authorized,
+	)
+
+	assert_accounting_fixtures_authorized()
+	bank_ledger = frappe.db.get_value(
+		"Account",
+		{"company": company, "account_type": "Bank", "is_group": 0, "disabled": 0, "account_currency": base},
+		"name",
+	)
+	if not bank_ledger:
+		parent = frappe.db.get_value(
+			"Account",
+			{"company": company, "root_type": "Asset", "is_group": 1},
+			"name",
+			order_by="lft desc",
+		)
+		bank_ledger = frappe.get_doc(
+			{
+				"doctype": "Account",
+				"account_name": "SP Lab Bank",
+				"company": company,
+				"parent_account": parent,
+				"account_type": "Bank",
+				"account_currency": base,
+				"root_type": "Asset",
+				"report_type": "Balance Sheet",
+			}
+		).insert().name
+	if not frappe.db.exists("Bank", "SP Lab Bank"):
+		frappe.get_doc({"doctype": "Bank", "bank_name": "SP Lab Bank"}).insert()
+	if not frappe.db.exists("Bank Account", {"company": company, "is_company_account": 1, "account": bank_ledger}):
+		frappe.get_doc(
+			{
+				"doctype": "Bank Account",
+				"account_name": "SP Lab Company Bank",
+				"bank": "SP Lab Bank",
+				"account": bank_ledger,
+				"company": company,
+				"is_company_account": 1,
+			}
+		).insert()
+	asset_parent = frappe.db.get_value(
+		"Account",
+		{"company": company, "root_type": "Asset", "is_group": 1},
+		"name",
+		order_by="lft desc",
+	)
+	base_accounts = frappe.get_all(
+		"Account",
+		filters={"company": company, "account_currency": base, "is_group": 0, "disabled": 0},
+		fields=["name", "account_type"],
+	)
+	if not any(row.account_type not in NON_GENERIC_ACCOUNT_TYPES for row in base_accounts):
+		frappe.get_doc(
+			{
+				"doctype": "Account",
+				"account_name": f"SP Lab Clearing {base}",
+				"company": company,
+				"parent_account": asset_parent,
+				"account_type": "",
+				"account_currency": base,
+			}
+		).insert()
+	foreign = next(
+		(
+			name
+			for name in ("EUR", "GBP", "IRR")
+			if name != base and frappe.db.exists("Currency", name)
+		),
+		None,
+	)
+	if foreign:
+		if not frappe.db.get_value("Currency", foreign, "enabled"):
+			frappe.db.set_value("Currency", foreign, "enabled", 1)
+		receivable_parent = frappe.db.get_value(
+			"Account",
+			frappe.db.get_value("Company", company, "default_receivable_account"),
+			"parent_account",
+		) or frappe.db.get_value("Account", {"company": company, "root_type": "Asset", "is_group": 1}, "name")
+		if not frappe.db.exists(
+			"Account",
+			{"company": company, "account_type": "Receivable", "account_currency": foreign, "is_group": 0},
+		):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": f"SP Lab Receivable {foreign}",
+					"company": company,
+					"parent_account": receivable_parent,
+					"account_type": "Receivable",
+					"account_currency": foreign,
+				}
+			).insert()
+		foreign_accounts = frappe.get_all(
+			"Account",
+			filters={"company": company, "account_currency": foreign, "is_group": 0, "disabled": 0},
+			fields=["name", "account_type"],
+		)
+		if not any(row.account_type not in NON_GENERIC_ACCOUNT_TYPES for row in foreign_accounts):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": f"SP Lab Clearing {foreign}",
+					"company": company,
+					"parent_account": receivable_parent,
+					"account_type": "",
+					"account_currency": foreign,
+				}
+			).insert()
+		receivable = frappe.db.get_value(
+			"Account",
+			{"company": company, "account_type": "Receivable", "account_currency": foreign, "is_group": 0},
+			"name",
+		)
+		if receivable and not frappe.db.exists("Customer", f"SP Lab Customer {foreign}"):
+			frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": f"SP Lab Customer {foreign}",
+					"customer_type": "Company",
+					"default_currency": foreign,
+					"accounts": [{"company": company, "account": receivable}],
+				}
+			).insert()
+	frappe.db.commit()
+
+
 RECEIPT = "SmartProcess Accounting Document"
 POSTING = "SmartProcess Accounting Posting"
 CONVERSION = "SmartProcess Receipt Conversion"
@@ -30,6 +160,8 @@ class ConversionFixtures(AccountingFixtureTestCase):
 		super().setUpClass()
 		cls.company = frappe.defaults.get_global_default("company")
 		cls.base = frappe.get_cached_value("Company", cls.company, "default_currency")
+		if frappe.local.site == "lab.localhost":
+			ensure_lab_conversion_masters(cls.company, cls.base)
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -144,9 +276,22 @@ class ConversionFixtures(AccountingFixtureTestCase):
 		# The fixture's own Customers receive default documents in the same test.
 		used.update(exclude, (self.customer, self.target_customer))
 		customer = next((name for name in names if currencies.get(name) == self.base and name not in used), None)
-		if not customer:
+		if customer:
+			return customer
+		if frappe.local.site != "lab.localhost":
 			self.skipTest(f"No {self.base} Customer without ledger history.")
-		return customer
+		receivable = self.accounts(self.base, account_type="Receivable")
+		if not receivable:
+			self.skipTest(f"No {self.base} Receivable Account to create a clean Customer.")
+		return frappe.get_doc(
+			{
+				"doctype": "Customer",
+				"customer_name": f"SP Lab Clean {frappe.generate_hash(length=8)}",
+				"customer_type": "Company",
+				"default_currency": self.base,
+				"accounts": [{"company": self.company, "account": receivable[0]}],
+			}
+		).insert().name
 
 	def company_bank_account(self, currency):
 		for bank in frappe.get_all(
@@ -238,15 +383,18 @@ class ConversionFixtures(AccountingFixtureTestCase):
 		frappe.get_doc(
 			{
 				"doctype": RECEIPT,
-				"operation_type": "Transfer",
+				"operation_type": "Receipt",
 				"company": self.company,
 				"posting_date": nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": self.base,
+				"receipt_credit_currency": self.base,
+				"receipt_receiver_kind": "بانک",
+				"receipt_bank_account": self.bank.name,
 				"operational_pairs": [
 					{
-						"debit_account": self.bank.account,
-						"debit_amount": amount,
-						"debit_exchange_rate": 1,
+						"receipt_recipient_type": "Account",
+						"receipt_currency": self.base,
 						"credit_account": self.generic_account(self.base),
 						"credit_amount": amount,
 						"credit_exchange_rate": 1,

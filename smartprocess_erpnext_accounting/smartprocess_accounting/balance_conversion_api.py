@@ -14,7 +14,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import get_company_currency
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_balance_summary(
 	company: str,
 	source_party_type: str,

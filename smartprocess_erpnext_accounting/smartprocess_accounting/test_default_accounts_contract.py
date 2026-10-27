@@ -71,7 +71,10 @@ class TestDefaultAccountDocTypes(unittest.TestCase):
 	def test_new_tab_sits_before_advanced_and_keeps_the_field_order(self):
 		self.assertEqual(self.settings["field_order"], [df["fieldname"] for df in self.settings["fields"]])
 		tabs = [df["label"] for df in self.settings["fields"] if df["fieldtype"] == "Tab Break"]
-		self.assertEqual(tabs, ["عمومی", "نمایش اعداد", "نرخ ارز و تبدیل", "حساب‌های پیش‌فرض", "پیشرفته"])
+		self.assertEqual(
+			tabs,
+			["عمومی", "نمایش اعداد", "نرخ ارز و تبدیل", "حساب‌های پیش‌فرض", "تأثیرات بر سایر ماژول‌ها", "پیشرفته"],
+		)
 
 	def test_existing_currency_check_is_unchanged(self):
 		order = self.settings["field_order"]

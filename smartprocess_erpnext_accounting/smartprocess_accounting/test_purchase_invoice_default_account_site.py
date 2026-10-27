@@ -30,11 +30,10 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.test_receivable_acc
 	_root,
 	_set_conf,
 	_site_company,
+	invoice_test_currencies,
 )
 
 HOOK = "smartprocess_erpnext_accounting.smartprocess_accounting.purchase_invoice_default_account.set_default_payable_account"
-FOREIGN = "USD"
-UNMAPPED = "EUR"
 FOREIGN_RATE = 50000
 
 
@@ -54,12 +53,11 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		cls.base, cls.erpnext_default = frappe.db.get_value(
 			"Company", cls.company, ["default_currency", "default_payable_account"]
 		)
-		if cls.base == FOREIGN:
-			raise AssertionError(f"the site company already uses {FOREIGN}")
+		cls.FOREIGN, cls.UNMAPPED = invoice_test_currencies(cls.base)
 		cls.central = payable(cls.company, cls.base, "Central")
-		cls.central_foreign = payable(cls.company, FOREIGN, "Central")
+		cls.central_foreign = payable(cls.company, cls.FOREIGN, "Central")
 		cls.party_account = payable(cls.company, cls.base, "Party")
-		cls.party_foreign = payable(cls.company, FOREIGN, "Party")
+		cls.party_foreign = payable(cls.company, cls.FOREIGN, "Party")
 		cls.group = frappe.get_doc(
 			{
 				"doctype": "Supplier Group",
@@ -87,7 +85,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		settings.set(da.ENABLE_FIELD, enabled)
 		settings.set(da.PRIORITY_FIELD, priority)
 		settings.set(da.TABLE_FIELD, [])
-		mapping = {(self.company, self.base): self.central, (self.company, FOREIGN): self.central_foreign}
+		mapping = {(self.company, self.base): self.central, (self.company, self.FOREIGN): self.central_foreign}
 		for (company, currency), account in (mapping if accounts is None else accounts).items():
 			settings.append(
 				da.TABLE_FIELD,
@@ -200,9 +198,9 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		self.assertEqual(api_insert(self.invoice(base_supplier))["credit_to"], self.central)
 		self.assertEqual(self.propose(base_supplier, account=self.erpnext_default), self.central)
 
-		foreign_supplier = self.supplier(FOREIGN)
-		self.assertEqual(self.saved_account(self.invoice(foreign_supplier, FOREIGN)), self.central_foreign)
-		self.assertEqual(self.propose(foreign_supplier, FOREIGN, self.erpnext_default), self.central_foreign)
+		foreign_supplier = self.supplier(self.FOREIGN)
+		self.assertEqual(self.saved_account(self.invoice(foreign_supplier, self.FOREIGN)), self.central_foreign)
+		self.assertEqual(self.propose(foreign_supplier, self.FOREIGN, self.erpnext_default), self.central_foreign)
 
 	def test_smartprocess_first_replaces_the_supplier_account(self):
 		self.configure(priority=da.SMARTPROCESS_FIRST)
@@ -220,22 +218,22 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		self.assertEqual(self.saved_account(self.invoice(party_supplier)), self.party_account)
 		self.assertIsNone(self.propose(party_supplier, account=self.party_account))
 
-		foreign_party = self.supplier(FOREIGN, party_account=self.party_foreign)
-		self.assertEqual(self.saved_account(self.invoice(foreign_party, FOREIGN)), self.party_foreign)
+		foreign_party = self.supplier(self.FOREIGN, party_account=self.party_foreign)
+		self.assertEqual(self.saved_account(self.invoice(foreign_party, self.FOREIGN)), self.party_foreign)
 
 	def test_erpnext_first_falls_back_when_erpnext_would_reject_its_account(self):
 		self.configure(priority=da.ERPNEXT_FIRST)
-		supplier = self.supplier(FOREIGN)
-		self.assertEqual(self.saved_account(self.invoice(supplier, FOREIGN)), self.central_foreign)
-		self.assertEqual(self.propose(supplier, FOREIGN, self.erpnext_default), self.central_foreign)
+		supplier = self.supplier(self.FOREIGN)
+		self.assertEqual(self.saved_account(self.invoice(supplier, self.FOREIGN)), self.central_foreign)
+		self.assertEqual(self.propose(supplier, self.FOREIGN, self.erpnext_default), self.central_foreign)
 
 	def test_missing_mapping_keeps_erpnext_behavior(self):
 		self.configure(accounts={})
 		self.assertEqual(self.saved_account(self.invoice(self.supplier())), self.erpnext_default)
 		self.configure()
-		self.assertIsNone(self.propose(self.supplier(UNMAPPED), UNMAPPED, self.erpnext_default))
+		self.assertIsNone(self.propose(self.supplier(self.UNMAPPED), self.UNMAPPED, self.erpnext_default))
 		with self.assertRaises(frappe.ValidationError):
-			frappe.get_doc(self.invoice(self.supplier(UNMAPPED), UNMAPPED)).insert()
+			frappe.get_doc(self.invoice(self.supplier(self.UNMAPPED), self.UNMAPPED)).insert()
 
 	def test_invalid_mapping_keeps_erpnext_behavior(self):
 		self.configure()
@@ -295,7 +293,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		self.configure(priority=da.SMARTPROCESS_FIRST)
 		doc = frappe.get_doc(self.invoice(self.supplier())).insert()
 		self.assertEqual(doc.credit_to, self.central)
-		self.assertEqual(self.change_currency(doc, FOREIGN), self.central_foreign)
+		self.assertEqual(self.change_currency(doc, self.FOREIGN), self.central_foreign)
 		doc.save()
 		self.assertEqual(self.change_currency(doc, self.base), self.central)
 		doc.save()
@@ -305,7 +303,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		self.configure(priority=da.ERPNEXT_FIRST)
 		doc = frappe.get_doc(self.invoice(self.supplier())).insert()
 		self.assertEqual(doc.credit_to, self.erpnext_default)
-		self.assertEqual(self.change_currency(doc, FOREIGN), self.central_foreign)
+		self.assertEqual(self.change_currency(doc, self.FOREIGN), self.central_foreign)
 		doc.save()
 		self.assertEqual(self.change_currency(doc, self.base), self.erpnext_default)
 		doc.save()
@@ -314,7 +312,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 	def test_currency_change_keeps_a_manual_account_for_erpnext_to_validate(self):
 		self.configure(priority=da.SMARTPROCESS_FIRST)
 		doc = frappe.get_doc(self.invoice(self.supplier(), credit_to=self.party_account)).insert()
-		self.assertIsNone(self.change_currency(doc, FOREIGN))
+		self.assertIsNone(self.change_currency(doc, self.FOREIGN))
 		self.assertEqual(doc.credit_to, self.party_account)
 		with self.assertRaises(frappe.ValidationError):
 			doc.save()
@@ -322,7 +320,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 	def test_currency_change_without_a_valid_account_guesses_nothing(self):
 		self.configure(priority=da.SMARTPROCESS_FIRST)
 		doc = frappe.get_doc(self.invoice(self.supplier())).insert()
-		self.assertIsNone(self.change_currency(doc, UNMAPPED))
+		self.assertIsNone(self.change_currency(doc, self.UNMAPPED))
 		self.assertEqual(doc.credit_to, self.central)
 		with self.assertRaises(frappe.ValidationError):
 			doc.save()
@@ -412,6 +410,7 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		matching.cancel()
 		amended = frappe.copy_doc(matching)
 		amended.amended_from = matching.name
+		amended.docstatus = 0
 		amended.insert()
 		amended.submit()
 		self.assertEqual(frappe.db.get_value("Purchase Invoice", amended.name, ["docstatus", "credit_to"]), (1, self.central))

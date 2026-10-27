@@ -38,7 +38,7 @@ OVERVIEW_SORT = {
 TIE_BREAK = "party_name, entity, currency"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_report_defaults(company, as_of=None):
 	"""Fiscal year start of `company` for the date `as_of` (the user's today), the
 	ledger kinds the user may open and the account currencies of the company."""
@@ -77,7 +77,7 @@ def ledger_types():
 	return options
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_balance_overview(
 	company,
 	party_type,

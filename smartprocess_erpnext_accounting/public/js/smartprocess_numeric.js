@@ -1,12 +1,13 @@
 (function (root, factory) {
 	const numeric = factory();
-	if (typeof module === "object" && module.exports) {
+	if (typeof module === "object" && module.exports && !root?.document) {
 		module.exports = numeric;
 	}
 	if (root) {
 		root.smartprocessAccounting = root.smartprocessAccounting || {};
 		root.smartprocessAccounting.numeric = numeric;
 		installTrailingZeroDisplay(root, numeric);
+		hydrateDisplayMaps(root);
 	}
 
 	// frappe.boot is assigned before app_include_js runs. With the setting off the
@@ -21,12 +22,59 @@
 		) {
 			return;
 		}
-		api.wrapNumericFormatters(frappe.form.formatters, (fieldtype, docfield, doc) => {
-			const currency =
-				fieldtype === "Currency" ? frappe.meta.get_field_currency(docfield, doc) : null;
-			return win.get_number_format_info(win.get_number_format(currency)).decimal_str;
+		api.wrapNumericFormatters(
+			frappe.form.formatters,
+			(fieldtype, docfield, doc) => {
+				const currency =
+					fieldtype === "Currency" ? frappe.meta.get_field_currency(docfield, doc) : null;
+				return win.get_number_format_info(win.get_number_format(currency)).decimal_str;
+			},
+			(doctype, parenttype) => api.trailingZerosEnabledFor(doctype, parenttype),
+		);
+	}
+
+	function hydrateDisplayMaps(win) {
+		const frappe = win.frappe;
+		const flags = frappe?.boot?.smartprocess_accounting;
+		if (!flags || !frappe.db?.get_value || flags.hide_trailing_zeros_doctypes) {
+			return;
+		}
+		const slugs = [
+			["sales_invoice", "Sales Invoice"],
+			["purchase_invoice", "Purchase Invoice"],
+			["quotation", "Quotation"],
+			["sales_order", "Sales Order"],
+			["purchase_order", "Purchase Order"],
+		];
+		const follow = [
+			"Payment Entry",
+			"SmartProcess Accounting Document",
+			"SmartProcess Accounting Posting",
+			"SmartProcess Receipt Conversion",
+			"SmartProcess Currency Conversion",
+		];
+		const fields = slugs.flatMap(([slug]) => [`hide_trailing_zeros_${slug}`, `live_separator_${slug}`]);
+		frappe.db.get_value("SmartProcess Accounting Settings", "SmartProcess Accounting Settings", fields, (row) => {
+			if (!row) {
+				return;
+			}
+			const zeros = {};
+			const separators = {};
+			const masterZeros = Number(flags.hide_insignificant_trailing_zeros);
+			const masterSep = Number(flags.live_number_separator?.enabled);
+			for (const [slug, doctype] of slugs) {
+				zeros[doctype] = masterZeros && Number(row[`hide_trailing_zeros_${slug}`]) ? 1 : 0;
+				separators[doctype] = masterSep && Number(row[`live_separator_${slug}`]) ? 1 : 0;
+			}
+			for (const doctype of follow) {
+				zeros[doctype] = masterZeros ? 1 : 0;
+				separators[doctype] = masterSep ? 1 : 0;
+			}
+			flags.hide_trailing_zeros_doctypes = zeros;
+			flags.live_separator_doctypes = separators;
 		});
 	}
+
 })(
 	typeof window !== "undefined"
 		? window
@@ -81,7 +129,45 @@
 			return fieldtype === "Float" && Boolean(docfield?.options && String(docfield.options).trim());
 		}
 
-		function wrapNumericFormatters(formatters, decimalFor) {
+		function resolveDisplayDoctype(docfield, doc) {
+			return {
+				doctype: (doc && doc.doctype) || (docfield && (docfield.parent || docfield.doctype)) || "",
+				parenttype: (doc && doc.parenttype) || "",
+			};
+		}
+
+		function trailingZerosEnabledFor(doctype, parenttype) {
+			const boot = globalThis.frappe?.boot?.smartprocess_accounting || {};
+			if (!Number(boot.hide_insignificant_trailing_zeros)) {
+				return false;
+			}
+			const map = boot.hide_trailing_zeros_doctypes;
+			if (!map) {
+				return true;
+			}
+			if (doctype && Number(map[doctype])) {
+				return true;
+			}
+			if (parenttype && Number(map[parenttype])) {
+				return true;
+			}
+			return false;
+		}
+
+		function liveSeparatorConfigFor(doctype, parenttype) {
+			const boot = globalThis.frappe?.boot?.smartprocess_accounting || {};
+			const base = Object.assign({}, boot.live_number_separator || {});
+			const map = boot.live_separator_doctypes;
+			if (!map) {
+				return base;
+			}
+			base.enabled = Boolean(
+				Number(base.enabled) && ((doctype && Number(map[doctype])) || (parenttype && Number(map[parenttype]))),
+			);
+			return base;
+		}
+
+		function wrapNumericFormatters(formatters, decimalFor, isEnabled) {
 			if (!formatters || formatters.__spTrailingZeros) {
 				return false;
 			}
@@ -96,6 +182,12 @@
 					// Reports pass always_show_decimals; the global setting overrides it.
 					if (typeof formatted !== "string" || delegatesToCurrency(fieldtype, docfield)) {
 						return formatted;
+					}
+					if (typeof isEnabled === "function") {
+						const target = resolveDisplayDoctype(docfield, doc);
+						if (!isEnabled(target.doctype, target.parenttype)) {
+							return formatted;
+						}
 					}
 					return compactFormattedNumber(formatted, decimalFor(fieldtype, docfield, doc));
 				};
@@ -248,6 +340,9 @@
 		return {
 			compactFormattedNumber,
 			wrapNumericFormatters,
+			trailingZerosEnabledFor,
+			liveSeparatorConfigFor,
+			resolveDisplayDoctype,
 			liveNumberSeparator: {
 				cleanNumericText,
 				formatLiveNumberText,

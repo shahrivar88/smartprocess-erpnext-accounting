@@ -48,6 +48,7 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 	foreign_currency = LIFECYCLE.foreign_currency
 	accounts = LIFECYCLE.accounts
 	usable_account = LIFECYCLE.usable_account
+	ensure_lab_foreign_currency = LIFECYCLE.ensure_lab_foreign_currency
 
 	def test_base_payer_base_recipient_posts_native_gl_and_cancels(self):
 		bank = self.company_bank_account(self.base)
@@ -213,8 +214,12 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		return get_document_detail(gl_entry, doc.company, "Customer", customer, receivable)
 
 	def test_payment_posted_before_v1_keeps_its_direct_reversal(self):
+		from erpnext.accounts.general_ledger import make_gl_entries
+
 		bank = self.company_bank_account(self.base)
 		other = self.generic_account(self.base)
+		# Draft Transfer is allowed; Submit stays blocked. Rebuild the pre-V1
+		# Payment shape: GL on the document voucher, no posting unit.
 		doc = frappe.get_doc(
 			{
 				"doctype": DOCTYPE,
@@ -234,9 +239,23 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 				],
 			}
 		).insert()
-		doc.submit()
-		# A pre-V1 Payment: GL on the document voucher, no posting unit.
+		cost_center = frappe.get_cached_value("Company", self.company, "cost_center")
+		common = {
+			"company": self.company,
+			"posting_date": nowdate(),
+			"voucher_type": DOCTYPE,
+			"voucher_no": doc.name,
+			"cost_center": cost_center,
+		}
+		make_gl_entries(
+			[
+				doc.get_gl_dict({**common, "account": bank.account, "debit": 50, "debit_in_account_currency": 50, "against": other}),
+				doc.get_gl_dict({**common, "account": other, "credit": 50, "credit_in_account_currency": 50, "against": bank.account}),
+			],
+			update_outstanding="No",
+		)
 		frappe.db.set_value(DOCTYPE, doc.name, "operation_type", "Payment", update_modified=False)
+		frappe.db.set_value(DOCTYPE, doc.name, "docstatus", 1, update_modified=False)
 		active = {"voucher_type": DOCTYPE, "voucher_no": doc.name, "is_cancelled": 0}
 		self.assertEqual(frappe.db.count("GL Entry", active), 2)
 		frappe.get_doc(DOCTYPE, doc.name).cancel()
@@ -341,22 +360,25 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		return {"receipt_receiver_kind": "بانک", "receipt_bank_account": bank.name}
 
 	def fund(self, bank, amount=1000):
-		"""Move money into the bank first, so a test Payment never depends on the live bank balance."""
+		"""Credit the bank with a test Receipt so a Payment never depends on the live bank balance."""
+		customer, receivable = self.customer_with_account(self.base)
 		frappe.get_doc(
 			{
 				"doctype": DOCTYPE,
-				"operation_type": "Transfer",
+				"operation_type": "Receipt",
 				"company": self.company,
 				"posting_date": nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": self.base,
+				"receipt_credit_currency": self.base,
+				"receipt_receiver_kind": "بانک",
+				"receipt_bank_account": bank.name,
 				"operational_pairs": [
 					{
-						"debit_account": bank.account,
-						"debit_amount": amount,
-						"debit_exchange_rate": 1,
-						"credit_account": self.generic_account(self.base),
+						"receipt_recipient_type": "Customer",
+						"receipt_recipient": customer,
+						"credit_account": receivable,
 						"credit_amount": amount,
-						"credit_exchange_rate": 1,
 					}
 				],
 			}

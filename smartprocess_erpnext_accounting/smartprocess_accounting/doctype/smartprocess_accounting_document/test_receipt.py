@@ -291,7 +291,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt(
 			[
 				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "10.25", "10"),
-				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "5.5", "20"),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "5.5", "10"),
 			]
 		)
 		doc.validate()
@@ -300,17 +300,27 @@ class TestReceiptUX(V2IntegrationTestCase):
 				Decimal(str(row.debit_company_amount)),
 				Decimal(str(row.credit_company_amount)),
 			)
+		mismatched = self.receipt(
+			[
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "10.25", "10"),
+				self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, "5.5", "20"),
+			]
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "نرخ"):
+			mismatched.validate()
 
 	def test_row_rate_prices_the_payer_and_header_rate_prices_the_receiver(self):
 		row = self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)
 		row["receipt_payer_exchange_rate"] = 999
-		doc = self.receipt([row], payer_rate=5)
+		same_currency = self.receipt([row], payer_rate=5)
+		with self.assertRaisesRegex(frappe.ValidationError, "نرخ"):
+			same_currency.validate()
+		doc = self.receipt([row], payer_rate=10)
 		doc.validate()
 		pair = doc.operational_pairs[0]
 		self.assertEqual(Decimal(str(pair.credit_exchange_rate)), Decimal("10"))
 		self.assertEqual(Decimal(str(pair.credit_company_amount)), Decimal("100"))
-		self.assertEqual(Decimal(str(pair.debit_exchange_rate)), Decimal("5"))
-		self.assertEqual(Decimal(str(pair.debit_amount)), Decimal("20"))
+		self.assertEqual(Decimal(str(pair.debit_exchange_rate)), Decimal("10"))
 		self.assertEqual(Decimal(str(pair.debit_company_amount)), Decimal("100"))
 		self.assertFalse(pair.receipt_payer_exchange_rate)
 
@@ -736,9 +746,9 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_other_operation_types_keep_generic_pair_contract(self):
 		for operation_type in ("Transfer", "Currency Conversion"):
 			with self.subTest(operation_type=operation_type):
-				doc = self.submit_document([self.base_pair()], operation_type=operation_type)
-				self.assertEqual(len(self.active_gl(doc)), 2)
-				doc.cancel()
+				doc = self.insert_blocked_operation(operation_type)
+				self.assertEqual(doc.docstatus, 0)
+				self.assertFalse(self.active_gl(doc))
 
 	def posting_units(self, doc, *, include_cancelled=False):
 		filters = {"source_document": doc.name}

@@ -1,3 +1,17 @@
+"""ARCHIVED — out of unittest discovery (no test_ prefix).
+
+These Transfer/Currency Conversion posting-engine tests are obsolete after
+incomplete_operation_rules blocked Transfer/CC submit. They are kept for
+history, not skipped-to-pass.
+
+Also archived from test_live_readiness.py (same Transfer pair engine):
+- test_zero_decimal_company_precision
+- test_fractional_company_currency_precision
+- test_high_precision_exchange_rate_uses_server_decimal
+- test_very_small_valid_account_currency_amount
+- test_many_pairs_and_same_account_at_different_rates
+"""
+
 from __future__ import annotations
 
 import unittest

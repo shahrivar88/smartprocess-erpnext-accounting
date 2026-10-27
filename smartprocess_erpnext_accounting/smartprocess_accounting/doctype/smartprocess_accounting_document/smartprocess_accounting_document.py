@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import frappe
-from frappe import _
 from erpnext.controllers.accounts_controller import AccountsController
+from frappe import _
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.audit_trail import keep_cancelled_history
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import (
 	start_correction as create_correction,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.incomplete_operation_rules import (
+	submit_block_reason,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment import canonicalize_payment
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
@@ -21,7 +24,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import cano
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	assert_no_active_conversions,
 )
-
 
 SERIES_FIELDS = {
 	"Receipt": "receipt_naming_series",
@@ -52,15 +54,18 @@ class SmartProcessAccountingDocument(AccountsController):
 		self.naming_series = self._configured_series()
 
 	def validate(self):
+		self._guard_lab_writer()
 		self._validate_accounting()
 
 	def before_submit(self):
+		self._reject_incomplete_submit()
 		require_posting_enabled()
 		self._validate_accounting()
 		if self.operation_type in FLOW_OPERATIONS:
 			post_document(self)
 
 	def on_submit(self):
+		self._reject_incomplete_submit()
 		if self.operation_type not in FLOW_OPERATIONS:
 			post_document(self)
 
@@ -119,6 +124,25 @@ class SmartProcessAccountingDocument(AccountsController):
 		if not series:
 			frappe.throw(_("Naming Series is not configured for {0}.").format(self.operation_type))
 		return series
+
+	def _reject_incomplete_submit(self):
+		reason = submit_block_reason(self.operation_type)
+		if reason:
+			frappe.throw(_(reason))
+
+	def _guard_lab_writer(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_lock import (
+			acquire_lab_writer_lock,
+		)
+
+		acquire_lab_writer_lock(self)
+
+	def _release_lab_writer_lock(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_lock import (
+			release_lab_writer_lock,
+		)
+
+		release_lab_writer_lock(self)
 
 	def _validate_accounting(self):
 		canonicalize_receipt(self)

@@ -231,11 +231,20 @@ class TestFinancialIntermediarySite(unittest.TestCase):
 			fields=["name", "company", "account_currency"],
 			order_by="name asc",
 		)
-		for company in sorted({row.company for row in rows}):
+		default = frappe.db.get_default("company")
+		companies = sorted({row.company for row in rows})
+		if default in companies:
+			companies = [default, *[company for company in companies if company != default]]
+		for company in companies:
 			currency = frappe.get_cached_value("Company", company, "default_currency")
 			base = [row.name for row in rows if row.company == company and row.account_currency == currency]
 			foreign = [row.name for row in rows if row.company == company and row.account_currency != currency]
 			if base and foreign:
+				if company != default:
+					raise unittest.SkipTest(
+						"dual-currency receivables exist only on a non-default company; "
+						"ERPNext party currency checks the default Company"
+					)
 				return company, base[0], foreign[0]
 		raise unittest.SkipTest("No company with receivable accounts in two currencies.")
 
@@ -365,6 +374,17 @@ class TestFinancialIntermediarySite(unittest.TestCase):
 			party.save()
 
 	def test_contacts_and_addresses_use_dynamic_links(self):
+		if not frappe.db.exists("Address Template", {"is_default": 1}):
+			country = frappe.db.get_value("Country", {"name": ["in", ["Iran", "India"]]}, "name") or "Iran"
+			if not frappe.db.exists("Address Template", country):
+				frappe.get_doc(
+					{
+						"doctype": "Address Template",
+						"country": country,
+						"is_default": 1,
+						"template": "{{ address_line1 }}<br>{{ city }}",
+					}
+				).insert()
 		party = self.intermediary()
 		contact = self.linked("Contact", {"first_name": "_SP Test Contact"}, party)
 		address = self.linked(

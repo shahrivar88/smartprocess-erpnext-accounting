@@ -21,6 +21,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils impor
 	decimal_text,
 	to_decimal,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.incomplete_operation_rules import (
+	submit_block_reason,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	assert_one_currency_per_party,
 	get_accounts,
@@ -114,6 +117,9 @@ def require_posting_enabled() -> None:
 
 
 def post_document(doc) -> None:
+	reason = submit_block_reason(doc.operation_type)
+	if reason:
+		frappe.throw(_(reason))
 	require_posting_enabled()
 	if cint(doc.docstatus) != 1:
 		frappe.throw(_("Only a submitted SmartProcess Accounting Document can post."))

@@ -2,12 +2,18 @@
 // display-only number handling as the SmartProcess forms, and the optional
 // "allow_exchange_rate_editing" UI unlock. Field values, precision and every
 // server rule stay untouched.
-(function (root, factory) {
+// Leading semicolon: Frappe concatenates this file into doctype __js after
+// other apps' form.on("DocType", { ... }) closings. Without it, ASI turns the
+// IIFE into form.on(...)(...), which throws "form.on(...) is not a function".
+;(function (root, factory) {
 	const api = factory();
-	if (typeof module === "object" && module.exports) {
+	// Node tests export the API. Never write module.exports inside Desk: Frappe
+	// evaluates doctype __js with new Function() in global scope, and a leaked
+	// `module` would replace the wrong export and break frappe.ui.form.on.
+	if (typeof module === "object" && module.exports && !root?.document) {
 		module.exports = api;
 	}
-	if (root?.frappe?.ui?.form?.on) {
+	if (typeof root?.frappe?.ui?.form?.on === "function") {
 		api.register(root.frappe);
 	}
 })(typeof window !== "undefined" ? window : globalThis, () => {
@@ -21,12 +27,22 @@
 			target_exchange_rate: "paid_to_account_currency",
 		},
 	};
+	// Number display only. Exchange-rate unlock stays on RATE_FIELDS.
+	const DISPLAY_RATE_FIELDS = {
+		...RATE_FIELDS,
+		Quotation: { conversion_rate: "currency" },
+		"Sales Order": { conversion_rate: "currency" },
+		"Purchase Order": { conversion_rate: "currency" },
+	};
 	// DocType → item table → its row DocType. Static grid cells already go through
 	// the wrapped frappe.form.formatters; these entries cover the cell inputs and
 	// the expanded row editor, which render through format_for_input().
 	const ITEM_GRIDS = {
 		"Sales Invoice": { items: "Sales Invoice Item" },
 		"Purchase Invoice": { items: "Purchase Invoice Item" },
+		Quotation: { items: "Quotation Item" },
+		"Sales Order": { items: "Sales Order Item" },
+		"Purchase Order": { items: "Purchase Order Item" },
 	};
 	// A row DocType without one of these fields simply never builds its control.
 	const ITEM_NUMERIC_FIELDS = new Set([
@@ -96,16 +112,32 @@
 		return info?.decimal_str || ".";
 	}
 
+	function controlDoctype(control, fallback) {
+		return (
+			fallback ||
+			control?.frm?.doctype ||
+			control?.grid?.frm?.doctype ||
+			control?.doc?.parenttype ||
+			control?.doc?.doctype ||
+			control?.df?.parent ||
+			""
+		);
+	}
+
 	// Display only: the input text loses insignificant zeros and groups thousands
 	// while typing; control.value and the document value stay the raw number.
-	function prepareInput(control) {
+	function prepareInput(control, doctype) {
 		const numeric = globalThis.smartprocessAccounting?.numeric;
 		if (!numeric || typeof control?.format_for_input !== "function" || preparedControls.has(control)) {
 			return;
 		}
 		preparedControls.add(control);
-		const settings = flags();
-		if (Number(settings.hide_insignificant_trailing_zeros)) {
+		const parenttype = control?.doc?.parenttype || "";
+		const target = controlDoctype(control, doctype);
+		const zerosOn = numeric.trailingZerosEnabledFor
+			? numeric.trailingZerosEnabledFor(target, parenttype)
+			: Number(flags().hide_insignificant_trailing_zeros);
+		if (zerosOn) {
 			const formatForInput = control.format_for_input;
 			control.format_for_input = function (value) {
 				return numeric.compactFormattedNumber(formatForInput.call(this, value), decimalSeparator());
@@ -114,19 +146,23 @@
 				control.set_formatted_input(typeof control.get_value === "function" ? control.get_value() : control.value);
 			}
 		}
-		numeric.liveNumberSeparator.attach(control, () => settings.live_number_separator || {});
+		numeric.liveNumberSeparator.attach(control, () =>
+			numeric.liveSeparatorConfigFor
+				? numeric.liveSeparatorConfigFor(target, parenttype)
+				: flags().live_number_separator || {},
+		);
 	}
 
 	function prepareRateInputs(frm) {
-		for (const fieldname of Object.keys(RATE_FIELDS[frm?.doctype] || {})) {
-			prepareInput(frm.fields_dict?.[fieldname]);
+		for (const fieldname of Object.keys(DISPLAY_RATE_FIELDS[frm?.doctype] || {})) {
+			prepareInput(frm.fields_dict?.[fieldname], frm.doctype);
 		}
 	}
 
-	function prepareItemControl(control) {
+	function prepareItemControl(control, doctype) {
 		const df = control?.df;
 		if (df && ITEM_NUMERIC_FIELDS.has(df.fieldname) && NUMERIC_FIELDTYPES.has(df.fieldtype)) {
-			prepareInput(control);
+			prepareInput(control, doctype);
 		}
 	}
 
@@ -135,7 +171,8 @@
 	// control is prepared as soon as it is built; the GridRow class is untouched.
 	function prepareGridRow(gridRow) {
 		const grid = gridRow?.grid;
-		if (!ITEM_GRIDS[grid?.frm?.doctype]?.[grid?.df?.fieldname]) {
+		const doctype = grid?.frm?.doctype;
+		if (!ITEM_GRIDS[doctype]?.[grid?.df?.fieldname]) {
 			return;
 		}
 		if (!preparedRows.has(gridRow) && typeof gridRow.make_control === "function") {
@@ -143,15 +180,15 @@
 			const makeControl = gridRow.make_control;
 			gridRow.make_control = function (column, ...rest) {
 				const result = makeControl.call(this, column, ...rest);
-				prepareItemControl(column?.field);
+				prepareItemControl(column?.field, doctype);
 				return result;
 			};
 		}
 		for (const control of gridRow.on_grid_fields || []) {
-			prepareItemControl(control);
+			prepareItemControl(control, doctype);
 		}
 		for (const control of Object.values(gridRow.grid_form?.fields_dict || {})) {
-			prepareItemControl(control);
+			prepareItemControl(control, doctype);
 		}
 	}
 
@@ -190,8 +227,26 @@
 		prepareItemGrids(frm);
 	}
 
+	// Bind the already-open form only after layout has built fields_dict.
+	// Calling refresh earlier is a no-op; the refresh handler runs again.
+	function bindOpenForm(frm) {
+		const open = frm || globalThis.cur_frm;
+		if (!open || !DISPLAY_RATE_FIELDS[open.doctype]) {
+			return;
+		}
+		setupForm(open);
+		if (open.fields_dict && Object.keys(open.fields_dict).length) {
+			refreshForm(open);
+		}
+	}
+
 	// Every doctype_js copy of this file runs this; each DocType is registered once.
+	// A single "*" handler covers the first refresh even if this file is evaluated
+	// in the middle of another DocType's concatenated __js bundle.
 	function register(frappe) {
+		if (typeof frappe?.ui?.form?.on !== "function") {
+			return;
+		}
 		const app = (globalThis.smartprocessAccounting = globalThis.smartprocessAccounting || {});
 		const registered = (app.nativeRateDoctypes = app.nativeRateDoctypes || new Set());
 		const once = (doctype, events) => {
@@ -200,7 +255,27 @@
 				frappe.ui.form.on(doctype, events);
 			}
 		};
-		for (const doctype of Object.keys(RATE_FIELDS)) {
+		if (!app.nativeRateWildcard) {
+			app.nativeRateWildcard = true;
+			frappe.ui.form.on("*", {
+				setup(frm) {
+					if (DISPLAY_RATE_FIELDS[frm?.doctype]) {
+						setupForm(frm);
+					}
+				},
+				refresh(frm) {
+					if (DISPLAY_RATE_FIELDS[frm?.doctype]) {
+						refreshForm(frm);
+					}
+				},
+				form_render(frm, cdt, cdn) {
+					if (ITEM_GRIDS[frm?.doctype]) {
+						prepareRowForm(frm, cdt, cdn);
+					}
+				},
+			});
+		}
+		for (const doctype of Object.keys(DISPLAY_RATE_FIELDS)) {
 			once(doctype, { setup: setupForm, refresh: refreshForm });
 		}
 		for (const rowDoctypes of Object.values(ITEM_GRIDS)) {
@@ -208,10 +283,12 @@
 				once(rowDoctype, { form_render: prepareRowForm });
 			}
 		}
+		bindOpenForm();
 	}
 
 	return {
 		RATE_FIELDS,
+		DISPLAY_RATE_FIELDS,
 		ITEM_GRIDS,
 		ITEM_NUMERIC_FIELDS,
 		canEditRate,
@@ -222,6 +299,7 @@
 		prepareItemGrids,
 		prepareRowForm,
 		watchItemGrids,
+		bindOpenForm,
 		register,
 	};
 });

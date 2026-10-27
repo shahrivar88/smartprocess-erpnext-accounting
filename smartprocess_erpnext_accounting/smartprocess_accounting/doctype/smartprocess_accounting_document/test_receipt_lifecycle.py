@@ -283,9 +283,65 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 			distinct=True,
 		)
 		foreign = sorted(currency for currency in currencies if currency and currency != self.base)
-		if not foreign:
-			self.skipTest("No foreign-currency Receivable Account.")
-		return foreign[0]
+		if foreign:
+			return foreign[0]
+		return self.ensure_lab_foreign_currency()
+
+	def ensure_lab_foreign_currency(self):
+		"""Create a disposable foreign Receivable, Customer and generic Account on this site."""
+		currency = next(
+			(
+				name
+				for name in ("EUR", "GBP", "IRR")
+				if name != self.base and frappe.db.exists("Currency", name)
+			),
+			None,
+		)
+		if not currency:
+			self.skipTest("No foreign Currency is available to create lab fixtures.")
+		frappe.db.set_value("Currency", currency, "enabled", 1)
+		receivable_parent = frappe.db.get_value(
+			"Account",
+			frappe.db.get_value("Company", self.company, "default_receivable_account"),
+			"parent_account",
+		)
+		if not self.accounts(currency, account_type="Receivable"):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": f"_SP Lab Receivable {currency}",
+					"company": self.company,
+					"parent_account": receivable_parent,
+					"account_type": "Receivable",
+					"account_currency": currency,
+				}
+			).insert()
+		if not any(
+			frappe.get_cached_value("Account", account, "account_type") not in NON_GENERIC_ACCOUNT_TYPES
+			for account in self.accounts(currency, root_type=["in", ["Asset", "Liability"]])
+		):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": f"_SP Lab Clearing {currency}",
+					"company": self.company,
+					"parent_account": receivable_parent,
+					"account_type": "",
+					"account_currency": currency,
+				}
+			).insert()
+		receivable = self.accounts(currency, account_type="Receivable")[0]
+		if not frappe.db.exists("Customer", f"_SP Lab Customer {currency}"):
+			frappe.get_doc(
+				{
+					"doctype": "Customer",
+					"customer_name": f"_SP Lab Customer {currency}",
+					"customer_type": "Company",
+					"default_currency": currency,
+					"accounts": [{"company": self.company, "account": receivable}],
+				}
+			).insert()
+		return currency
 
 	def accounts(self, currency, **filters):
 		return frappe.get_all(

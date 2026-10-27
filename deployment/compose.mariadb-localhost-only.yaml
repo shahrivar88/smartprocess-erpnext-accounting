@@ -1,0 +1,20 @@
+# Local overlay only. Do not apply to a running stack from this file.
+# Cause of the current publish: finance-mgmt/overrides/compose.mariadb.yaml
+# uses `ports: - "3306:3306"` (HostIp empty → 0.0.0.0 and [::]).
+#
+# This file is a replacement for that ports list, not an extra compose
+# file appended after it. Docker Compose merges port lists; appending
+# would leave the 0.0.0.0 publish in place.
+#
+# Intended use on a controlled host, after backup and operator approval:
+#   1. Copy this ports block over the db.ports in the local MariaDB override
+#      OR use this file instead of compose.mariadb.yaml — never both.
+#   2. Recreate only the db service when the operator is ready.
+#   3. Confirm HostIp is 127.0.0.1 before announcing the exposure closed.
+#
+# Not applied in this session. Ubuntu host and shared :8080 stack stay unchanged.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:3306:3306"

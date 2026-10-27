@@ -148,7 +148,7 @@ const CASES = [
 
 test("1 item cells show insignificant zeros dropped; the raw row value never changes", () => {
 	settings();
-	for (const doctype of ["Sales Invoice", "Purchase Invoice"]) {
+	for (const doctype of ["Sales Invoice", "Purchase Invoice", "Quotation", "Sales Order", "Purchase Order"]) {
 		for (const [fieldname, value, visible] of CASES) {
 			const { frm, row, gridRow, calls } = invoice(doctype, { [fieldname]: value });
 			native.prepareItemGrids(frm);
@@ -280,7 +280,34 @@ test("7 amounts stay ERPNext's; precision metadata is never written", () => {
 	assert.deepEqual(controls.map((control) => control.df.precision), precisions);
 	assert.equal(JSON.stringify(docfields), metaBefore);
 	assert.equal(typeof native.ITEM_NUMERIC_FIELDS.has, "function");
-	assert.deepEqual(Object.keys(native.ITEM_GRIDS), ["Sales Invoice", "Purchase Invoice"]);
+	assert.deepEqual(Object.keys(native.ITEM_GRIDS), [
+		"Sales Invoice",
+		"Purchase Invoice",
+		"Quotation",
+		"Sales Order",
+		"Purchase Order",
+	]);
+});
+
+test("8 a disabled DocType keeps the standard Frappe input even when the master flag is on", () => {
+	frappe.boot = {
+		smartprocess_accounting: {
+			hide_insignificant_trailing_zeros: 1,
+			live_number_separator: { enabled: 1, separator: ",", decimal_str: ".", group_str: "," },
+			hide_trailing_zeros_doctypes: { "Sales Invoice": 0, Quotation: 1 },
+			live_separator_doctypes: { "Sales Invoice": 0, Quotation: 1 },
+		},
+	};
+	const off = invoice("Sales Invoice", { qty: 10, rate: 100000 });
+	native.prepareItemGrids(off.frm);
+	assert.equal(cell(off.gridRow, "qty").element.value, "10.00");
+	const offRate = cell(off.gridRow, "rate");
+	assert.equal(offRate.element.value, "100,000.00");
+	assert.equal(typeInto(offRate, "1000000"), "1000000", "live off for this DocType");
+	const on = invoice("Quotation", { qty: 10, rate: 100000 });
+	native.prepareItemGrids(on.frm);
+	assert.equal(cell(on.gridRow, "qty").element.value, "10");
+	assert.equal(typeInto(cell(on.gridRow, "rate"), "1000000"), "1,000,000");
 });
 
 (async () => {

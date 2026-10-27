@@ -50,7 +50,7 @@ GL_FIELDS = ", ".join(
 )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_document_detail(gl_entry, company, party_type, party=None, account=None):
 	if party_type == ACCOUNT_LEDGER and not account:
 		frappe.throw(_("حساب الزامی است."))

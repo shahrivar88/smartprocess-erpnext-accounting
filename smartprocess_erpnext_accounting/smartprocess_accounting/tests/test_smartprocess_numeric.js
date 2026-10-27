@@ -3,6 +3,8 @@ const {
 	compactFormattedNumber,
 	wrapNumericFormatters,
 	liveNumberSeparator,
+	trailingZerosEnabledFor,
+	liveSeparatorConfigFor,
 } = require("../../public/js/smartprocess_numeric.js");
 
 const cases = [
@@ -74,6 +76,47 @@ console.log(`smartprocess_numeric: ${cases.length} cases passed`);
 	assert.deepEqual(df, { fieldtype: "Currency" }, "docfield is not mutated");
 	assert.ok(!calls.includes("Int"));
 	console.log("wrapNumericFormatters: 10 cases passed");
+}
+
+{
+	const formatters = {
+		Currency: (value) => `${value}.00`,
+	};
+	wrapNumericFormatters(
+		formatters,
+		() => ".",
+		(doctype, parenttype) => doctype === "Sales Invoice" || parenttype === "Sales Invoice",
+	);
+	assert.equal(formatters.Currency(100, { fieldtype: "Currency" }, {}, { doctype: "Sales Invoice" }), "100");
+	assert.equal(
+		formatters.Currency(100, { fieldtype: "Currency" }, {}, { doctype: "Journal Entry" }),
+		"100.00",
+		"disabled DocTypes keep the native formatter",
+	);
+	assert.equal(
+		formatters.Currency(12, { fieldtype: "Currency", parent: "Sales Invoice Item" }, {}, {
+			doctype: "Sales Invoice Item",
+			parenttype: "Sales Invoice",
+		}),
+		"12",
+		"child rows follow the parent DocType",
+	);
+	globalThis.frappe = {
+		boot: {
+			smartprocess_accounting: {
+				hide_insignificant_trailing_zeros: 1,
+				live_number_separator: { enabled: 1, separator: ",", decimal_str: ".", group_str: "," },
+				hide_trailing_zeros_doctypes: { "Sales Invoice": 1, Quotation: 0 },
+				live_separator_doctypes: { "Sales Invoice": 1, Quotation: 0 },
+			},
+		},
+	};
+	assert.equal(trailingZerosEnabledFor("Sales Invoice"), true);
+	assert.equal(trailingZerosEnabledFor("Quotation"), false);
+	assert.equal(trailingZerosEnabledFor("Sales Invoice Item", "Sales Invoice"), true);
+	assert.equal(liveSeparatorConfigFor("Quotation").enabled, false);
+	assert.equal(liveSeparatorConfigFor("Sales Invoice").enabled, true);
+	console.log("doctype-gated formatters: 7 cases passed");
 }
 
 // Live thousands separator — pure formatting/cleaning/caret functions.

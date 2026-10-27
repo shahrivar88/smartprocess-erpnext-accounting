@@ -75,7 +75,7 @@ LEDGER_SORT = {
 }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def get_account_ledger(
 	company,
 	party_type,

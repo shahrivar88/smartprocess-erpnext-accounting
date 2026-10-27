@@ -16,7 +16,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_api import (
 	get_party_account_suggestion,
 )
 
-from .v2_test_support import AccountingFixtureTestCase
+from .v2_test_support import AccountingFixtureTestCase, ensure_v2_proof_fixtures
 
 
 COMPANY = "SP V2 Proof Company"
@@ -30,10 +30,12 @@ FOREIGN_B_RECEIVABLE = "MC Receivable B - SPV2"
 
 
 def proof_fixture(test):
-	"""Skip a test that needs the isolated proof Company on a site without it."""
+	"""Create the isolated proof Company on lab.localhost, otherwise skip."""
 
 	@functools.wraps(test)
 	def run(self):
+		if frappe.local.site == "lab.localhost":
+			ensure_v2_proof_fixtures()
 		for doctype, name in (("Company", COMPANY), ("Customer", NATIVE_CUSTOMER), ("Customer", LEGACY_CUSTOMER)):
 			if not frappe.db.exists(doctype, name):
 				self.skipTest(f"Isolated proof fixture is missing {doctype} {name}")
@@ -119,7 +121,10 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 			self.assertEqual(doc.docstatus, 0)
 			self.assertEqual(frappe.db.count("GL Entry"), gl_before)
 			self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
-			with self.assertRaisesRegex(frappe.ValidationError, "V2 posting is disabled"):
+			with self.assertRaisesRegex(
+				frappe.ValidationError,
+				"V2 posting is disabled|هنوز فعال نشده",
+			):
 				doc.submit()
 			self.assertEqual(frappe.db.count("GL Entry"), gl_before)
 			self.assertEqual(frappe.db.count("Payment Ledger Entry"), ple_before)
@@ -165,10 +170,17 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 
 		app_root = Path(smartprocess_erpnext_accounting.__file__).resolve().parent
 		self.assertFalse(list((app_root / "smartprocess_accounting" / "compatibility").glob("*.py")))
-		hooks_source = (app_root / "hooks.py").read_text(encoding="utf-8")
-		self.assertNotIn("extend_doctype_class", hooks_source)
+		from smartprocess_erpnext_accounting.smartprocess_accounting.test_hooks_source import (
+			load_production_hooks,
+		)
+
+		hooks = load_production_hooks()
+		self.assertEqual(list(hooks.extend_doctype_class), ["Transaction Deletion Record"])
+		self.assertNotIn("GL Entry", hooks.extend_doctype_class)
+		self.assertNotIn("Sales Invoice", hooks.extend_doctype_class)
+		self.assertNotIn("Purchase Invoice", hooks.extend_doctype_class)
 		for path in app_root.rglob("*.py"):
-			if path.name.startswith("test_") or path.name == "v2_test_support.py":
+			if path.name.startswith(("test_", "archived_")) or path.name == "v2_test_support.py":
 				continue
 			source = path.read_text(encoding="utf-8")
 			self.assertNotIn("multi_currency_party", source, msg=f"{path.name} still references the retired override")
