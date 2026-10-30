@@ -78,6 +78,7 @@ doc_events = {
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.invoice_conversion_rate.validate_conversion_rate",
 	},
 	"Journal Entry": {
+		"before_validate": "smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journal.align_common_party_rates",
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.journal_entry_party.validate_disabled_parties",
 	},
 	"Shareholder": {

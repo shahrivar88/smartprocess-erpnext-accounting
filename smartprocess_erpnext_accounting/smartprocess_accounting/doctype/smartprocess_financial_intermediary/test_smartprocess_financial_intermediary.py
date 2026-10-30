@@ -172,7 +172,7 @@ class TestPartyMasterRules(unittest.TestCase):
 			journal_entry_party.validate_disabled_parties(doc)
 		self.assertEqual([call.args for call in check.call_args_list], [(DOCTYPE, "X"), (None, None)])
 		events = hooks.doc_events["Journal Entry"]
-		self.assertEqual(set(events), {"validate"})
+		self.assertEqual(set(events), {"before_validate", "validate"})
 
 	def test_dashboard_links_use_dynamic_party_type(self):
 		data = dashboard.get_data()

@@ -66,7 +66,14 @@ TABS = {
 		"monetary_display_precision",
 		"exchange_rate_display_precision",
 	],
-	"نرخ ارز و تبدیل": ["allow_exchange_rate_editing", "enable_manual_invoice_rate_feature", "base_currency_rounding_tolerance"],
+	"نرخ ارز و تبدیل": [
+		"allow_exchange_rate_editing",
+		"enable_manual_invoice_rate_feature",
+		"base_currency_rounding_tolerance",
+		"common_party_rate_source",
+		"common_party_use_shared_rate",
+		"common_party_fail_on_missing_rate",
+	],
 	"حساب‌های پیش‌فرض": ["enable_central_default_accounts", "default_account_priority", "default_accounts"],
 	"تأثیرات بر سایر ماژول‌ها": [
 		"enable_shareholder_accounting",
@@ -163,6 +170,23 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 		)
 
 
+COMMON_PARTY_FIELDS = (
+	"common_party_rate_source",
+	"common_party_use_shared_rate",
+	"common_party_fail_on_missing_rate",
+)
+
+
+def expected_tabs(fields):
+	tabs = {name: list(items) for name, items in TABS.items()}
+	live = {df.fieldname for df in fields}
+	if "common_party_rate_source" not in live:
+		tabs["نرخ ارز و تبدیل"] = [
+			name for name in tabs["نرخ ارز و تبدیل"] if name not in COMMON_PARTY_FIELDS
+		]
+	return tabs
+
+
 class TestSettingsLayout(unittest.TestCase):
 	"""Native tabbed two-column layout over the unchanged fields. Read-only."""
 
@@ -181,7 +205,7 @@ class TestSettingsLayout(unittest.TestCase):
 				tab = df.label
 			elif df.fieldtype not in LAYOUT_TYPES:
 				placed.setdefault(tab, []).append(df.fieldname)
-		self.assertEqual(placed, TABS)
+		self.assertEqual(placed, expected_tabs(self.fields))
 		section_labels = [df.label for df in self.fields if df.fieldtype == "Section Break"]
 		self.assertEqual(section_labels[3], "قالب نمایش اعداد")
 		self.assertIn("اسناد — حذف صفرهای اعشاری", section_labels)
@@ -205,7 +229,10 @@ class TestSettingsLayout(unittest.TestCase):
 
 	def test_fieldnames_are_unchanged(self):
 		data_fields = {df.fieldname for df in self.fields if df.fieldtype not in LAYOUT_TYPES}
-		self.assertEqual(data_fields, {fieldname for names in TABS.values() for fieldname in names})
+		self.assertEqual(
+			data_fields,
+			{fieldname for names in expected_tabs(self.fields).values() for fieldname in names},
+		)
 
 	def test_visible_labels_are_persian(self):
 		for df in self.fields:

@@ -12,6 +12,12 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts im
 from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
 	cross_app_impacts as shareholder_cross_app_impacts,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journal import (
+	SOURCE_EXCHANGE,
+	SOURCE_INVOICE,
+	SOURCE_STANDARD,
+	load_common_party_policy,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
 	flags as shareholder_flags,
 )
@@ -42,7 +48,15 @@ MASTER_FOLLOW_DOCTYPES = (
 class SmartProcessAccountingSettings(Document):
 	def validate(self):
 		self.validate_number_separator()
+		self.validate_common_party_settings()
 		validate_default_account_settings(self)
+
+	def validate_common_party_settings(self):
+		if not self.meta.has_field("common_party_rate_source"):
+			return
+		allowed = {SOURCE_INVOICE, SOURCE_EXCHANGE, SOURCE_STANDARD}
+		if self.common_party_rate_source and self.common_party_rate_source not in allowed:
+			frappe.throw(_("منبع نرخ ارز تهاتر نامعتبر است."))
 
 	def validate_number_separator(self):
 		separator = self.number_separator
@@ -217,8 +231,29 @@ def cross_app_impacts():
 			"rollback": "گزینه «تسویه فاکتور با سند دریافت و پرداخت استاندارد» را خاموش کنید. اسناد ثبت‌شده قبلی تغییر نمی‌کنند.",
 			"optional": 1,
 		},
+		{
+			"feature": "نرخ ارز تهاتر طرف‌حساب مشترک",
+			"owner_module": "رسید هوشمند",
+			"doctypes": "سند حسابداری خودکار Common Party",
+			"effect": "نرخ ردیف‌های سند تهاتر خودکار را از منبع انتخاب‌شده در تنظیمات می‌گیرد. اسناد دیگر و تهاتر SmartProcess تغییر نمی‌کنند.",
+			"status": _common_party_impact_status(),
+			"rollback": "منبع را روی «ERPNext Standard» بگذارید تا هوک نرخ را عوض نکند.",
+			"optional": 1,
+		},
 		*shareholder_cross_app_impacts(),
 	]
+
+
+def _common_party_impact_status():
+	if not frappe.get_meta(SETTINGS).has_field("common_party_rate_source"):
+		return "پیش‌فرض کد: نرخ فاکتور مبدأ"
+	policy = load_common_party_policy()
+	labels = {
+		SOURCE_INVOICE: "فعال — نرخ فاکتور مبدأ",
+		SOURCE_EXCHANGE: "فعال — جدول تبدیل ارز",
+		SOURCE_STANDARD: "غیرفعال — رفتار استاندارد",
+	}
+	return labels.get(policy.source, policy.source)
 
 
 def extend_bootinfo(bootinfo):

@@ -33,6 +33,10 @@ Limits that stay in force:
 - Historical SmartProcess credits without a Payment Entry appear on `Unallocatable Credits`. The report does not change those documents.
 - `enable_payment_entry_settlement` defaults to off. A site must turn it on after migrate.
 
+## Common Party rates
+
+The app aligns the automatic Common Party Journal Entry when both party accounts use the same invoice currency. The default source is the invoice conversion rate. Settings live on SmartProcess Accounting Settings, tab نرخ ارز و تبدیل. The hook does not change manual Journal Entries or SmartProcess offset entries.
+
 ## Accounting rules
 
 - ERPNext GL is the only ledger.
