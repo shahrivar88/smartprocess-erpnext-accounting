@@ -9,6 +9,8 @@ const PAE_ROUTE = "party-account-explorer";
 const PAE_TITLE = "گردش حساب";
 // The account-ledger kind: every GL row of one Account, no party.
 const PAE_ACCOUNT = "Account";
+// Frappe Select drops a blank value, so "all kinds" must be a real option.
+const PAE_ALL = "__all__";
 const PAE_LEDGER_KEYS = ["company", "party_type", "party", "currency", "account", "from_date", "to_date"];
 const PAE_PAGE_LENGTH = 100;
 const PAE_EMPTY = "-";
@@ -88,10 +90,11 @@ class PartyAccountExplorer {
 			label: __("نوع طرف حساب / حساب"),
 			fieldtype: "Select",
 			options: [
+				{ value: PAE_ALL, label: __("همه انواع") },
 				{ value: "Customer", label: __("مشتری") },
 				{ value: "Supplier", label: __("تأمین‌کننده") },
 			],
-			default: "Customer",
+			default: PAE_ALL,
 			change: overview_change,
 		});
 		this.party = this.page.add_field({
@@ -129,7 +132,7 @@ class PartyAccountExplorer {
 		});
 		this.hide_zero = this.page.add_field({
 			fieldname: "hide_zero",
-			label: __("مخفی کردن مانده صفر"),
+			label: __("مخفی کردن حساب‌های بدون مانده و گردش"),
 			fieldtype: "Check",
 			default: 1,
 			change: overview_change,
@@ -232,17 +235,29 @@ class PartyAccountExplorer {
 			return;
 		}
 		this.ledger_types = options;
-		const current = this.party_type.get_value();
-		this.party_type.df.options = options.map((option) => ({ value: option.value, label: option.label }));
+		const current = this.as_select_value(this.party_type.get_value());
+		this.party_type.df.options = options.map((option) => ({
+			value: this.as_select_value(option.value),
+			label: option.label,
+		}));
 		this.party_type.refresh();
-		const value = options.some((option) => option.value === current) ? current : options[0].value;
+		const values = options.map((option) => this.as_select_value(option.value));
+		const has_all = values.includes(PAE_ALL);
+		const value = values.includes(current) ? current : has_all ? PAE_ALL : values[0];
 		this.muted = true;
 		Promise.resolve(this.party_type.set_value(value)).finally(() => setTimeout(() => (this.muted = false), 50));
 	}
 
-	// The selected kind: a Party Type, or the account ledger with an optional account type.
+	as_select_value(value) {
+		return value ? value : PAE_ALL;
+	}
+
+	// The selected kind: every allowed type, one Party Type, or the account ledger.
 	ledger_choice() {
-		const value = this.party_type.get_value() || "Customer";
+		const value = this.party_type.get_value() || "";
+		if (!value || value === PAE_ALL) {
+			return { party_type: "", account_type: null };
+		}
 		const option = this.ledger_types.find((entry) => entry.value === value);
 		if (option) {
 			return { party_type: option.party_type, account_type: option.account_type || null };
@@ -287,7 +302,36 @@ class PartyAccountExplorer {
 	// ---- routing ----
 
 	show_route() {
-		return this.ready.then(() => this.render_route());
+		return this.ready.then(() => this.apply_route_options()).then(() => this.render_route());
+	}
+
+	apply_route_options() {
+		const options = frappe.route_options;
+		if (!options || typeof options !== "object") {
+			return Promise.resolve();
+		}
+		frappe.route_options = null;
+		this.muted = true;
+		const jobs = [];
+		if (options.company) {
+			jobs.push(this.company.set_value(options.company));
+		}
+		if ("party_type" in options) {
+			jobs.push(this.party_type.set_value(this.as_select_value(options.party_type)));
+		}
+		if ("party" in options) {
+			jobs.push(this.party.set_value(options.party || ""));
+		}
+		if (options.account) {
+			jobs.push(this.account.set_value(options.account));
+		}
+		if (options.currency) {
+			jobs.push(this.currency.set_value(options.currency));
+		}
+		if ("hide_zero" in options) {
+			jobs.push(this.hide_zero.set_value(cint(options.hide_zero)));
+		}
+		return Promise.all(jobs).finally(() => setTimeout(() => (this.muted = false), 50));
 	}
 
 	render_route() {
@@ -394,7 +438,7 @@ class PartyAccountExplorer {
 
 	refresh_overview(page) {
 		const filters = this.overview_filters();
-		if (!filters.company || !filters.party_type) {
+		if (!filters.company) {
 			return;
 		}
 		this.overview_page = Math.max(cint(page), 1);
@@ -415,7 +459,7 @@ class PartyAccountExplorer {
 	render_overview() {
 		const data = this.overview;
 		const company_currency = data.company_currency;
-		const columns = pae_ledger_view.overview_columns(data.by_account);
+		const columns = pae_ledger_view.overview_columns(data.by_account, data.mixed);
 		const cells = (row) => columns.map((column) => pae_ledger_view.overview_cell(column.key, row, company_currency)).join("");
 		const rows = data.rows
 			.map((row, index) => `<tr class="sp-row-link" data-index="${index}" title="${__("نمایش ریزگردش")}">${cells(row)}</tr>`)
@@ -424,9 +468,11 @@ class PartyAccountExplorer {
 			.map((total) => `<tr class="sp-total-row">${cells({ ...total, party_name: `${__("جمع")} (${total.row_count} ${__("ردیف")})` })}</tr>`)
 			.join("");
 		const period = `${pae_format.date(data.from_date) || "—"} ${__("تا")} ${pae_format.date(data.to_date)}`;
-		const note = data.by_account
-			? __("برای دیدن ریزگردش، روی ردیف حساب کلیک کنید. هر ردیف همه ردیف‌های دفتر کل یک حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.")
-			: __("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.");
+		const note = data.mixed
+			? __("برای دیدن ریزگردش، روی ردیف کلیک کنید. هر ردیف یا یک طرف حساب است یا یک حساب دفتر کل که همان تراکنش طرف حساب نیست.")
+			: data.by_account
+				? __("برای دیدن ریزگردش، روی ردیف حساب کلیک کنید. هر ردیف همه ردیف‌های دفتر کل یک حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.")
+				: __("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.");
 		this.$overview.html(`
 			<div class="sp-ledger-meta"><span>${__("دوره")}: ${period}</span></div>
 			<div class="sp-table-wrap">
@@ -456,12 +502,12 @@ class PartyAccountExplorer {
 
 	open_ledger(row) {
 		const filters = this.overview_filters();
-		const by_account = filters.party_type === PAE_ACCOUNT;
+		const by_account = row.by_account || filters.party_type === PAE_ACCOUNT;
 		this.opened_from_overview = true;
 		this.ledger_dates = { from_date: filters.from_date, to_date: filters.to_date };
 		this.set_ledger_route({
 			company: filters.company,
-			party_type: filters.party_type,
+			party_type: by_account ? PAE_ACCOUNT : row.party_type || filters.party_type,
 			party: by_account ? null : row.party,
 			currency: row.currency,
 			account: by_account ? row.account : filters.account,

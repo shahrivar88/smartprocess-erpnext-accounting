@@ -9,6 +9,8 @@ globalThis.locals = { "Party Account": { row1: { company: "C1" } } };
 globalThis.frappe = {
 	set_route: (...args) => routes.push(args),
 	contacts: { clear_address_and_contact: () => routes.push(["cleared"]) },
+	defaults: { get_default: () => "C1" },
+	route_options: null,
 };
 
 const spPartyProfile = require(path.join(__dirname, "..", "party_account", "party_profile.js"));
@@ -57,6 +59,18 @@ function make_form(doc = {}, fields = ["accounts", "default_currency", "primary_
 	assert.deepEqual(route, ["C1", DOCTYPE, "P1", "USD", "Debtors USD", "-", "-"]);
 	spPartyProfile.openExplorer(make_form(), { company: "C1", currency: "USD", account: "Debtors USD" });
 	assert.deepEqual(routes.at(-1), ["party-account-explorer", "ledger", ...route]);
+}
+
+// Toolbar opens that party even when closing is zero.
+{
+	spPartyProfile.lastBalances = [{ company: "C1", currency: "IRR", account: "Debtors", closing: 0 }];
+	spPartyProfile.openExplorer(make_form());
+	assert.deepEqual(routes.at(-1), ["party-account-explorer", "ledger", "C1", DOCTYPE, "P1", "IRR", "Debtors", "-", "-"]);
+	spPartyProfile.lastBalances = [];
+	frappe.route_options = null;
+	spPartyProfile.openExplorer(make_form());
+	assert.deepEqual(routes.at(-1), ["party-account-explorer"]);
+	assert.deepEqual(frappe.route_options, { company: "C1", party_type: DOCTYPE, party: "P1", hide_zero: 0 });
 }
 
 // One row per Company + Account, each in its own currency; nothing is converted or summed.

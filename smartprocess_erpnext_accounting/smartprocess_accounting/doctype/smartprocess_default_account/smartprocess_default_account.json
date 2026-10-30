@@ -9,7 +9,7 @@
  "fields": [
   {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"شرکت","options":"Company","reqd":1},
   {"fieldname":"currency","fieldtype":"Link","in_list_view":1,"label":"ارز","options":"Currency","reqd":1},
-  {"fieldname":"account_purpose","fieldtype":"Select","in_list_view":1,"label":"کاربرد حساب","options":"Receivable\nPayable\nBank\nCash","reqd":1},
+  {"fieldname":"account_purpose","fieldtype":"Select","in_list_view":1,"label":"کاربرد حساب","options":"Receivable\nPayable\nBank\nCash\nShareholder Current","reqd":1},
   {"fieldname":"account","fieldtype":"Link","in_list_view":1,"label":"حساب","options":"Account","reqd":1}
  ],
  "istable": 1,

@@ -63,7 +63,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		doc = self._document()
 		doc.company_currency = "XFA"
 		doc.operational_pairs[0].credit_account_currency = "XBA"
-		with self.assertRaisesRegex(frappe.ValidationError, "Account Currency"):
+		with self.assertRaisesRegex(frappe.ValidationError, "ارز حساب معین"):
 			doc.validate()
 		doc.operational_pairs[0].credit_account_currency = None
 		doc.validate()

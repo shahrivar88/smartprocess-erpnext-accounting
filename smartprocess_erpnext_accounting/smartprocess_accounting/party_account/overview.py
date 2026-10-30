@@ -5,9 +5,15 @@
 or, for an account ledger, one row per Account."""
 
 import frappe
-from frappe.utils import cint, getdate, today
+from frappe.utils import cint, flt, getdate, today
+
+from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+	PARTY_TYPE as SHAREHOLDER,
+	show_in_explorer as show_shareholder_in_explorer,
+)
 
 from .access import (
+	ACCOUNT,
 	ACCOUNT_CURRENCY,
 	ACCOUNT_LEDGER,
 	GL,
@@ -15,11 +21,12 @@ from .access import (
 	GLScope,
 	assert_readable,
 	assert_report_access,
+	configured_party_types,
 	party_type_label,
 	readable_party_types,
 )
-from .gl_period import Period, balance_columns, balance_values
-from .labels import ACCOUNT_LEDGER_CHOICES
+from .gl_period import Period, balance_columns, balance_values, hide_zero_having
+from .labels import ACCOUNT_LEDGER_CHOICES, ALL_LEDGERS_LABEL
 from .period_ranges import get_current_fiscal_year_to_date
 
 PAGE_LENGTH = 100
@@ -36,6 +43,7 @@ OVERVIEW_SORT = {
 	"closing": "(opening + period_debit - period_credit)",
 }
 TIE_BREAK = "party_name, entity, currency"
+AMOUNT_SORT = ("period_debit_base", "period_credit_base", "closing_base", "period_debit", "period_credit", "closing")
 
 
 @frappe.whitelist(methods=["POST"])
@@ -67,9 +75,18 @@ def get_report_defaults(company, as_of=None):
 	}
 
 
+def explorer_party_types():
+	"""Dedicated filter options. Historical Shareholder GL stays in the all-types view."""
+	names = readable_party_types()
+	if show_shareholder_in_explorer():
+		return names
+	return [name for name in names if name != SHAREHOLDER]
+
+
 def ledger_types():
-	"""Select options: every readable Party Type, then the account-ledger choices."""
-	options = [{"value": name, "label": party_type_label(name), "party_type": name, "account_type": None} for name in readable_party_types()]
+	"""Select options: all allowed kinds, then each readable Party Type and account group."""
+	options = [{"value": "", "label": ALL_LEDGERS_LABEL, "party_type": "", "account_type": None}]
+	options += [{"value": name, "label": party_type_label(name), "party_type": name, "account_type": None} for name in explorer_party_types()]
 	if frappe.has_permission("Account", "read"):
 		for account_type, label in ACCOUNT_LEDGER_CHOICES:
 			value = f"{ACCOUNT_LEDGER}:{account_type}" if account_type else ACCOUNT_LEDGER
@@ -95,18 +112,27 @@ def get_balance_overview(
 ):
 	assert_report_access(company, party_type, account=account, account_type=account_type)
 	period = Period(from_date, to_date)
-	scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
 	page = max(cint(page), 1)
 	page_length = min(max(cint(page_length), 1), MAX_PAGE_LENGTH)
+	if not party_type:
+		rows = sort_overview_rows(combined_rows(company, period, hide_zero, party, account, currency), sort_by, sort_order)
+		start = (page - 1) * page_length
+		return overview_payload(rows[start : start + page_length], combined_totals(rows), period, company, False, True, page, page_length, len(rows) > start + page_length)
+	scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
 	rows = overview_rows(scope, period, hide_zero, limit=page_length + 1, offset=(page - 1) * page_length, sort_by=sort_by, sort_order=sort_order)
+	return overview_payload(rows[:page_length], overview_totals(scope, period, hide_zero), period, company, scope.by_account, False, page, page_length, len(rows) > page_length)
+
+
+def overview_payload(rows, totals, period, company, by_account, mixed, page, page_length, has_more):
 	return {
-		"rows": rows[:page_length],
-		"has_more": len(rows) > page_length,
+		"rows": rows,
+		"has_more": has_more,
 		"page": page,
 		"page_length": page_length,
-		"totals": overview_totals(scope, period, hide_zero),
+		"totals": totals,
 		"company_currency": frappe.get_cached_value("Company", company, "default_currency"),
-		"by_account": scope.by_account,
+		"by_account": by_account,
+		"mixed": mixed,
 		**period.as_dict(),
 	}
 
@@ -134,6 +160,7 @@ def overview_rows(scope, period, hide_zero, limit=None, offset=0, sort_by=None, 
 			"party_name": row.party_name or row.entity,
 			"currency": row.currency,
 			"other_currency_rows": cint(row.other_currency_rows),
+			"account_kind": row.get("account_kind"),
 			**balance_values(row),
 		}
 		for row in data
@@ -158,15 +185,65 @@ def grouped_sql(scope, period, hide_zero):
 	"""One row per Party + Account currency: every same-currency account of the party
 	adds into it. An account ledger has one row per Account (one currency each).
 	GL rows posted in another currency are counted, never split off or dropped."""
-	having = ""
-	if cint(hide_zero):
-		having = (
-			f" having sum({GL}.debit_in_account_currency - {GL}.credit_in_account_currency) != 0"
-			f" or sum({GL}.debit - {GL}.credit) != 0"
-		)
+	having = hide_zero_having() if cint(hide_zero) else ""
+	kind = f", max({ACCOUNT}.account_type) as account_kind" if scope.by_account else ", null as account_kind"
 	select = (
 		f"{scope.key_column} as entity, coalesce(max({scope.name_column}), {scope.key_column}) as party_name, "
 		f"{ACCOUNT_CURRENCY} as currency, "
-		f"sum(case when {POSTED_IN_OTHER_CURRENCY} then 1 else 0 end) as other_currency_rows, {balance_columns()}"
+		f"sum(case when {POSTED_IN_OTHER_CURRENCY} then 1 else 0 end) as other_currency_rows{kind}, {balance_columns()}"
 	)
 	return scope.sql(select, period.until, f"group by {scope.key_column}, {ACCOUNT_CURRENCY}{having}")
+
+
+def combined_rows(company, period, hide_zero, party=None, account=None, currency=None):
+	"""Every readable party type plus accounts that are not the same GL line as a party row."""
+	search = (party or "").strip()
+	rows = []
+	for name in readable_party_types():
+		scope = GLScope(company, name, account=account, currency=currency, search=search)
+		rows += annotate_rows(overview_rows(scope, period, hide_zero), name, False)
+	if frappe.has_permission("Account", "read"):
+		scope = GLScope(company, ACCOUNT_LEDGER, account=account, currency=currency, search=search, exclude_party_types=configured_party_types())
+		rows += annotate_rows(overview_rows(scope, period, hide_zero), ACCOUNT_LEDGER, True)
+	return rows
+
+
+def annotate_rows(rows, party_type, by_account):
+	label = account_kind_label if by_account else lambda _kind: party_type_label(party_type)
+	for row in rows:
+		row["party_type"] = party_type
+		row["by_account"] = by_account
+		row["ledger_label"] = label(row.get("account_kind"))
+		row["ledger_kind"] = row["ledger_label"]
+	return rows
+
+
+def account_kind_label(account_type):
+	return next((choice_label for choice, choice_label in ACCOUNT_LEDGER_CHOICES if choice == account_type), "حساب دفتر کل")
+
+
+def sort_overview_rows(rows, sort_by=None, sort_order=None):
+	reverse = sort_order == "desc"
+
+	def key(row):
+		if sort_by in AMOUNT_SORT:
+			primary = flt(row.get(sort_by))
+		elif sort_by == "currency":
+			primary = row.get("currency") or ""
+		elif sort_by == "ledger_kind":
+			primary = row.get("ledger_label") or ""
+		else:
+			primary = (row.get("party_name") or "").casefold()
+		return (primary, row.get("ledger_label") or "", (row.get("party_name") or "").casefold(), row.get("party") or row.get("account") or "", row.get("currency") or "")
+
+	return sorted(rows, key=key, reverse=reverse)
+
+
+def combined_totals(rows):
+	buckets = {}
+	for row in rows:
+		bucket = buckets.setdefault(row["currency"], {"row_count": 0})
+		bucket["row_count"] += 1
+		for field in ("opening", "period_debit", "period_credit", "opening_base", "period_debit_base", "period_credit_base"):
+			bucket[field] = flt(bucket.get(field)) + flt(row.get(field))
+	return [{"currency": currency, "row_count": bucket["row_count"], **balance_values(bucket)} for currency, bucket in sorted(buckets.items())]

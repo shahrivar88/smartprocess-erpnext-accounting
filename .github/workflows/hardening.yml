@@ -20,3 +20,13 @@ jobs:
         run: python -m compileall -q smartprocess_erpnext_accounting
       - name: AST hardening contracts
         run: python tools/check_hardening_ast.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Isolated JavaScript contracts
+        run: |
+          node smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_receipt_ui.js
+          node smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_settlement_workbench.js
+          node smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_receipt_conversion_ui.js
+          node smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_party_profile.js
+          node smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_party_account_explorer_ui.js

@@ -1,0 +1,23 @@
+{
+ "actions": [],
+ "creation": "2026-10-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": ["voucher_type", "voucher_no", "outstanding_amount", "allocated_amount"],
+ "fields": [
+  {"columns": 2, "fieldname": "voucher_type", "fieldtype": "Link", "in_list_view": 1, "label": "نوع سند", "options": "DocType", "reqd": 1},
+  {"columns": 3, "fieldname": "voucher_no", "fieldtype": "Dynamic Link", "in_list_view": 1, "label": "شماره فاکتور", "options": "voucher_type", "reqd": 1},
+  {"columns": 2, "fieldname": "outstanding_amount", "fieldtype": "Currency", "in_list_view": 1, "label": "مانده فاکتور", "read_only": 1},
+  {"columns": 2, "fieldname": "allocated_amount", "fieldtype": "Currency", "in_list_view": 1, "label": "مبلغ تخصیص", "reqd": 1}
+ ],
+ "istable": 1,
+ "module": "SmartProcess Accounting",
+ "name": "SmartProcess Settlement Allocation",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

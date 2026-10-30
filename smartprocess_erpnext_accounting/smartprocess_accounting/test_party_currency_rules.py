@@ -14,6 +14,11 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_currency_rule
 	account_matches_party_currency,
 	pick_party_currency,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
+	ACCOUNT_CURRENCY_MISMATCH,
+	account_currency_mismatch_message,
+	assert_account_matches_posted_currency,
+)
 
 
 class TestPartyCurrencyRules(unittest.TestCase):
@@ -38,6 +43,25 @@ class TestPartyCurrencyRules(unittest.TestCase):
 		self.assertTrue(account_matches_party_currency("USD", "USD"))
 		self.assertFalse(account_matches_party_currency("IRR", "USD"))
 		self.assertTrue(account_matches_party_currency("USD", None))
+
+	def test_one_account_rejects_a_second_posted_currency(self):
+		self.assertIn("حساب معین جداگانه‌ای", ACCOUNT_CURRENCY_MISMATCH)
+		self.assertIn("USD", account_currency_mismatch_message("Bank USD", "USD", "IRR"))
+		self.assertIn("IRR", account_currency_mismatch_message("Bank USD", "USD", "IRR"))
+		assert_account_matches_posted_currency("Bank USD", "USD", "USD")
+		assert_account_matches_posted_currency("Bank USD", "", "IRR")
+
+		class Blocked(Exception):
+			pass
+
+		with patch.object(v2_validation.frappe, "throw", side_effect=Blocked) as thrown:
+			with self.assertRaises(Blocked):
+				assert_account_matches_posted_currency("Bank USD", "IRR", "USD")
+		message = thrown.call_args.args[0]
+		self.assertIn("Bank USD", message)
+		self.assertIn("USD", message)
+		self.assertIn("IRR", message)
+		self.assertIn("حساب معین جداگانه‌ای", message)
 
 	def test_live_resolver_still_owns_the_documented_order(self):
 		doc = v2_validation.resolve_party_currency.__doc__ or ""

@@ -1,6 +1,8 @@
 # V2 Architecture Blueprint
 
-Status: Approved architecture contract. This document does not authorize implementation or production installation.
+Status: Historical design contract. Current product status is in [`docs/CURRENT.md`](../CURRENT.md).
+
+Cancelled after this contract: multi-currency Party on one Party record; live Transfer posting; document-level Currency Conversion posting. Those schema values remain for history. New documents offer Receipt and Payment only. Live currency conversion is `SmartProcess Receipt Conversion`.
 
 ## Purpose
 
@@ -154,8 +156,8 @@ The production model is:
 4. A gated compatibility layer while ERPNext keeps its historical one-currency
    Party validation.
 
-The proof and its upgrade limits are in
-`MULTI_CURRENCY_PARTY_PROOF.md`. The production DocType is not yet authorized.
+The proof and its upgrade limits are archived in
+`docs/archive/MULTI_CURRENCY_PARTY_PROOF.md`. That Party-currency model is retired.
 
 The rejected options are:
 

@@ -30,7 +30,7 @@ const spBalanceForm = {
 
 	setup(frm) {
 		const legs = spConversionLegs;
-		const partyTypes = () => ({ filters: { name: ["in", legs.PARTY_TYPES] } });
+		const partyTypes = () => ({ filters: { name: ["in", legs.documentPartyTypes()] } });
 		const parties = (partyType, currency) => ({
 			query: legs.method(spConversionForm.PARTY_QUERY),
 			filters: { party_type: partyType, company: frm.doc.company, currency },

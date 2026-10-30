@@ -25,6 +25,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.incomplete_operatio
 	submit_block_reason,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
+	account_currency_mismatch_message,
 	assert_one_currency_per_party,
 	get_accounts,
 	get_company_currency,
@@ -125,10 +126,15 @@ def post_document(doc) -> None:
 		frappe.throw(_("Only a submitted SmartProcess Accounting Document can post."))
 	assert_native_posting_contract()
 	if doc.operation_type in FLOW_OPERATIONS:
+		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.engine import (
+			post_via_payment_entry,
+		)
 		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
 			submit_receipt,
 		)
 
+		if post_via_payment_entry(doc):
+			return
 		submit_receipt(doc)
 		return
 	lines = validate_document(doc)
@@ -221,8 +227,8 @@ def _validate_side(doc, row, number, side, account_details, precision, party_cur
 		_pair_error(
 			number,
 			label,
-			_("Account Currency"),
-			_("Account Currency does not match Account.account_currency."),
+			_("ارز حساب معین"),
+			account_currency_mismatch_message(account.name, account.account_currency, posted_currency),
 		)
 	try:
 		validate_party(party_type, party, account.account_type)

@@ -19,6 +19,11 @@ def after_migrate():
 	_ensure_doctype_app()
 	_ensure_financial_intermediary_party_type()
 	_ensure_number_separator_defaults()
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		ensure_custom_fields,
+	)
+
+	ensure_custom_fields()
 
 
 def reload_number_display_settings():

@@ -69,12 +69,103 @@ const spReceiptRowQueries = {
 			return;
 		}
 		spReceiptOrderedWrappers.add(wrapper);
-		wrapper.addEventListener("focusin", (event) => {
+		const prepare = (event, open) => {
 			const control = spReceiptNumbers.controlFor(event.target, "receipt_recipient_type");
-			if (control?.awesomplete && spReceiptConfig.isFlow(frm.doc)) {
-				this.attachPayerTypeOrder(frm, control);
+			if (control && spReceiptConfig.isFlow(frm.doc)) {
+				this.preparePayerTypeControl(frm, control, open);
+			}
+		};
+		wrapper.addEventListener("focusin", (event) => {
+			prepare(event, true);
+			this.scheduleRtlGridDropdown(event);
+		});
+		wrapper.addEventListener("click", (event) => {
+			prepare(event, true);
+			this.scheduleRtlGridDropdown(event);
+		}, true);
+		wrapper.addEventListener("input", (event) => {
+			if (!(event.target?.value || "").trim()) {
+				prepare(event, true);
 			}
 		});
+	},
+
+	// Frappe grid_row.js reparents the list into an absolute wrapper with
+	// physical `left` and min-width 250px. In RTL that extra width grows into
+	// the right-hand sidebar. Pin the wrapper to the cell's right edge after
+	// Frappe has placed it. Core is not patched.
+	scheduleRtlGridDropdown(event) {
+		if ((document.documentElement?.getAttribute("dir") || "").toLowerCase() !== "rtl") {
+			return;
+		}
+		const cell = event.target?.closest?.(".grid-static-col");
+		const gridField = event.target?.closest?.(".sp-receipt-wide-grid .grid-field");
+		const input = cell?.querySelector("input");
+		if (!cell || !gridField || !input) {
+			return;
+		}
+		const align = () => this.alignRtlGridDropdown(input, gridField);
+		if (typeof requestAnimationFrame === "function") {
+			requestAnimationFrame(() => requestAnimationFrame(align));
+			return;
+		}
+		align();
+	},
+
+	rtlListLeft(inputRight, gridLeft, width) {
+		return inputRight - gridLeft - width;
+	},
+
+	alignRtlGridDropdown(input, gridField) {
+		const listId = input.getAttribute("aria-owns");
+		const inputRect = input.getBoundingClientRect();
+		const gridRect = gridField.getBoundingClientRect();
+		const width = Math.max(250, inputRect.width);
+		let left = this.rtlListLeft(inputRect.right, gridRect.left, width);
+		if (gridRect.left + left < 0) {
+			left = -gridRect.left;
+		}
+		for (const wrapper of gridField.querySelectorAll(":scope > .awesomplete")) {
+			if (wrapper.style.position !== "absolute") {
+				continue;
+			}
+			if (listId && !wrapper.classList.contains(listId)) {
+				continue;
+			}
+			wrapper.style.left = `${left}px`;
+			wrapper.style.minWidth = `${width}px`;
+			wrapper.style.width = `${width}px`;
+		}
+	},
+
+	preparePayerTypeControl(frm, control, open) {
+		if (!control.awesomplete) {
+			return;
+		}
+		this.attachPayerTypeOrder(frm, control);
+		control.awesomplete.minChars = 0;
+		if (open) {
+			this.openPayerTypes(frm, control);
+		}
+	},
+
+	// Click, focus or a cleared value lists every configured type. Awesomplete
+	// otherwise hides the list until a character is typed (DocType Link).
+	openPayerTypes(frm, control) {
+		const options = spReceiptForm.state(frm).payerTypeOptions || [];
+		const input = (control.$input?.val?.() || "").trim();
+		const stored = (control.get_value?.() || "").trim();
+		const selected = Boolean(stored && input === stored);
+		const typed = input.toLowerCase();
+		const items = options
+			.filter((entry) => !typed || selected || entry.value.toLowerCase().includes(typed) || entry.label.toLowerCase().includes(typed))
+			.map((entry) => ({ value: entry.value, label: entry.label, description: "" }));
+		if (!items.length) {
+			control.get_data?.("");
+			return;
+		}
+		control.awesomplete.list = items;
+		control.awesomplete.evaluate();
 	},
 
 	attachPayerTypeOrder(frm, control) {

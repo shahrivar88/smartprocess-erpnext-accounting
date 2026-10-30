@@ -6,12 +6,20 @@ const spConversionLegs = {
 	TABLE: "legs",
 	// The server still checks every chosen Receipt before it offers any row.
 	RECEIPT_FILTERS: { operation_type: "Receipt", docstatus: 1 },
-	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"],
+	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary", "Shareholder"],
 	PARTY_ACCOUNT_TYPES: {
 		Customer: "Receivable",
 		"SmartProcess Financial Intermediary": "Receivable",
 		Supplier: "Payable",
 		Employee: "Payable",
+		Shareholder: "Payable",
+	},
+	documentPartyTypes() {
+		const flags = (typeof frappe !== "undefined" && frappe.boot?.smartprocess_accounting?.shareholder_accounting) || {};
+		if (Number(flags.enabled) && Number(flags.show_in_smart_document)) {
+			return this.PARTY_TYPES;
+		}
+		return this.PARTY_TYPES.filter((name) => name !== "Shareholder");
 	},
 	SIDE_LABELS: { Receiver: "دریافت‌کننده", Payer: "پرداخت‌کننده" },
 	SOURCE_FIELDS: [

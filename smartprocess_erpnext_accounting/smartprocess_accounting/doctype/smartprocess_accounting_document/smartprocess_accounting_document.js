@@ -2,12 +2,14 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/flow_text.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_numbers.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_form.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_operation.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_header.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_payer_header.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_queries.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_events.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_validation_ui.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_summary.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/settlement.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_conversion_status.js" %}
 
 frappe.ui.form.on("SmartProcess Accounting Document", {
@@ -31,14 +33,14 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 				return { filters };
 			});
 			frm.set_query(`${side}_party_type`, "operational_pairs", () => ({
-				filters: { name: ["in", spReceiptConfig.PARTY_TYPES] },
+				filters: { name: ["in", spReceiptConfig.documentPartyTypes()] },
 			}));
 		}
 	},
 	refresh(frm) {
 		// Posting units must cancel only through the Receipt's authorized path; keep
 		// frappe's linked-docs auto-cancel from cancelling them directly.
-		frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting"];
+		frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting", "Payment Entry"];
 		if (canStartCorrection(frm)) {
 			frm.add_custom_button(__("Correction"), () => promptForCorrection(frm));
 		}
@@ -52,7 +54,7 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 		return spReceiptForm.validate(frm);
 	},
 	operation_type(frm) {
-		return spReceiptForm.refresh(frm);
+		return spReceiptOperation.changed(frm);
 	},
 	async company(frm) {
 		const currency = frm.doc.company
@@ -84,9 +86,14 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	receipt_payer(frm) {
 		return isFlowForm(frm) && spReceiptHeader.partyChanged(frm);
 	},
-	receipt_payer_account: receiptPreviewChanged,
+	receipt_payer_account(frm) {
+		return isFlowForm(frm) && spReceiptHeader.accountChanged(frm);
+	},
 	receipt_payer_exchange_rate(frm) {
 		return isFlowForm(frm) && spReceiptHeader.rateChanged(frm);
+	},
+	settlement_mode(frm) {
+		return isFlowForm(frm) && spReceiptSettlement.refresh(frm);
 	},
 });
 
@@ -102,6 +109,7 @@ function isFlowForm(frm) {
 function receiptPreviewChanged(frm) {
 	if (isFlowForm(frm)) {
 		spReceiptSummary.schedule(frm);
+		spReceiptSettlement.refresh(frm);
 	}
 }
 
@@ -235,7 +243,10 @@ for (const side of ["debit", "credit"]) {
 	const pick = (flow, generic) => (frm, cdt, cdn) =>
 		isFlowForm(frm) ? flow(frm, cdt, cdn) : generic(frm, cdt, cdn);
 	pairEvents[`${side}_description`] = rowChange;
-	pairEvents[`${side}_account`] = pick(rowChange, (frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side));
+	pairEvents[`${side}_account`] = pick(
+		(frm, cdt, cdn) => spReceiptRowEvents.accountChanged(frm, cdt, cdn),
+		(frm, cdt, cdn) => spAccountingPair.refresh_account(frm, cdt, cdn, side),
+	);
 	pairEvents[`${side}_amount`] = pick(rowChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
 	pairEvents[`${side}_exchange_rate`] = pick(rowRateChange, (frm, cdt, cdn) => spAccountingPair.calculate(frm, cdt, cdn, side));
 	pairEvents[`${side}_party_type`] = pick(() => {}, (frm, cdt, cdn) => spAccountingPair.suggest(frm, cdt, cdn, side));

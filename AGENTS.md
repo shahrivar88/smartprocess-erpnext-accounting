@@ -1,7 +1,8 @@
 # SmartProcess Accounting Engineering Contract
 
-This repository extends Frappe and ERPNext. The detailed V2 contract lives in
-[`docs/v2/`](docs/v2/BLUEPRINT.md).
+This repository extends Frappe and ERPNext. Current product status is
+[`docs/CURRENT.md`](docs/CURRENT.md). Design history lives in [`docs/v2/`](docs/v2/BLUEPRINT.md).
+Cancelled proofs live in [`docs/archive/`](docs/archive/README.md).
 
 ## Non-negotiable rules
 
@@ -37,6 +38,7 @@ This repository extends Frappe and ERPNext. The detailed V2 contract lives in
 
 ## Detailed rules
 
+- [Current product status](docs/CURRENT.md)
 - [V2 blueprint](docs/v2/BLUEPRINT.md)
 - [Accounting invariants](docs/v2/ACCOUNTING_INVARIANTS.md)
 - [Operations matrix](docs/v2/OPERATIONS_MATRIX.md)
@@ -46,3 +48,4 @@ This repository extends Frappe and ERPNext. The detailed V2 contract lives in
 - [Test matrix](docs/v2/TEST_MATRIX.md)
 - [Migration and rollback](docs/v2/MIGRATION_AND_ROLLBACK.md)
 - [Custom party types](docs/v2/PARTY_TYPES.md)
+- [Archived proofs](docs/archive/README.md)

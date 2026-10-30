@@ -9,6 +9,12 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts im
 from smartprocess_erpnext_accounting.smartprocess_accounting.default_accounts import (
 	validate_default_account_settings,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+	cross_app_impacts as shareholder_cross_app_impacts,
+)
+from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+	flags as shareholder_flags,
+)
 
 SETTINGS = "SmartProcess Accounting Settings"
 
@@ -102,6 +108,12 @@ def hide_insignificant_trailing_zeros():
 	return display_flag("hide_insignificant_trailing_zeros")
 
 
+def settlement_flag():
+	if not frappe.get_meta(SETTINGS).has_field("enable_payment_entry_settlement"):
+		return 0
+	return display_flag("enable_payment_entry_settlement")
+
+
 def doctype_display_map(master_field, prefix):
 	"""DocType → 1 only when the master Check and that DocType Check are both on."""
 	master = display_flag(master_field)
@@ -126,7 +138,7 @@ def cross_app_impacts():
 	return [
 		{
 			"feature": "حذف صفرهای اعشاری غیرضروری",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "، ".join(zeros_on) or "هیچ سندی",
 			"effect": "فقط متن نمایش اعداد را در فرم و جدول ردیف کوتاه می‌کند. مقدار ذخیره‌شده، دقت و محاسبات تغییر نمی‌کنند.",
 			"status": "فعال" if hide_insignificant_trailing_zeros() else "غیرفعال",
@@ -135,7 +147,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "جداکننده زنده هزارگان",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "، ".join(sep_on) or "هیچ سندی",
 			"effect": "هنگام ورود عدد، جداکننده هزارگان را فقط در ورودی نشان می‌دهد. مقدار خام ارسالی به سرور بدون جداکننده می‌ماند.",
 			"status": "فعال" if display_flag("enable_live_number_separator") else "غیرفعال",
@@ -144,7 +156,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "حساب‌های پیش‌فرض مرکزی",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "فاکتور فروش، فاکتور خرید",
 			"effect": "در پیش‌نویس غیربرگشتی، حساب دریافتنی یا پرداختنی هم‌شرکت و هم‌ارز جدول تنظیمات را به‌جای پیشنهاد خودکار ERPNext پیشنهاد می‌کند. انتخاب دستی و اسناد ثبت‌شده تغییر نمی‌کنند.",
 			"status": "فعال" if cint(central_default_accounts_enabled()) else "غیرفعال",
@@ -153,7 +165,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "جلوگیری از ثبت فاکتور با حساب معین غیرهم‌ارز",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "فاکتور فروش",
 			"effect": "ثبت نهایی فاکتور فروش فقط وقتی انجام می‌شود که ارز حساب دریافتنی با ارز صورتحساب یکی باشد. هیچ حسابی خودکار عوض نمی‌شود.",
 			"status": "فعال" if display_flag("prevent_receivable_currency_mismatch") else "غیرفعال",
@@ -162,7 +174,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "الزام ورود دستی نرخ تبدیل فاکتور",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "فاکتور فروش، فاکتور خرید",
 			"effect": "در فاکتور ارزی، نرخ خودکار پاک می‌شود تا کاربر نرخ را دستی وارد کند. فاکتور بدون نرخ بزرگ‌تر از صفر ذخیره نمی‌شود.",
 			"status": "فعال" if display_flag("enable_manual_invoice_rate_feature") else "غیرفعال",
@@ -171,7 +183,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "محافظ حذف شرکت و اسناد وابسته",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "Transaction Deletion Record، شرکت، اسناد اختصاصی حسابداری، واسطه مالی",
 			"effect": "حذف شرکت یا اجرای Transaction Deletion Record وقتی سند اختصاصی یا واسطه مالی به آن شرکت وصل است متوقف می‌شود. این محافظ مالی است و کلید خاموش‌کردن ناامن ندارد.",
 			"status": "فعال (محافظ الزامی)",
@@ -180,7 +192,7 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "محافظ حذف اپ حسابداری",
-			"owner_module": "حسابداری هوشمند",
+			"owner_module": "رسید هوشمند",
 			"doctypes": "تمام اسناد اختصاصی حسابداری",
 			"effect": "حذف اپ وقتی سند اختصاصی باقی مانده باشد متوقف می‌شود تا دفتر کل یتیم نشود.",
 			"status": "فعال (محافظ الزامی)",
@@ -189,13 +201,23 @@ def cross_app_impacts():
 		},
 		{
 			"feature": "قفل آزمایشگاهی نویسنده استاندارد",
-			"owner_module": "حسابداری هوشمند",
-			"doctypes": "سند حسابداری هوشمند، پرداخت، سند حسابداری (فقط آزمایشگاه)",
+			"owner_module": "رسید هوشمند",
+			"doctypes": "رسید هوشمند، پرداخت، سند حسابداری (فقط آزمایشگاه)",
 			"effect": "فقط روی سایت آزمایشگاهی و با پرچم جداگانه فعال می‌شود. روی این سایت زنده خاموش است و بدون تأیید جداگانه روشن نمی‌شود.",
 			"status": "غیرفعال روی این سایت",
 			"rollback": "فعال‌سازی روی سایت زنده نیاز به تأیید جداگانه دارد. کلید خاموش‌کردن در تنظیمات وجود ندارد.",
 			"optional": 0,
 		},
+		{
+			"feature": "تسویه فاکتور با سند دریافت و پرداخت استاندارد",
+			"owner_module": "رسید هوشمند",
+			"doctypes": "رسید هوشمند، سند دریافت، سند پرداخت، فاکتور فروش، فاکتور خرید",
+			"effect": "دریافت و پرداخت ساده مشتری یا تأمین‌کننده یک سند دریافت یا پرداخت استاندارد می‌سازد و مانده فاکتور را از دفتر تسویه رسمی کم می‌کند. ثبت حسابداری موازی برای همان گردش ساخته نمی‌شود.",
+			"status": "فعال" if settlement_flag() else "غیرفعال",
+			"rollback": "گزینه «تسویه فاکتور با سند دریافت و پرداخت استاندارد» را خاموش کنید. اسناد ثبت‌شده قبلی تغییر نمی‌کنند.",
+			"optional": 1,
+		},
+		*shareholder_cross_app_impacts(),
 	]
 
 
@@ -211,4 +233,6 @@ def extend_bootinfo(bootinfo):
 		),
 		"live_separator_doctypes": doctype_display_map("enable_live_number_separator", "live_separator"),
 		"cross_app_impacts": cross_app_impacts(),
+		"shareholder_accounting": shareholder_flags(),
+		"payment_entry_settlement": settlement_flag(),
 	}

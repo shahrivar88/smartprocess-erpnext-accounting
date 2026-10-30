@@ -82,9 +82,13 @@ only to it.
 Do not override Payment Entry or the invoices to accept a custom Party Type. Use a
 Smart Receipt or a Journal Entry instead.
 
+## Native Shareholder
+
+`Shareholder` is a standard ERPNext Party Type (`Payable`). Do not create a second DocType for it. Current-account paths are optional SmartProcess settings. Capital remains `Share Transfer`. Shareholder has no `accounts` child table and no `default_currency`; the app adds only `custom_sp_default_currency` as a preference for new documents.
+
 ## Add a new party type
 
-A Party Type needs its own DocType. Configuration alone is not enough.
+A Party Type needs its own DocType. Configuration alone is not enough. Do not follow this list for Shareholder.
 
 1. Create the DocType, for example Driver, in this app.
 2. Add these fields: a title field, `disabled`, `accounts` (Table of `Party Account`),

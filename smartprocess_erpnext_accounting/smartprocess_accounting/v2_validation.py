@@ -13,6 +13,7 @@ ALLOWED_PARTY_TYPES = (
 	"Supplier",
 	"Employee",
 	"SmartProcess Financial Intermediary",
+	"Shareholder",
 )
 # ERPNext validates the status of these Party Types itself.
 NATIVE_PARTY_STATUS = ("Customer", "Supplier", "Employee")
@@ -65,6 +66,25 @@ def validate_account(account_name: str, company: str, details: frappe._dict | No
 	return account
 
 
+ACCOUNT_CURRENCY_MISMATCH = (
+	"ارز حساب معین «{0}» {1} است؛ باید با ارز تراکنش ({2}) یکی باشد. "
+	"برای این ارز، حساب معین جداگانه‌ای انتخاب کنید."
+)
+
+
+def account_currency_mismatch_message(account, account_currency, posted_currency):
+	return _(ACCOUNT_CURRENCY_MISMATCH).format(account, account_currency, posted_currency)
+
+
+def assert_account_matches_posted_currency(account, posted_currency, account_currency=None):
+	"""One Account accepts only Account.account_currency. Separate accounts cover other currencies."""
+	if not account or not posted_currency:
+		return
+	master = account_currency or frappe.get_cached_value("Account", account, "account_currency")
+	if posted_currency != master:
+		frappe.throw(account_currency_mismatch_message(account, master, posted_currency), title=_("ارز حساب معین"))
+
+
 def validate_party(party_type: str | None, party: str | None, account_type: str | None) -> None:
 	if not party_type and not party:
 		if account_type in ("Receivable", "Payable"):
@@ -74,6 +94,11 @@ def validate_party(party_type: str | None, party: str | None, account_type: str 
 		frappe.throw(_("Party Type and Party must be set together."))
 	if party_type not in ALLOWED_PARTY_TYPES:
 		frappe.throw(_("Party Type {0} is not enabled for V2 Prototype 0.1.").format(party_type))
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		assert_shareholder_allowed_for_new_posting,
+	)
+
+	assert_shareholder_allowed_for_new_posting(party_type)
 	if not frappe.db.exists("Party Type", party_type) or not frappe.db.exists(party_type, party):
 		frappe.throw(_("Party {0} {1} does not exist.").format(party_type, party))
 	if not frappe.has_permission(party_type, "read", doc=party):
@@ -159,14 +184,15 @@ def batch_party_currencies(doctype: str, company: str, names: list[str]) -> dict
 			if currency:
 				result[name] = currency
 
-	# 3) Explicit entity currency (Party.default_currency).
+	# 3) Explicit entity currency (Party.default_currency, then Shareholder preference).
 	pending = [name for name in names if not result.get(name)]
-	if pending and frappe.get_meta(doctype).has_field("default_currency"):
+	currency_field = _entity_currency_field(doctype)
+	if pending and currency_field:
 		for row in frappe.get_all(
-			doctype, filters={"name": ["in", pending]}, fields=["name", "default_currency"]
+			doctype, filters={"name": ["in", pending]}, fields=["name", currency_field]
 		):
-			if row.get("default_currency"):
-				result[row.name] = row.default_currency
+			if row.get(currency_field):
+				result[row.name] = row.get(currency_field)
 
 	# 4) Company.default_currency.
 	pending = [name for name in names if not result.get(name)]
@@ -176,6 +202,17 @@ def batch_party_currencies(doctype: str, company: str, names: list[str]) -> dict
 			for name in pending:
 				result[name] = company_currency
 	return result
+
+
+def _entity_currency_field(doctype: str) -> str | None:
+	meta = frappe.get_meta(doctype)
+	if meta.has_field("default_currency"):
+		return "default_currency"
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import CURRENCY_FIELD
+
+	if meta.has_field(CURRENCY_FIELD):
+		return CURRENCY_FIELD
+	return None
 
 
 def _batch_mapping_currencies(doctype: str, company: str, names: list[str]) -> dict[str, str]:
@@ -238,6 +275,12 @@ def validate_party_ledger_currency(
 	"""
 	if not (party_type and party):
 		return
+	if party_type == "Shareholder":
+		from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+			assert_shareholder_company,
+		)
+
+		assert_shareholder_company(party, company)
 	existing = resolve_party_currency(party_type, party, company)
 	if existing and existing != account_currency:
 		frappe.throw(

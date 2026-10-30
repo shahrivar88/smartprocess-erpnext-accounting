@@ -21,6 +21,8 @@ OPERATION_LABELS = {
 	"Payment": "پرداخت",
 }
 
+ALL_LEDGERS_LABEL = "همه انواع"
+
 # Party Types without a label here show their translated DocType name.
 PARTY_TYPE_LABELS = {
 	"Customer": "مشتری",

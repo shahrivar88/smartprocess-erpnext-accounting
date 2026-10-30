@@ -47,9 +47,11 @@ class SmartProcessAccountingPosting(AccountsController):
 		frappe.throw(_("Posting units are permanent accounting audit records."))
 
 	def validate_account_currency(self, account, account_currency=None):
-		master_currency = frappe.get_cached_value("Account", account, "account_currency")
-		if account_currency != master_currency:
-			frappe.throw(_("Posting currency must match Account.account_currency."))
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
+			assert_account_matches_posted_currency,
+		)
+
+		assert_account_matches_posted_currency(account, account_currency)
 
 	def get_value_in_transaction_currency(self, account_currency, gl_dict, field):
 		return gl_dict.get(f"{field}_in_account_currency")

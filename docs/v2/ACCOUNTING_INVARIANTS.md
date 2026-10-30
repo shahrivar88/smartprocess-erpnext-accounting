@@ -144,6 +144,13 @@ It must not convert another currency's balance to manufacture this balance.
 6. Code must never update historical GL or PLE rows directly.
 7. The system must preserve an audit trail for every correction.
 
+## Settlement limits
+
+1. Path A may post one Payment Entry for one party or bank pair.
+2. Multi-row documents stay on Path B until multi-Payment Entry submit is proven atomic.
+3. Offset may post one Journal Entry only when Company, currency, and rate match.
+4. Cancel of Path A must keep the parent-to-Payment Entry link and use native Payment Entry cancel.
+
 ## Intercompany
 
 1. One voucher cannot post to more than one Company.

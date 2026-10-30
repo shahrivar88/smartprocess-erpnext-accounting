@@ -122,6 +122,7 @@ class TestReceiptUX(V2IntegrationTestCase):
 			"Supplier",
 			"Employee",
 			"SmartProcess Financial Intermediary",
+			"Shareholder",
 			"بانک",
 			"صندوق",
 			"سایر حساب‌ها",

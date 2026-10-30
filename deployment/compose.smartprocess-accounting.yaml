@@ -1,5 +1,7 @@
 services:
   configurator:
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting:/home/frappe/frappe-bench/apps/smartprocee_erpnext_telegram:/home/frappe/frappe-bench/apps/smartprocee_erpnext_homepage:/home/frappe/frappe-bench/apps/smartprocee_erpnext_persiant:/home/frappe/frappe-bench/apps/jalali_shamsi_datepicker
     volumes:
       - type: bind
         source: ${SMARTPROCESS_ACCOUNTING_APP_PATH}

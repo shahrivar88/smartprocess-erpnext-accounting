@@ -10,11 +10,11 @@ from frappe import _
 from .access import GLScope, assert_report_access, party_type_label
 from .excel_bytes import build_xlsx_bytes
 from .gl_period import Period
-from .labels import ACCOUNT_LEDGER_CHOICES
+from .labels import ACCOUNT_LEDGER_CHOICES, ALL_LEDGERS_LABEL
 from .ledger import AccountLedger
-from .overview import overview_rows, overview_totals
+from .overview import combined_rows, combined_totals, overview_rows, overview_totals, sort_overview_rows
 from .pdf_html import build_pdf_html
-from .report_tables import MAX_EXPORT_LINES, ledger_headers, ledger_rows, overview_table
+from .report_tables import MAX_EXPORT_LINES, ledger_headers, ledger_rows, overview_table, too_large
 
 
 @frappe.whitelist(methods=["POST"])
@@ -34,12 +34,19 @@ def export_balance_overview(
 ):
 	assert_report_access(company, party_type, account=account, account_type=account_type)
 	period = Period(from_date, to_date)
-	scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
 	company_currency = frappe.get_cached_value("Company", company, "default_currency")
-	rows = overview_rows(scope, period, hide_zero, limit=MAX_EXPORT_LINES + 1, sort_by=sort_by, sort_order=sort_order)
-	entity_label = "حساب" if scope.by_account else "طرف حساب"
-	headers, rows = overview_table(rows, overview_totals(scope, period, hide_zero), company_currency, entity_label)
-	kind = account_ledger_label(account_type) if scope.by_account else party_type_label(party_type)
+	if not party_type:
+		rows = sort_overview_rows(combined_rows(company, period, hide_zero, party, account, currency), sort_by, sort_order)
+		if len(rows) > MAX_EXPORT_LINES:
+			too_large()
+		headers, rows = overview_table(rows, combined_totals(rows), company_currency, mixed=True)
+		kind = ALL_LEDGERS_LABEL
+	else:
+		scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
+		rows = overview_rows(scope, period, hide_zero, limit=MAX_EXPORT_LINES + 1, sort_by=sort_by, sort_order=sort_order)
+		entity_label = "حساب" if scope.by_account else "طرف حساب"
+		headers, rows = overview_table(rows, overview_totals(scope, period, hide_zero), company_currency, entity_label)
+		kind = account_ledger_label(account_type) if scope.by_account else party_type_label(party_type)
 	subtitle = f"{company} · {kind} · {period.from_date or ''} تا {period.to_date}"
 	send_file(file_type, headers, rows, "گردش-حساب", "گردش حساب", subtitle)
 

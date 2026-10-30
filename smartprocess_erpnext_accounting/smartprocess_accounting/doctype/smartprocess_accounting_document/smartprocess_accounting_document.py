@@ -72,12 +72,25 @@ class SmartProcessAccountingDocument(AccountsController):
 	def before_cancel(self):
 		if self.operation_type == "Receipt":
 			assert_no_active_conversions(self.name)
+		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.engine import (
+			cancel_settlement_if_present,
+		)
+
+		if cancel_settlement_if_present(self):
+			self._set_cancel_link_exceptions()
+			return
 		if posted_by_units(self):
 			self._set_cancel_link_exceptions()
 			cancel_document(self)
 
 	def on_cancel(self):
 		self._set_cancel_link_exceptions()
+		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.engine import (
+			settlement_used,
+		)
+
+		if settlement_used(self):
+			return
 		if not posted_by_units(self):
 			cancel_document(self)
 
@@ -88,6 +101,7 @@ class SmartProcessAccountingDocument(AccountsController):
 	def _set_cancel_link_exceptions(self):
 		self.ignore_linked_doctypes = (
 			"SmartProcess Accounting Posting",
+			"Payment Entry",
 			"GL Entry",
 			"Payment Ledger Entry",
 			"Repost Payment Ledger",
@@ -107,9 +121,11 @@ class SmartProcessAccountingDocument(AccountsController):
 		return create_correction(self.name, correction_reason)
 
 	def validate_account_currency(self, account, account_currency=None):
-		master_currency = frappe.get_cached_value("Account", account, "account_currency")
-		if account_currency != master_currency:
-			frappe.throw(_("Posting currency must match Account.account_currency."))
+		from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
+			assert_account_matches_posted_currency,
+		)
+
+		assert_account_matches_posted_currency(account, account_currency)
 
 	def get_value_in_transaction_currency(self, account_currency, gl_dict, field):
 		return gl_dict.get(f"{field}_in_account_currency")

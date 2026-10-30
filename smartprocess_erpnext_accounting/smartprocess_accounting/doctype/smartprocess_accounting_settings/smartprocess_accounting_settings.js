@@ -1,5 +1,11 @@
 // Narrows the Account picker of a default account row. The server validates the final row.
-const SP_DEFAULT_ACCOUNT_TYPES = { Receivable: "Receivable", Payable: "Payable", Bank: "Bank", Cash: "Cash" };
+const SP_DEFAULT_ACCOUNT_TYPES = {
+	Receivable: "Receivable",
+	Payable: "Payable",
+	Bank: "Bank",
+	Cash: "Cash",
+	"Shareholder Current": "Payable",
+};
 // Purpose labels are translated with this context so the global "Receivable"/"Payable" labels stay untouched.
 const SP_DEFAULT_ACCOUNT_ROW = "SmartProcess Default Account";
 
@@ -79,6 +85,16 @@ function spSyncBootFlags(doc, boot) {
 			"live_separator",
 		);
 	}
+	if (doc.enable_shareholder_accounting !== undefined) {
+		const enabled = Number(doc.enable_shareholder_accounting) ? 1 : 0;
+		flags.shareholder_accounting = {
+			enabled,
+			show_default_currency: enabled && Number(doc.show_shareholder_default_currency) ? 1 : 0,
+			suggest_current_account: enabled && Number(doc.suggest_shareholder_current_account) ? 1 : 0,
+			show_in_smart_document: enabled && Number(doc.show_shareholder_in_smart_document) ? 1 : 0,
+			show_in_party_explorer: enabled && Number(doc.show_shareholder_in_party_explorer) ? 1 : 0,
+		};
+	}
 }
 
 function spEscape(text) {
@@ -100,7 +116,7 @@ function spFallbackCrossAppImpacts(doc) {
 	return [
 		{
 			feature: "حذف صفرهای اعشاری غیرضروری",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "فاکتور فروش، فاکتور خرید، پیش‌فاکتور، سفارش فروش، سفارش خرید",
 			effect: "فقط متن نمایش اعداد را در فرم و جدول ردیف کوتاه می‌کند. مقدار ذخیره‌شده، دقت و محاسبات تغییر نمی‌کنند.",
 			status: on(doc.hide_insignificant_trailing_zeros),
@@ -109,7 +125,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "جداکننده زنده هزارگان",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "فاکتور فروش، فاکتور خرید، پیش‌فاکتور، سفارش فروش، سفارش خرید",
 			effect: "هنگام ورود عدد، جداکننده هزارگان را فقط در ورودی نشان می‌دهد. مقدار خام ارسالی به سرور بدون جداکننده می‌ماند.",
 			status: on(doc.enable_live_number_separator),
@@ -118,7 +134,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "حساب‌های پیش‌فرض مرکزی",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "فاکتور فروش، فاکتور خرید",
 			effect: "در پیش‌نویس غیربرگشتی، حساب هم‌شرکت و هم‌ارز جدول تنظیمات را به‌جای پیشنهاد خودکار ERPNext پیشنهاد می‌کند.",
 			status: on(doc.enable_central_default_accounts),
@@ -127,7 +143,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "جلوگیری از ثبت فاکتور با حساب معین غیرهم‌ارز",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "فاکتور فروش",
 			effect: "ثبت نهایی فاکتور فروش فقط وقتی انجام می‌شود که ارز حساب دریافتنی با ارز صورتحساب یکی باشد.",
 			status: on(doc.prevent_receivable_currency_mismatch),
@@ -136,7 +152,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "الزام ورود دستی نرخ تبدیل فاکتور",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "فاکتور فروش، فاکتور خرید",
 			effect: "در فاکتور ارزی، نرخ خودکار پاک می‌شود تا کاربر نرخ را دستی وارد کند.",
 			status: on(doc.enable_manual_invoice_rate_feature),
@@ -145,7 +161,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "محافظ حذف شرکت و اسناد وابسته",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "Transaction Deletion Record، شرکت، اسناد اختصاصی حسابداری، واسطه مالی",
 			effect: "حذف شرکت یا اجرای Transaction Deletion Record وقتی سند اختصاصی یا واسطه مالی به آن شرکت وصل است متوقف می‌شود.",
 			status: "فعال (محافظ الزامی)",
@@ -154,7 +170,7 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "محافظ حذف اپ حسابداری",
-			owner_module: "حسابداری هوشمند",
+			owner_module: "رسید هوشمند",
 			doctypes: "تمام اسناد اختصاصی حسابداری",
 			effect: "حذف اپ وقتی سند اختصاصی باقی مانده باشد متوقف می‌شود تا دفتر کل یتیم نشود.",
 			status: "فعال (محافظ الزامی)",
@@ -163,12 +179,21 @@ function spFallbackCrossAppImpacts(doc) {
 		},
 		{
 			feature: "قفل آزمایشگاهی نویسنده استاندارد",
-			owner_module: "حسابداری هوشمند",
-			doctypes: "سند حسابداری هوشمند، پرداخت، سند حسابداری (فقط آزمایشگاه)",
+			owner_module: "رسید هوشمند",
+			doctypes: "رسید هوشمند، پرداخت، سند حسابداری (فقط آزمایشگاه)",
 			effect: "فقط روی سایت آزمایشگاهی و با پرچم جداگانه فعال می‌شود. روی این سایت زنده خاموش است.",
 			status: "غیرفعال روی این سایت",
 			rollback: "فعال‌سازی روی سایت زنده نیاز به تأیید جداگانه دارد. کلید خاموش‌کردن در تنظیمات وجود ندارد.",
 			optional: 0,
+		},
+		{
+			feature: "فعال‌سازی حسابداری سهامداران",
+			owner_module: "رسید هوشمند",
+			doctypes: "سهامدار، رسید هوشمند، تبدیل ارز، گردش حساب",
+			effect: "کلید اصلی مسیرهای عملیاتی جدید سهامدار است. GL تاریخی حذف نمی‌شود.",
+			status: on(doc.enable_shareholder_accounting),
+			rollback: "گزینه «فعال‌سازی حسابداری سهامداران» را خاموش کنید.",
+			optional: 1,
 		},
 	];
 }
@@ -216,6 +241,22 @@ function spRenderCrossAppImpact(frm) {
 	`);
 }
 
+const SP_SHAREHOLDER_CHILD_FIELDS = [
+	"show_shareholder_default_currency",
+	"suggest_shareholder_current_account",
+	"show_shareholder_in_smart_document",
+	"show_shareholder_in_party_explorer",
+];
+
+function spToggleShareholderChildren(frm) {
+	const enabled = Number(frm.doc.enable_shareholder_accounting) ? 1 : 0;
+	for (const fieldname of SP_SHAREHOLDER_CHILD_FIELDS) {
+		if (frm.fields_dict[fieldname]) {
+			frm.set_df_property(fieldname, "read_only", enabled ? 0 : 1);
+		}
+	}
+}
+
 if (typeof frappe !== "undefined") {
 	frappe.ui.form.on("SmartProcess Accounting Settings", {
 		setup(frm) {
@@ -237,6 +278,11 @@ if (typeof frappe !== "undefined") {
 			$(grid.parent).find(".grid-description").show();
 		},
 		refresh(frm) {
+			spToggleShareholderChildren(frm);
+			spRenderCrossAppImpact(frm);
+		},
+		enable_shareholder_accounting(frm) {
+			spToggleShareholderChildren(frm);
 			spRenderCrossAppImpact(frm);
 		},
 		after_save(frm) {
@@ -247,5 +293,5 @@ if (typeof frappe !== "undefined") {
 }
 
 if (typeof module === "object" && module.exports) {
-	module.exports = { spDefaultAccountFilters, spSyncBootFlags, spRenderCrossAppImpact };
+	module.exports = { spDefaultAccountFilters, spSyncBootFlags, spRenderCrossAppImpact, spToggleShareholderChildren };
 }

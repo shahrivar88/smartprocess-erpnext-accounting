@@ -216,9 +216,13 @@ const pae_ledger_view = {
 	},
 
 	// Every page 1 column sorts on the server. `by_account`: one row per Account.
-	overview_columns(by_account) {
-		return [
-			{ key: "party", label: by_account ? __("حساب") : __("طرف حساب"), width: 240, sortable: true },
+	overview_columns(by_account, mixed) {
+		const columns = [];
+		if (mixed) {
+			columns.push({ key: "ledger_kind", label: __("نوع طرف حساب / حساب"), width: 160, sortable: true });
+		}
+		columns.push(
+			{ key: "party", label: by_account && !mixed ? __("حساب") : __("طرف حساب"), width: 240, sortable: true },
 			{ key: "currency", label: __("ارز حساب"), width: 110, sortable: true },
 			{ key: "period_debit_base", label: __("گردش بدهکار"), width: 150, numeric: true, sortable: true },
 			{ key: "period_credit_base", label: __("گردش بستانکار"), width: 150, numeric: true, sortable: true },
@@ -226,12 +230,15 @@ const pae_ledger_view = {
 			{ key: "period_debit", label: __("گردش بدهکار ارزی"), width: 150, numeric: true, sortable: true },
 			{ key: "period_credit", label: __("گردش بستانکار ارزی"), width: 150, numeric: true, sortable: true },
 			{ key: "closing", label: __("مانده ارزی"), width: 160, numeric: true, sortable: true },
-		];
+		);
+		return columns;
 	},
 
 	// One overview cell; `row` is a party row or a per-currency total row.
 	overview_cell(key, row, company_currency) {
 		switch (key) {
+			case "ledger_kind":
+				return `<td>${pae_format.text(row.ledger_label || "")}</td>`;
 			case "party":
 				return `<td><span class="sp-party-name">${pae_format.text(row.party_name)}</span></td>`;
 			case "currency":

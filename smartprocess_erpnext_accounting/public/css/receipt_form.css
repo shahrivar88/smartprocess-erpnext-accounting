@@ -29,7 +29,7 @@
 	flex: 1.2 0 84px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="receipt_recipient"],
@@ -37,39 +37,47 @@
 	flex: 2.4 0 168px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="credit_account"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_account"] {
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_account"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="debit_account"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="debit_account"] {
 	flex: 2 0 140px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="credit_amount"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_amount"] {
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_amount"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="debit_amount"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="debit_amount"] {
 	flex: 1.2 0 84px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="credit_exchange_rate"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_exchange_rate"] {
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_exchange_rate"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="debit_exchange_rate"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="debit_exchange_rate"] {
 	flex: 1.2 0 84px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="credit_company_amount"],
-.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_company_amount"] {
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="credit_company_amount"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-heading-row .grid-static-col[data-fieldname="debit_company_amount"],
+.sp-receipt-wide-grid .form-grid-container .form-grid .grid-body .grid-static-col[data-fieldname="debit_company_amount"] {
 	flex: 1.4 0 98px;
 	min-width: 0;
 	max-width: none;
-	position: static;
+	position: relative;
 }
 
 .sp-receipt-summary {
@@ -129,4 +137,18 @@
  */
 .sp-receipt-wide-grid .form-grid-container .form-grid {
 	grid-template-columns: minmax(0, 1fr);
+}
+
+/*
+ * Frappe Link lists are min-width 250px. The RTL Desk bundle mirrors
+ * .awesomplete-align-right to physical `left: 0`, so when the list is wider
+ * than the cell the extra width grows into the right-hand sidebar. Keep the
+ * list pinned to the cell's right edge in this grid only. Do not raise z-index.
+ */
+[dir="rtl"] .sp-receipt-wide-grid .awesomplete > ul,
+[dir="rtl"] .sp-receipt-wide-grid .awesomplete > ul.awesomplete-align-right,
+[dir="rtl"] .sp-receipt-wide-grid .awesomplete > [role="listbox"],
+[dir="rtl"] .sp-receipt-wide-grid .awesomplete > [role="listbox"].awesomplete-align-right {
+	left: auto;
+	right: 0;
 }

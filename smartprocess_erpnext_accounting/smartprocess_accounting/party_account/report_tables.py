@@ -36,8 +36,8 @@ class SheetRow(list):
 		self.kind = kind
 
 
-def overview_headers(company_currency, entity_label="طرف حساب"):
-	return [
+def overview_headers(company_currency, entity_label="طرف حساب", mixed=False):
+	headers = [
 		entity_label,
 		"ارز حساب",
 		f"گردش بدهکار ({company_currency})",
@@ -47,15 +47,25 @@ def overview_headers(company_currency, entity_label="طرف حساب"):
 		"گردش بستانکار ارزی",
 		"مانده ارزی",
 	]
+	if mixed:
+		headers.insert(0, "نوع طرف حساب / حساب")
+	return headers
 
 
-def overview_table(rows, totals, company_currency, entity_label="طرف حساب"):
+def overview_table(rows, totals, company_currency, entity_label="طرف حساب", mixed=False):
 	"""Party (or account) rows, then one total row per account currency; currencies never add up together."""
 	if len(rows) > MAX_EXPORT_LINES:
 		too_large()
-	table = [SheetRow([row["party_name"], currency_text(row["currency"], row.get("other_currency_rows")), *overview_amounts(row)]) for row in rows]
-	table += [SheetRow([f"جمع ({total['row_count']} ردیف)", total["currency"], *overview_amounts(total)], "total") for total in totals]
-	return overview_headers(company_currency, entity_label), table
+	if mixed:
+		table = [
+			SheetRow([row.get("ledger_label") or "", row["party_name"], currency_text(row["currency"], row.get("other_currency_rows")), *overview_amounts(row)])
+			for row in rows
+		]
+		table += [SheetRow(["", f"جمع ({total['row_count']} ردیف)", total["currency"], *overview_amounts(total)], "total") for total in totals]
+	else:
+		table = [SheetRow([row["party_name"], currency_text(row["currency"], row.get("other_currency_rows")), *overview_amounts(row)]) for row in rows]
+		table += [SheetRow([f"جمع ({total['row_count']} ردیف)", total["currency"], *overview_amounts(total)], "total") for total in totals]
+	return overview_headers(company_currency, entity_label, mixed), table
 
 
 def overview_amounts(row):

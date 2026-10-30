@@ -29,7 +29,7 @@ class PartyAccountCase(ConversionFixtures):
 		super().setUp()
 		self.serial = 0
 
-	def gl(self, account, posting_date, debit=0, credit=0, party=None, base=None, cancelled=0, creation=None, name=None):
+	def gl(self, account, posting_date, debit=0, credit=0, party=None, base=None, cancelled=0, creation=None, name=None, party_type="Customer"):
 		self.serial += 1
 		currency = frappe.get_cached_value("Account", account, "account_currency")
 		amount_base = base if base is not None else (debit or credit)
@@ -40,8 +40,8 @@ class PartyAccountCase(ConversionFixtures):
 				"posting_date": posting_date,
 				"account": account,
 				"account_currency": currency,
-				"party_type": "Customer",
-				"party": party or self.customer,
+				"party_type": party_type or "",
+				"party": (party or self.customer) if party_type else "",
 				"debit_in_account_currency": debit,
 				"credit_in_account_currency": credit,
 				"debit": amount_base if debit else 0,
@@ -135,11 +135,72 @@ class TestLedgerArithmetic(PartyAccountCase):
 	def test_hide_zero_and_search_by_name(self):
 		self.gl(self.receivable, "1999-07-01", debit=10)
 		self.gl(self.receivable, "1999-07-02", credit=10)
-		self.assertEqual(self.overview_rows(hide_zero=1)[0], [])
+		shown, _data = self.overview_rows(hide_zero=1)
+		self.assertEqual(len(shown), 1, "zero closing with period movement stays visible")
+		self.assertEqual((shown[0]["period_debit"], shown[0]["period_credit"], shown[0]["closing"]), (10, 10, 0))
 		self.assertEqual(len(self.overview_rows(hide_zero=0)[0]), 1)
 		name = frappe.db.get_value("Customer", self.customer, "customer_name")
 		data = get_balance_overview(self.company, "Customer", FROM, TO, party=name[-3:], hide_zero=0)
 		self.assertIn(self.customer, {row["party"] for row in data["rows"]})
+
+	def test_hide_zero_hides_opening_only_net_zero(self):
+		idle = next((name for name in frappe.get_all("Customer", filters={"disabled": 0}, pluck="name", limit=50) if name != self.customer), None)
+		if not idle:
+			self.skipTest("Need a second Customer")
+		self.gl(self.receivable, "1998-06-01", debit=4, party=idle)
+		self.gl(self.receivable, "1998-06-02", credit=4, party=idle)
+		hidden = get_balance_overview(self.company, "Customer", FROM, TO, party=idle, hide_zero=1)
+		self.assertNotIn(idle, {row["party"] for row in hidden["rows"]})
+		visible = get_balance_overview(self.company, "Customer", FROM, TO, party=idle, hide_zero=0)
+		self.assertIn(idle, {row["party"] for row in visible["rows"]})
+
+
+class TestCombinedOverview(PartyAccountCase):
+	def test_all_types_list_parties_and_accounts_without_double_count(self):
+		self.gl(self.receivable, "1999-07-01", debit=10)
+		self.gl(self.bank.account, "1999-07-01", debit=10, party_type="", party="")
+		data = get_balance_overview(self.company, "", FROM, TO, hide_zero=1, page_length=500)
+		self.assertTrue(data["mixed"])
+		customer_row = next(row for row in data["rows"] if row["party_type"] == "Customer" and row["party"] == self.customer)
+		bank_row = next(row for row in data["rows"] if row["by_account"] and row["account"] == self.bank.account)
+		self.assertEqual(customer_row["period_debit"], 10)
+		self.assertEqual(bank_row["period_debit"], 10)
+		accounts = {row["account"] for row in data["rows"] if row["by_account"]}
+		self.assertNotIn(self.receivable, accounts, "the party GL line must not also appear as an account row")
+
+	def test_combined_skips_unreadable_party_types(self):
+		self.gl(self.receivable, "1999-07-01", debit=10)
+		self.gl(self.bank.account, "1999-07-01", debit=8, party_type="", party="")
+		with patch(
+			"smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview.readable_party_types",
+			return_value=[],
+		):
+			data = get_balance_overview(self.company, "", FROM, TO, hide_zero=0, page_length=500)
+		self.assertNotIn("Customer", {row["party_type"] for row in data["rows"]})
+		self.assertNotIn(self.customer, {row.get("party") for row in data["rows"]})
+		self.assertNotIn(self.receivable, {row.get("account") for row in data["rows"]})
+		self.assertIn(self.bank.account, {row.get("account") for row in data["rows"] if row.get("by_account")})
+
+	def test_specific_type_hides_other_groups(self):
+		self.gl(self.receivable, "1999-07-01", debit=10)
+		self.gl(self.bank.account, "1999-07-01", debit=8, party_type="", party="")
+		customers = get_balance_overview(self.company, "Customer", FROM, TO, hide_zero=0)
+		self.assertFalse(customers["mixed"])
+		self.assertTrue(all(not row.get("by_account") for row in customers["rows"]))
+		self.assertIn(self.customer, {row["party"] for row in customers["rows"]})
+		banks = get_balance_overview(self.company, "Account", FROM, TO, hide_zero=0, account_type="Bank")
+		self.assertTrue(banks["by_account"])
+		self.assertIn(self.bank.account, {row["account"] for row in banks["rows"]})
+		self.assertNotIn(self.customer, {row.get("party") for row in banks["rows"]})
+
+	def test_combined_export_adds_type_column(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.report_tables import overview_table
+
+		self.gl(self.receivable, "1999-07-01", debit=10)
+		data = get_balance_overview(self.company, "", FROM, TO, hide_zero=1, page_length=500)
+		headers, table = overview_table(data["rows"], data["totals"], data["company_currency"], mixed=True)
+		self.assertEqual(headers[0], "نوع طرف حساب / حساب")
+		self.assertTrue(any(row[0] == "مشتری" and self.customer in str(row[1]) or row[0] == "مشتری" for row in table if getattr(row, "kind", "line") == "line"))
 
 
 class TestPagination(PartyAccountCase):

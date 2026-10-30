@@ -55,6 +55,7 @@ class TestDefaultAccountRows(unittest.TestCase):
 			row(3, "A", "USD", "Payable", "Creditors USD - A"),
 			row(4, "A", "USD", "Bank", "Bank USD - A"),
 			row(5, "A", "IRR", "Cash", "Cash IRR - A"),
+			row(6, "A", "USD", "Shareholder Current", "Creditors USD - A"),
 		).validate()
 
 	def test_no_rows_is_valid(self):
@@ -209,3 +210,10 @@ class TestDefaultAccountReader(unittest.TestCase):
 	def test_unknown_purpose_is_a_programming_error(self):
 		with self.assertRaises(ValueError):
 			da.get_default_account("A", "USD", "Expense")
+
+	def test_shareholder_current_requires_a_payable_account(self):
+		self.assertIsNone(rules().row_problem(row(1, "A", "USD", "Shareholder Current", "Creditors USD - A")))
+		self.assertEqual(
+			rules().row_problem(row(1, "A", "USD", "Shareholder Current", "Debtors - A")),
+			_(da.MSG_TYPE).format(1, "Debtors - A", _("Payable"), _("Receivable")),
+		)

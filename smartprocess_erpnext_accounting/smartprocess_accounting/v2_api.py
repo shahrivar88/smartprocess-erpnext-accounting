@@ -1,4 +1,4 @@
-"""Permission-aware APIs for the V2 Desk prototype."""
+"""Permission-aware Desk APIs for Receipt, Payment, and conversion forms."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ PARTY_DISPLAY_FIELDS = {
 	"Supplier": "supplier_name",
 	"Employee": "employee_name",
 	"SmartProcess Financial Intermediary": "intermediary_name",
+	"Shareholder": "title",
 }
 
 # Default display order and labels for the Receipt row Payer Type dropdown.
@@ -48,6 +49,7 @@ def _receipt_row_type_options() -> list[dict]:
 	missing configuration falls back to the built-in default order.
 	"""
 	valid = (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT)
+	options = [dict(entry) for entry in RECEIPT_ROW_TYPE_DEFAULTS]
 	raw = frappe.get_single_value(
 		"SmartProcess Accounting Settings", "receipt_recipient_type_options"
 	)
@@ -55,8 +57,7 @@ def _receipt_row_type_options() -> list[dict]:
 		try:
 			entries = frappe.parse_json(raw)
 			if isinstance(entries, list):
-				options = []
-				seen = set()
+				parsed, seen = [], set()
 				for entry in entries:
 					if not isinstance(entry, dict):
 						continue
@@ -64,11 +65,22 @@ def _receipt_row_type_options() -> list[dict]:
 					if value not in valid or value in seen:
 						continue
 					seen.add(value)
-					options.append({"value": value, "label": str(entry.get("label") or value)})
-				return options
+					parsed.append({"value": value, "label": str(entry.get("label") or value)})
+				if parsed:
+					options = parsed
 		except Exception:
 			pass
-	return [dict(entry) for entry in RECEIPT_ROW_TYPE_DEFAULTS]
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		PARTY_TYPE,
+		in_smart_document,
+	)
+
+	if in_smart_document():
+		if not any(entry["value"] == PARTY_TYPE for entry in options):
+			options.append({"value": PARTY_TYPE, "label": "سهامدار"})
+	else:
+		options = [entry for entry in options if entry["value"] != PARTY_TYPE]
+	return options
 
 
 @frappe.whitelist(methods=["GET"])
@@ -94,6 +106,13 @@ def get_receipt_recipient_type_default() -> str:
 	configured = frappe.get_single_value(
 		"SmartProcess Accounting Settings", "receipt_recipient_type_default"
 	)
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		PARTY_TYPE,
+		in_smart_document,
+	)
+
+	if configured == PARTY_TYPE and not in_smart_document():
+		return RECEIPT_ROW_TYPE_DEFAULTS[0]["value"]
 	return configured if configured in valid else RECEIPT_ROW_TYPE_DEFAULTS[0]["value"]
 
 
@@ -175,7 +194,15 @@ def get_receipt_party_account_suggestion(
 	company: str,
 	currency: str,
 ) -> str | None:
-	"""Return the native Party Account mapping for the currency without changing other settings."""
+	"""Return the mapped ledger for the currency without changing other settings."""
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		PARTY_TYPE,
+		suggested_current_account,
+	)
+
+	if party_type == PARTY_TYPE:
+		_require_party(party_type, party, company, currency)
+		return suggested_current_account(company, currency)
 	return _get_exact_party_account(party_type, party, company, currency)
 
 
@@ -187,9 +214,10 @@ def get_party_suggested_currency(party_type: str, party: str, company: str) -> s
 	Account mapping still win over the preference. A Party without a default
 	currency gets no suggestion."""
 	_require_party(party_type, party, company)
-	if not frappe.get_meta(party_type).has_field("default_currency"):
-		return None
-	if not frappe.db.get_value(party_type, party, "default_currency"):
+	from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import _entity_currency_field
+
+	currency_field = _entity_currency_field(party_type)
+	if not currency_field or not frappe.db.get_value(party_type, party, currency_field):
 		return None
 	return resolve_party_currency(party_type, party, company)
 
@@ -240,6 +268,13 @@ def party_currency_query(doctype, txt, searchfield, start, page_len, filters):
 		return []
 	if party_type and doctype != party_type:
 		return []
+	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
+		PARTY_TYPE,
+		in_smart_document,
+	)
+
+	if doctype == PARTY_TYPE and not in_smart_document():
+		return []
 	if not frappe.has_permission("Company", "read", doc=company):
 		frappe.throw(_("You do not have permission to read the selected Company."), frappe.PermissionError)
 	if not frappe.has_permission(doctype, "read"):
@@ -248,6 +283,8 @@ def party_currency_query(doctype, txt, searchfield, start, page_len, filters):
 	page_len = int(page_len or 20)
 
 	conditions = {}
+	if doctype == "Shareholder":
+		conditions["company"] = company
 	if frappe.get_meta(doctype).has_field("disabled"):
 		conditions["disabled"] = 0
 	search = (txt or "").strip().lower()

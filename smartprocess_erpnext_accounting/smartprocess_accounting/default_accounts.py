@@ -25,8 +25,15 @@ PRIORITIES = (SMARTPROCESS_FIRST, ERPNEXT_FIRST)
 DEFAULT_PRIORITY = ERPNEXT_FIRST
 
 # Account Purpose -> the standard Account.account_type it requires.
-ACCOUNT_TYPES = {"Receivable": "Receivable", "Payable": "Payable", "Bank": "Bank", "Cash": "Cash"}
-# Bank and Cash rows are stored only; no runtime path uses them in V1.
+ACCOUNT_TYPES = {
+	"Receivable": "Receivable",
+	"Payable": "Payable",
+	"Bank": "Bank",
+	"Cash": "Cash",
+	"Shareholder Current": "Payable",
+}
+# Invoice forms only read Receivable and Payable. Bank/Cash are stored only.
+# Shareholder Current is read by shareholder_accounting, not by invoices.
 OPERATIONAL_PURPOSES = ("Receivable", "Payable")
 
 MSG_PRIORITY = "Account selection priority {0} is not valid."

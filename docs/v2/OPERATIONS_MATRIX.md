@@ -1,6 +1,8 @@
 # V2 Operations Matrix
 
-Status: Business behavior contract. Account selection remains explicit on both sides.
+Status: Historical behavior contract. Current live operations are in [`docs/CURRENT.md`](../CURRENT.md).
+
+Receipt and Payment are live. Transfer and document-level Currency Conversion remain in schema and stay blocked on Submit.
 
 ## Initial operation types
 

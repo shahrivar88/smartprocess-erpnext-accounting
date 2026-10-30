@@ -49,16 +49,23 @@ def party_type_label(party_type):
 	return PARTY_TYPE_LABELS.get(party_type) or _(party_type)
 
 
+def configured_party_types():
+	"""Every Party Type whose DocType exists, regardless of the caller's read permission."""
+	names = frappe.get_all("Party Type", pluck="name", order_by="name asc")
+	return [name for name in names if is_party_type(name)]
+
+
 def readable_party_types():
 	"""Configured Party Types the session user may read, in Party Type order."""
-	names = frappe.get_all("Party Type", pluck="name", order_by="name asc")
-	return [name for name in names if is_party_type(name) and frappe.has_permission(name, "read")]
+	return [name for name in configured_party_types() if frappe.has_permission(name, "read")]
 
 
 def assert_report_access(company, party_type, party=None, account=None, account_type=None):
 	if not frappe.has_permission("GL Entry", "read"):
 		deny(_("اجازه مشاهده دفتر کل را ندارید."))
-	if party_type == ACCOUNT_LEDGER:
+	if not party_type:
+		pass
+	elif party_type == ACCOUNT_LEDGER:
 		if not frappe.has_permission("Account", "read"):
 			deny(_("اجازه مشاهده حساب‌ها را ندارید."))
 		if account_type and account_type not in ACCOUNT_TYPES:
@@ -72,7 +79,7 @@ def assert_report_access(company, party_type, party=None, account=None, account_
 	if not company:
 		frappe.throw(_("شرکت الزامی است."))
 	assert_readable("Company", company)
-	if party:
+	if party and party_type:
 		assert_readable(party_type, party)
 	if account:
 		assert_readable("Account", account)
@@ -109,8 +116,9 @@ class GLScope:
 	`currency` selects accounts by the Account's own currency, never GL rows by theirs:
 	a row posted in another currency stays visible on its account."""
 
-	def __init__(self, company, party_type, party=None, account=None, currency=None, search=None, account_type=None):
+	def __init__(self, company, party_type, party=None, account=None, currency=None, search=None, account_type=None, exclude_party_types=None):
 		self.by_account = party_type == ACCOUNT_LEDGER
+		self.party_type = party_type
 		self.params = {"company": company}
 		conditions = [f"{GL}.company = %(company)s", f"{GL}.is_cancelled = 0"]
 		if self.by_account:
@@ -120,6 +128,11 @@ class GLScope:
 			search_columns = (f"{GL}.account", f"{ACCOUNT}.account_name", f"{ACCOUNT}.account_number")
 			match_doctypes = ("GL Entry", "Account")
 			filters = ((f"{GL}.account", account), (ACCOUNT_CURRENCY, currency), (f"{ACCOUNT}.account_type", account_type))
+			if exclude_party_types:
+				self.params["excluded_party_types"] = tuple(exclude_party_types)
+				conditions.append(
+					f"(ifnull({GL}.party, '') = '' or ifnull({GL}.party_type, '') not in %(excluded_party_types)s)"
+				)
 		else:
 			self.party_table = f"`tab{party_type}`"
 			self.key_column = f"{GL}.party"

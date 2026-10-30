@@ -669,6 +669,9 @@ class TestExports(unittest.TestCase):
 		self.assertEqual(headers[5:], ["گردش بدهکار ارزی", "گردش بستانکار ارزی", "مانده ارزی"])
 		self.assertEqual(list(table[0]), ["Customer 1", "USD", 900, 0, 900, 10, 0, 10], "no party code and no account column")
 		self.assertEqual([(entry.kind, entry[1], entry[7]) for entry in table[1:]], [("total", "USD", 10), ("total", "IRR", 5)])
+		mixed_headers, mixed_table = overview_table([{**row, "ledger_label": "مشتری"}], totals, "IRR", mixed=True)
+		self.assertEqual(mixed_headers[0], "نوع طرف حساب / حساب")
+		self.assertEqual(list(mixed_table[0])[:3], ["مشتری", "Customer 1", "USD"])
 
 	def test_document_and_posting_cells_are_plain_text(self):
 		document = {"doctype": "SmartProcess Accounting Document", "name": "SP-REC-2026-00019"}
@@ -1094,6 +1097,17 @@ class TestExplorerPage(unittest.TestCase):
 		self.assertIn("pae_ledger_view.next_sort(", self.js)
 		self.assertIn("sort_by", self.js)
 		self.assertNotIn(".sort((", self.js, "rows are never sorted on the client")
+
+	def test_all_types_default_and_hide_zero_label(self):
+		self.assertIn("PAE_ALL", self.page_js)
+		self.assertIn("default: PAE_ALL", self.page_js)
+		self.assertIn("مخفی کردن حساب‌های بدون مانده و گردش", self.page_js)
+		self.assertIn("همه انواع", self.page_js)
+		self.assertIn("frappe.route_options", self.js)
+		self.assertIn("data.mixed", self.js)
+		self.assertIn("ledger_kind", self.js)
+		self.assertIn("row.party_type", self.js)
+		self.assertNotIn("!filters.company || !filters.party_type", self.js)
 
 	def test_default_period_comes_from_the_fiscal_year_and_keeps_user_dates(self):
 		self.assertIn("as_of: frappe.datetime.get_today()", self.js)

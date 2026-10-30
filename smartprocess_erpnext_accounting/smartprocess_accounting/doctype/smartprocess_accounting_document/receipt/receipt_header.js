@@ -1,26 +1,6 @@
 // Receipt header = Receiver side: Receiver Currency → Type → Receiver → Ledger
-// Account → Rate. The Receiver currency is independent of the Payer Currency.
-// Field changes never validate or show messages; Add Row / Save do that.
-const SP_RECEIPT_SHARED_LABELS = {
-	receipt: {
-		operation_type: "نوع عملیات",
-		company: "شرکت",
-		posting_date: "تاریخ ثبت",
-		general_reference: "مرجع عمومی",
-		general_description: "شرح عمومی",
-		supplementary_section: "اطلاعات تکمیلی",
-	},
-	generic: {
-		operation_type: "Operation Type",
-		company: "Company",
-		posting_date: "Posting Date",
-		general_reference: "General Reference",
-		general_description: "General Description",
-		pairs_section: "Operational Pairs",
-		operational_pairs: "Operational Pairs",
-		supplementary_section: "Additional Information",
-	},
-};
+// Account → Rate. A ledger whose currency disagrees with the header is rejected.
+const SP_RECEIPT_SHARED_LABELS = spFlowText.sharedLabels;
 const SP_RECEIVER_FIELDS = ["receipt_bank_account", "receipt_payer", "receipt_payer_account"];
 
 const spReceiptHeader = {
@@ -77,8 +57,7 @@ const spReceiptHeader = {
 		}
 	},
 
-	// Frappe renders section and grid titles once, so a relabelled df keeps the
-	// old text on screen. Only the visible text node changes, never the layout.
+	// Only the visible title text is rewritten; layout metadata stays put.
 	refreshTitles(frm, labels) {
 		const head = frm.fields_dict.pairs_section?.head?.get?.(0);
 		const text = head && [...head.childNodes].find((node) => node.nodeType === 3 && node.textContent.trim());
@@ -89,10 +68,11 @@ const spReceiptHeader = {
 
 	applyReceiverKindLabels(frm) {
 		const df = frm.fields_dict.receipt_receiver_kind?.df;
-		if (!df || Array.isArray(df.options)) {
+		if (!df) {
 			return;
 		}
-		const values = String(df.options || "").split("\n").filter(Boolean);
+		const schema = Array.isArray(df.options) ? df.options.map((item) => item.value || item).join("\n") : df.options;
+		const values = spReceiptConfig.receiverKindValues(schema, frm.doc.receipt_receiver_kind);
 		frm.set_df_property(
 			"receipt_receiver_kind",
 			"options",
@@ -167,8 +147,6 @@ const spReceiptHeader = {
 			|| (doc[spReceiptConfig.TABLE] || []).some((row) => spReceiptValidation.rowHasUserContent(row, doc));
 	},
 
-	// The Receiver currency defaults to Company.default_currency; a populated
-	// Receipt keeps the currency the user chose.
 	async applyDefaultCurrency(frm, replace) {
 		const companyCurrency = frm.doc.company_currency;
 		if (!companyCurrency || frm.doc.docstatus !== 0) {
@@ -242,6 +220,25 @@ const spReceiptHeader = {
 		spReceiptSummary.schedule(frm);
 	},
 
+	async accountChanged(frm) {
+		const account = frm.doc.receipt_payer_account;
+		const expected = frm.doc.receipt_payer_currency;
+		if (!spReceiptForm.isQuiet(frm) && account && expected && frm.doc.company) {
+			const details = await frappe.xcall(spReceiptConfig.method("v2_api.get_account_details"), {
+				account,
+				company: frm.doc.company,
+			});
+			if (frm.doc.receipt_payer_account !== account) {
+				return;
+			}
+			if (spReceiptConfig.rejectMismatchedAccount(account, details?.account_currency, expected)) {
+				await frm.set_value("receipt_payer_account", "");
+				return;
+			}
+		}
+		spReceiptSummary.schedule(frm);
+	},
+
 	async bankChanged(frm) {
 		if (spReceiptForm.isQuiet(frm)) {
 			return;
@@ -256,7 +253,10 @@ const spReceiptHeader = {
 			if (frm.doc.receipt_bank_account !== bankAccount) {
 				return;
 			}
-			account = details?.account_currency === frm.doc.receipt_payer_currency ? details.account : "";
+			account = details?.account || "";
+			if (spReceiptConfig.rejectMismatchedAccount(account, details?.account_currency, frm.doc.receipt_payer_currency)) {
+				account = "";
+			}
 		}
 		await this.setReceiverAccount(frm, account);
 	},

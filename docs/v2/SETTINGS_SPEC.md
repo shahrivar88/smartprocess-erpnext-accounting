@@ -1,6 +1,6 @@
 # V2 Settings Specification
 
-Status: Design contract. No Settings DocType is created in this stage.
+Status: Implemented as `SmartProcess Accounting Settings`. Current map: [`docs/CURRENT.md`](../CURRENT.md).
 
 ## Principle
 

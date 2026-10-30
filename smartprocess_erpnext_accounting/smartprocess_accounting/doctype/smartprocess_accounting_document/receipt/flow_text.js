@@ -12,6 +12,8 @@ const spFlowText = {
 		incomplete: "رسید کامل نیست",
 		currencyChange:
 			"ارز پرداخت‌کننده از {0} به {1} تغییر می‌کند. پرداخت‌کننده، معین و نرخ ارز {2} ردیفِ پرشده با ارز قبلی پاک می‌شود؛ نوع پرداخت‌کننده، مبلغ و تاریخ ردیف‌ها می‌ماند. ادامه می‌دهید؟",
+		operationChange:
+			"نوع عملیات از {0} به {1} تغییر می‌کند. عنوان‌ها، ستون‌ها و ردیف‌ها برای عملیات جدید بازسازی می‌شوند و مقادیر سمت قبلی به سمت درست منتقل می‌شوند. ادامه می‌دهید؟",
 		preview: "receipt_api.preview_receipt",
 	},
 	Payment: {
@@ -33,6 +35,8 @@ const spFlowText = {
 		incomplete: "پرداخت کامل نیست",
 		currencyChange:
 			"ارز دریافت‌کننده از {0} به {1} تغییر می‌کند. دریافت‌کننده، معین و نرخ ارز {2} ردیفِ پرشده با ارز قبلی پاک می‌شود؛ نوع دریافت‌کننده، مبلغ و تاریخ ردیف‌ها می‌ماند. ادامه می‌دهید؟",
+		operationChange:
+			"نوع عملیات از {0} به {1} تغییر می‌کند. عنوان‌ها، ستون‌ها و ردیف‌ها برای عملیات جدید بازسازی می‌شوند و مقادیر سمت قبلی به سمت درست منتقل می‌شوند. ادامه می‌دهید؟",
 		preview: "payment_api.preview_payment",
 	},
 
@@ -51,6 +55,27 @@ const spFlowText = {
 			}
 		}
 		return labels;
+	},
+
+	sharedLabels: {
+		receipt: {
+			operation_type: "نوع عملیات",
+			company: "شرکت",
+			posting_date: "تاریخ ثبت",
+			general_reference: "مرجع عمومی",
+			general_description: "شرح عمومی",
+			supplementary_section: "اطلاعات تکمیلی",
+		},
+		generic: {
+			operation_type: "Operation Type",
+			company: "Company",
+			posting_date: "Posting Date",
+			general_reference: "General Reference",
+			general_description: "General Description",
+			pairs_section: "Operational Pairs",
+			operational_pairs: "Operational Pairs",
+			supplementary_section: "Additional Information",
+		},
 	},
 };
 

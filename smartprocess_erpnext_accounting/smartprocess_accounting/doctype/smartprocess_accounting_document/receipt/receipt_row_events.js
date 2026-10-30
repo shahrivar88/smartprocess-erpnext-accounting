@@ -1,7 +1,8 @@
 // Row events = the row side (Receipt payers, Payment recipients). Every row
 // inherits the header row currency and keeps its own rate: Type → Party →
 // Ledger Account → Amount → Rate. Base Amount comes from the server preview.
-// Field changes never validate or show messages; Add Row / Save do that.
+// Field changes never run the full preview; a ledger whose currency
+// disagrees with the header is rejected immediately.
 const SP_RECEIPT_COPIED_FIELDS = ["exchange_rate", "receipt_recipient_type", "receipt_recipient", "account"];
 
 const spReceiptRowEvents = {
@@ -184,6 +185,27 @@ const spReceiptRowEvents = {
 		spReceiptSummary.schedule(frm);
 	},
 
+	async accountChanged(frm, cdt, cdn) {
+		const row = frappe.get_doc(cdt, cdn);
+		const field = spReceiptConfig.rowField(frm.doc, "account");
+		const account = row[field];
+		const expected = frm.doc[spReceiptConfig.PAYER_CURRENCY];
+		if (account && expected && frm.doc.company && !spReceiptForm.isQuiet(frm)) {
+			const details = await frappe.xcall(spReceiptConfig.method("v2_api.get_account_details"), {
+				account,
+				company: frm.doc.company,
+			});
+			if (frappe.get_doc(cdt, cdn)?.[field] !== account) {
+				return;
+			}
+			if (spReceiptConfig.rejectMismatchedAccount(account, details?.account_currency, expected)) {
+				await this.setRowValue(row, field, "");
+				return;
+			}
+		}
+		spReceiptSummary.schedule(frm);
+	},
+
 	async payerChanged(frm, cdt, cdn) {
 		if (!spReceiptConfig.isFlow(frm.doc) || spReceiptForm.isQuiet(frm)) {
 			return;
@@ -211,7 +233,8 @@ const spReceiptRowEvents = {
 				bank_account: row.receipt_recipient,
 				company: doc.company,
 			});
-			return details?.account_currency === currency ? details.account : "";
+			const account = details?.account || "";
+			return spReceiptConfig.rejectMismatchedAccount(account, details?.account_currency, currency) ? "" : account;
 		}
 		if (spReceiptConfig.isPartyType(payerType)) {
 			const account = await frappe.xcall(

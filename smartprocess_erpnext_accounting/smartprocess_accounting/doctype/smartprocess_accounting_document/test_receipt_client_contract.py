@@ -47,6 +47,8 @@ LAYOUT_WRITERS = re.compile(
 LAYOUT_WRITER_ALLOWLIST = {
 	# Applied once; deletes only a stale field_order setter that lists a field removed from the DocType.
 	"patches/v0_1/remove_abandoned_conversion_metadata.py",
+	# Custom Field on Shareholder only. It never writes Receipt or Pair layout.
+	"smartprocess_accounting/shareholder_accounting.py",
 }
 ABANDONED_PATCH = "smartprocess_erpnext_accounting.patches.v0_1.remove_abandoned_conversion_metadata"
 GRID_COLUMNS = (
@@ -120,17 +122,19 @@ class TestReceiptClientContract(unittest.TestCase):
 			"spReceiptConfig",
 			"spReceiptNumbers",
 			"spReceiptForm",
+			"spReceiptOperation",
 			"spReceiptHeader",
 			"spReceiptPayerHeader",
 			"spReceiptRowQueries",
 			"spReceiptRowEvents",
 			"spReceiptValidation",
 			"spReceiptSummary",
+			"spReceiptSettlement",
 			"spReceiptConversionStatus",
 		):
 			self.assertIn(f"const {name} = {{", script)
 		self.assertIn("receipt_api.preview_receipt", script)
-		self.assertIn('frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting"]', script)
+		self.assertIn('frm.ignore_doctypes_on_cancel_all = ["SmartProcess Accounting Posting", "Payment Entry"]', script)
 		for legacy in ("smartprocess_receipt_stage", "get_receipt_receiver_total", "frappe.client.set_value"):
 			self.assertNotIn(legacy, script)
 
@@ -141,4 +145,11 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertNotIn("100vw", css)
 		for fieldname in GRID_COLUMNS:
 			self.assertIn(f'data-fieldname="{fieldname}"', css)
+		for fieldname in ("debit_account", "debit_amount", "debit_exchange_rate", "debit_company_amount"):
+			self.assertIn(f'data-fieldname="{fieldname}"', css)
 		self.assertNotIn('data-fieldname="receipt_currency"', css)
+		self.assertIn("[dir=\"rtl\"] .sp-receipt-wide-grid .awesomplete > ul", css)
+		self.assertIn("[role=\"listbox\"].awesomplete-align-right", css)
+		self.assertIn("left: auto", css)
+		self.assertIn("right: 0", css)
+		self.assertNotIn("position: static", css)

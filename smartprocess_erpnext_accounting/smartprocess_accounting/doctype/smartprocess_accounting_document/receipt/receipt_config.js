@@ -10,13 +10,14 @@ const spReceiptConfig = {
 	BANK_ACCOUNT_PAYER: "Bank Account",
 	BANK_RECEIVER: "بانک",
 	OTHER_RECEIVER: "سایر حساب‌ها",
-	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"],
+	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary", "Shareholder"],
 	RECEIVER_ACCOUNT_TYPES: { "بانک": "Bank", "صندوق": "Cash" },
 	PARTY_ACCOUNT_TYPES: {
 		Customer: "Receivable",
 		"SmartProcess Financial Intermediary": "Receivable",
 		Supplier: "Payable",
 		Employee: "Payable",
+		Shareholder: "Payable",
 	},
 	NON_GENERIC_ACCOUNT_TYPES: ["Bank", "Cash", "Receivable", "Payable"],
 	// Display labels only; stored values stay the native Party Type names.
@@ -25,6 +26,7 @@ const spReceiptConfig = {
 		Supplier: "تامین‌کننده",
 		"SmartProcess Financial Intermediary": "واسطه مالی",
 		Employee: "کارمند",
+		Shareholder: "سهامدار",
 	},
 	API: "smartprocess_erpnext_accounting.smartprocess_accounting",
 	PAYER_CURRENCY: "receipt_credit_currency",
@@ -53,6 +55,18 @@ const spReceiptConfig = {
 		return Boolean(this.ROW_SIDES[doc?.operation_type]);
 	},
 
+	// Schema still stores Transfer / Currency Conversion for history.
+	// New documents only offer the live Receipt and Payment operations.
+	ACTIVE_OPERATIONS: ["Receipt", "Payment"],
+
+	operationTypeOptions(doc) {
+		const current = doc?.operation_type || "";
+		if (!current || this.ACTIVE_OPERATIONS.includes(current)) {
+			return this.ACTIVE_OPERATIONS.join("\n");
+		}
+		return `${this.ACTIVE_OPERATIONS.join("\n")}\n${current}`;
+	},
+
 	rowSide(doc) {
 		return this.ROW_SIDES[doc?.operation_type] || this.ROW_SIDES.Receipt;
 	},
@@ -63,6 +77,32 @@ const spReceiptConfig = {
 
 	isPartyType(type) {
 		return this.PARTY_TYPES.includes(type);
+	},
+
+	shareholderInDocuments() {
+		const flags = (typeof frappe !== "undefined" && frappe.boot?.smartprocess_accounting?.shareholder_accounting) || {};
+		return Boolean(Number(flags.enabled) && Number(flags.show_in_smart_document));
+	},
+
+	documentPartyTypes() {
+		if (this.shareholderInDocuments()) {
+			return this.PARTY_TYPES;
+		}
+		return this.PARTY_TYPES.filter((name) => name !== "Shareholder");
+	},
+
+	receiverKindValues(schemaOptions, current) {
+		const values = String(schemaOptions || "").split("\n").filter(Boolean);
+		const enabled = this.shareholderInDocuments();
+		const has = values.includes("Shareholder");
+		if (enabled && !has) {
+			const at = values.indexOf("Employee");
+			values.splice(at >= 0 ? at + 1 : values.length, 0, "Shareholder");
+		}
+		if (!enabled && has && current !== "Shareholder") {
+			return values.filter((name) => name !== "Shareholder");
+		}
+		return values;
 	},
 
 	isBase(currency, companyCurrency) {
@@ -96,6 +136,29 @@ const spReceiptConfig = {
 		return Boolean(doc.receipt_payer_currency && doc.receipt_payer_currency === doc.receipt_credit_currency);
 	},
 
+	// Frappe ignores an empty filter, so a missing currency must not list every Account.
+	NO_ACCOUNT_CURRENCY: "__none__",
+
+	accountCurrencyMismatch(account, actual, expected) {
+		return __("ارز حساب معین «{0}» {1} است؛ باید با ارز تراکنش ({2}) یکی باشد. برای این ارز، حساب معین جداگانه‌ای انتخاب کنید.", [
+			account,
+			actual,
+			expected,
+		]);
+	},
+
+	rejectMismatchedAccount(account, actual, expected) {
+		if (!account || !actual || !expected || actual === expected) {
+			return false;
+		}
+		frappe.msgprint({
+			title: __("ارز حساب معین"),
+			message: this.accountCurrencyMismatch(account, actual, expected),
+			indicator: "red",
+		});
+		return true;
+	},
+
 	// Every ledger is in its own side's currency (Receiver or Payer);
 	// an empty currency matches nothing instead of widening the list.
 	accountFilters(company, currency, accountType) {
@@ -103,7 +166,7 @@ const spReceiptConfig = {
 			company: company || "",
 			disabled: 0,
 			is_group: 0,
-			account_currency: currency || "",
+			account_currency: currency || this.NO_ACCOUNT_CURRENCY,
 		};
 		if (accountType) {
 			filters.account_type = accountType;

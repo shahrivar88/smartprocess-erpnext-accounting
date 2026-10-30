@@ -1,16 +1,24 @@
 # SmartProcess_ERPNext_Accounting
 
-اپ Frappe/ERPNext برای رسید، پرداخت و نمایش نرخ ارز بومی. نسخهٔ هدف: **0.3.0**.
+اپ Frappe/ERPNext برای رسید، پرداخت، تبدیل ارز و گردش حساب روی GL استاندارد. نسخه: **0.4.0**.
 
 نیاز: Frappe `>=16,<17`، ERPNext `>=16,<17`، Python `>=3.10`.
 
-معماری V2 در [`docs/v2/BLUEPRINT.md`](docs/v2/BLUEPRINT.md).
+وضعیت فعلی: [`docs/CURRENT.md`](docs/CURRENT.md). قراردادهای طراحی: [`docs/v2/`](docs/v2/BLUEPRINT.md).
 
 ## وضعیت عملیات
 
-- **Receipt** و **Payment** مسیر ثبت فعال هستند.
-- **Transfer** و **Currency Conversion** در Submit مسدودند.
-- DocTypeهای بازنشسته فقط Read+Report دارند؛ کنترلر آن‌ها هنوز throw می‌کند.
+- **Receipt** و **Payment** مسیر ثبت فعال هستند. فرم سند جدید فقط همین دو گزینه را نشان می‌دهد.
+- تبدیل ارز فعال DocType جداگانه `SmartProcess Receipt Conversion` است.
+- تسویه اختیاری Path A: یک ردیف Customer یا Supplier در برابر بانک یا صندوق، یک `Payment Entry` استاندارد می‌سازد. حالت‌ها: Auto، Manual، Open.
+- صفحه «تطبیق و تسویه» تخصیص پس از ثبت و Unreconcile را از مسیر استاندارد Payment Reconciliation انجام می‌دهد.
+- تهاتر تک‌ارزی یک `Journal Entry` استاندارد بدون ردیف بانک می‌سازد.
+- گزارش `Unallocatable Credits` اعتبارهای تاریخی بدون Payment Entry را فقط نمایش می‌دهد.
+- چندردیفی و عملیات ناسازگار روی Path B (ثبت فعلی SmartProcess) می‌مانند.
+- فلگ `enable_payment_entry_settlement` پیش‌فرض خاموش است.
+- **Transfer** و Currency Conversion روی سند حسابداری در Submit مسدودند و از انتخاب سند جدید مخفی‌اند. Schema برای اسناد تاریخی می‌ماند.
+- هر Account فقط `account_currency` خودش را می‌پذیرد.
+- DocTypeهای بازنشسته فقط Read+Report دارند؛ کنترلر آن‌ها throw می‌کند.
 - Hybrid Lock در کد تولید خاموش است (`LIVE_LOCKS_ENABLED = False`).
 - `ignore_permissions` و `allow_guest` در کد تولید وجود ندارد.
 
@@ -42,9 +50,10 @@ bench --site <site> clear-website-cache
 
 ## محدودیت‌های باقی‌مانده
 
-- تخصیص رسید به فاکتور و تسویهٔ Outstanding فاکتور در این نسخه کامل نیست.
-- Transfer / Currency Conversion هنوز پیاده‌سازی نشده‌اند.
-- سایت مشترک `8080` ممکن است JSONهای جدید (از جمله `track_changes`) را migrate نکرده باشد.
+- رسید یا پرداخت چندردیفی هنوز چند `Payment Entry` در یک Submit نمی‌سازد.
+- تهاتر چندارزی خاموش است. هر دو طرف باید شرکت، ارز و نرخ یکسان داشته باشند.
+- Transfer هنوز پیاده‌سازی نشده است و از فرم سند جدید مخفی است.
+- Override کلاس `Payment Entry` اضافه نشده است. مسیر اجرا همان Override موجود HRMS است.
 
 ## پشتیبان و حذف اپ
 
@@ -58,9 +67,9 @@ bench --site <site> clear-website-cache
 
 انتشار فعلی `3306` از `finance-mgmt/overrides/compose.mariadb.yaml` است (`ports: - "3306:3306"`). فایل جایگزین محلی: [`deployment/compose.mariadb-localhost-only.yaml`](deployment/compose.mariadb-localhost-only.yaml). این overlay را به سرویس در حال اجرا اعمال نکنید مگر با تأیید جداگانه؛ append کردن فایل، publish روی `0.0.0.0` را نمی‌بندد.
 
-## تست‌های بایگانی‌شده
+## تست‌های Transfer
 
-`archived_v2_posting.py` و پنج تست دقت Transfer از `test_live_readiness.py` از discovery خارج شده‌اند چون Submit آن عملیات‌ها مسدود است. کاهش Skip به‌تنهایی افزایش پوشش نیست؛ پوشش جدید از تست‌های Receipt / Payment / live_readiness است.
+Submit عملیات Transfer و Currency Conversion روی رسید هوشمند مسدود است. تست‌های موتور ثبت آن عملیات‌ها حذف شدند؛ پوشش فعال در Receipt / Payment / `test_live_readiness.py` است.
 
 ## CI
 

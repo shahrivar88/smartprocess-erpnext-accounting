@@ -50,7 +50,7 @@ class TestDefaultAccountDocTypes(unittest.TestCase):
 			{
 				"company": ("Link", "Company", 1),
 				"currency": ("Link", "Currency", 1),
-				"account_purpose": ("Select", "Receivable\nPayable\nBank\nCash", 1),
+				"account_purpose": ("Select", "Receivable\nPayable\nBank\nCash\nShareholder Current", 1),
 				"account": ("Link", "Account", 1),
 			},
 		)
@@ -97,7 +97,12 @@ class TestDefaultAccountTranslations(unittest.TestCase):
 
 class TestCentralDefaultAccountsScope(unittest.TestCase):
 	def test_only_the_settings_and_the_invoice_rules_import_the_central_default_accounts(self):
-		allowed = {"default_accounts.py", "smartprocess_accounting_settings.py", "party_default_account.py"}
+		allowed = {
+			"default_accounts.py",
+			"smartprocess_accounting_settings.py",
+			"party_default_account.py",
+			"shareholder_accounting.py",
+		}
 		for path in APP_DIR.rglob("*.py"):
 			if path.name in allowed or path.name.startswith("test_"):
 				continue

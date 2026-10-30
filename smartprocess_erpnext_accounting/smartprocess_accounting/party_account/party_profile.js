@@ -59,6 +59,7 @@ const spPartyProfile = {
 		}
 		panel.$wrapper.html(`<div class="text-muted small">${__("در حال بارگذاری...")}</div>`);
 		const profile = await frappe.xcall(this.METHOD, { party_type: frm.doctype, party: frm.doc.name }, "GET");
+		this.lastBalances = profile.balances || [];
 		panel.$wrapper.html(this.html(profile, this.tools()));
 		panel.$wrapper.find("[data-sp-ledger]").on("click", (event) => {
 			const row = profile.balances[Number(event.currentTarget.dataset.spLedger)];
@@ -73,7 +74,18 @@ const spPartyProfile = {
 	// Whole history of one Company + Account; the explorer itself checks permissions.
 	openExplorer(frm, row) {
 		if (!row) {
-			frappe.set_route(this.EXPLORER, "list");
+			const first = (this.lastBalances || []).find((item) => item.company);
+			if (first) {
+				frappe.set_route(this.EXPLORER, "ledger", ...this.ledgerRoute(frm.doctype, frm.doc.name, first));
+				return;
+			}
+			frappe.route_options = {
+				company: frm.doc.company || (frappe.defaults && frappe.defaults.get_default && frappe.defaults.get_default("company")) || "",
+				party_type: frm.doctype,
+				party: frm.doc.name,
+				hide_zero: 0,
+			};
+			frappe.set_route(this.EXPLORER);
 			return;
 		}
 		frappe.set_route(this.EXPLORER, "ledger", ...this.ledgerRoute(frm.doctype, frm.doc.name, row));

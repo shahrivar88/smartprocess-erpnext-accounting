@@ -1,6 +1,6 @@
 # V2 Test Matrix
 
-Status: Required future production coverage. The disposable ERPNext 16.35 contract spike is recorded in `NATIVE_ACCOUNTING_PROOF.md`; it does not replace production V2 tests.
+Status: Required production coverage. The disposable ERPNext 16.35 spike is archived in `docs/archive/NATIVE_ACCOUNTING_PROOF.md`. It does not replace production tests. See [`docs/CURRENT.md`](../CURRENT.md).
 
 ## Test environment rule
 

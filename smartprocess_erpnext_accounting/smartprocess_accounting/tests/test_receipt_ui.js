@@ -11,12 +11,14 @@ const MODULES = {
 	spFlowText: "flow_text.js",
 	spReceiptNumbers: "receipt_numbers.js",
 	spReceiptForm: "receipt_form.js",
+	spReceiptOperation: "receipt_operation.js",
 	spReceiptHeader: "receipt_header.js",
 	spReceiptPayerHeader: "receipt_payer_header.js",
 	spReceiptRowQueries: "receipt_row_queries.js",
 	spReceiptRowEvents: "receipt_row_events.js",
 	spReceiptValidation: "receipt_validation_ui.js",
 	spReceiptSummary: "receipt_summary.js",
+	spReceiptSettlement: "settlement.js",
 	spReceiptConversionStatus: "receipt_conversion_status.js",
 };
 
@@ -87,13 +89,38 @@ function form(values = {}, rows = []) {
 		...values,
 	};
 	docs.set(doc.name, doc);
+	const grid = {
+		doctype: "SmartProcess Accounting Pair",
+		resets: 0,
+		open_grid_row: null,
+		reset_grid() {
+			this.resets += 1;
+			this.open_grid_row = null;
+		},
+	};
 	const frm = {
 		doc,
 		docname: doc.name,
 		doctype: doc.doctype,
-		fields_dict: { receipt_payer_currency: { df: {} }, receipt_summary: { $wrapper: { html() {} } } },
+		fields_dict: {
+			receipt_payer_currency: { df: {} },
+			receipt_summary: { $wrapper: { html() {}, empty() {}, toggleClass() {} } },
+			operational_pairs: {
+				grid,
+				$wrapper: {
+					get: () => ({ addEventListener() {} }),
+					closest: () => ({ toggleClass() {} }),
+					toggleClass() {},
+					find: () => ({ first: () => ({ text() {} }) }),
+				},
+			},
+		},
 		set_df_property() {},
 		refresh_field() {},
+		refresh_field() {},
+		refresh_fields() {
+			calls.refreshFields = (calls.refreshFields || 0) + 1;
+		},
 		async set_value(fieldname, value) {
 			calls.setValue.push({ name: doc.name, fieldname, value });
 			doc[fieldname] = value;
@@ -114,6 +141,7 @@ function reset() {
 	calls.msgprint = [];
 	calls.setValue = [];
 	calls.confirm = [];
+	calls.refreshFields = 0;
 	responses = {};
 	confirmAnswer = true;
 	frappe.validated = true;
@@ -172,6 +200,10 @@ test("3 Bank receiver lists matching Bank Accounts and fills the linked ledger",
 	responses.get_bank_account_details = { account: "Bank IRR - SP", account_currency: "IRR" };
 	await spReceiptHeader.bankChanged(frm);
 	assert.equal(frm.doc.receipt_payer_account, "");
+	assert.equal(calls.msgprint.length, 1);
+	assert.ok(calls.msgprint[0].message.includes("ارز حساب معین"));
+	assert.ok(calls.msgprint[0].message.includes("IRR"));
+	assert.ok(calls.msgprint[0].message.includes("USD"));
 });
 
 test("4 row Party query uses the header Payer Currency, not the Receiver currency", () => {
@@ -188,7 +220,10 @@ test("5 row Account query uses the header Payer Currency", () => {
 	const doc = { company: "SP", receipt_payer_currency: "EUR", receipt_credit_currency: "USD" };
 	const filters = (type) => spReceiptRowQueries.payerAccountFilters(doc, { receipt_recipient_type: type, receipt_currency: "IRR" });
 	assert.equal(filters("Customer").account_currency, "USD");
-	assert.equal(spReceiptRowQueries.payerAccountFilters({ company: "SP" }, { receipt_recipient_type: "Customer" }).account_currency, "");
+	assert.equal(
+		spReceiptRowQueries.payerAccountFilters({ company: "SP" }, { receipt_recipient_type: "Customer" }).account_currency,
+		spReceiptConfig.NO_ACCOUNT_CURRENCY,
+	);
 	assert.equal(filters("Customer").account_type, "Receivable");
 	assert.equal(filters("Employee").account_type, "Payable");
 	assert.equal(filters("Bank Account").account_type, "Bank");
@@ -380,10 +415,50 @@ test("10 field changes never show a popup", async () => {
 	const payerHeader = read(path.join(RECEIPT_DIR, MODULES.spReceiptPayerHeader));
 	assert.equal(payerHeader.split("msgprint").length - 1, 1);
 	assert.ok(/warnRowDates\(\) \{\s+frappe\.msgprint\(/.test(payerHeader));
-	for (const source of moduleSources.filter((text) => !text.includes("spReceiptValidation = {") && text !== payerHeader)) {
+	const configSource = read(path.join(RECEIPT_DIR, MODULES.spReceiptConfig));
+	assert.equal(configSource.split("msgprint").length - 1, 1);
+	assert.ok(/rejectMismatchedAccount\(/.test(configSource));
+	for (const source of moduleSources.filter(
+		(text) =>
+			!text.includes("spReceiptValidation = {")
+			&& text !== payerHeader
+			&& !text.includes("rejectMismatchedAccount("),
+	)) {
 		assert.ok(!source.includes("msgprint"));
 	}
 	assert.ok(!formSource.includes("msgprint"));
+});
+
+test("10b one Account cannot be used in a second currency", async () => {
+	reset();
+	assert.equal(spReceiptConfig.accountFilters("SP", "", "Bank").account_currency, spReceiptConfig.NO_ACCOUNT_CURRENCY);
+	assert.equal(spReceiptConfig.rejectMismatchedAccount("Bank USD - SP", "USD", "USD"), false);
+	assert.equal(calls.msgprint.length, 0);
+	assert.equal(spReceiptConfig.rejectMismatchedAccount("Bank USD - SP", "USD", "IRR"), true);
+	assert.ok(calls.msgprint[0].message.includes("ارز حساب معین"));
+	assert.ok(calls.msgprint[0].message.includes("حساب معین جداگانه‌ای"));
+
+	reset();
+	responses.get_account_details = { account_currency: "IRR" };
+	const frm = form({ receipt_payer_currency: "USD", receipt_payer_account: "Bank IRR - SP" });
+	await spReceiptHeader.accountChanged(frm);
+	assert.equal(frm.doc.receipt_payer_account, "");
+	assert.equal(calls.msgprint.length, 1);
+
+	reset();
+	responses.get_account_details = { account_currency: "EUR" };
+	const first = row("row-m1", { credit_account: "Debtors EUR" });
+	const rows = form({ receipt_payer_currency: "USD", receipt_credit_currency: "USD" }, [first]);
+	await spReceiptRowEvents.accountChanged(rows, first.doctype, first.name);
+	assert.equal(first.credit_account, "");
+	assert.equal(calls.msgprint.length, 1);
+
+	reset();
+	responses.get_account_details = { account_currency: "USD" };
+	const matching = form({ receipt_payer_currency: "USD", receipt_payer_account: "Bank USD - SP" });
+	await spReceiptHeader.accountChanged(matching);
+	assert.equal(matching.doc.receipt_payer_account, "Bank USD - SP");
+	assert.equal(calls.msgprint.length, 0);
 });
 
 function guardedGrid(frm) {
@@ -520,7 +595,13 @@ test("18 Payment rows edit the debit side; the Receipt grid stays on the credit 
 		[1, 1, 1],
 	);
 	assert.deepEqual([gridProperty("debit_account", "reqd", payment), gridProperty("debit_amount", "reqd", payment)], [1, 1]);
+	assert.deepEqual(
+		["debit_account", "debit_amount", "debit_company_amount"].map((field) => gridProperty(field, "hidden", payment)),
+		[0, 0, 0],
+		"Payment must unhide the debit editors; hiding Credit is not enough",
+	);
 	assert.deepEqual([gridProperty("credit_amount", "hidden", payment), gridProperty("credit_amount", "reqd", payment)], [1, 0]);
+	assert.equal(gridProperty("credit_account", "in_list_view", payment), 0);
 	assert.equal(gridProperty("debit_exchange_rate", "in_list_view", payment), 0);
 	assert.equal(gridProperty("debit_exchange_rate", "in_list_view", { ...payment, receipt_credit_currency: "USD" }), 1);
 	assert.deepEqual(
@@ -684,6 +765,183 @@ test("26 preparing number controls never writes the document or marks it dirty",
 	} finally {
 		delete frappe.boot;
 	}
+});
+
+test("27 switching Receipt to Payment moves the row side after confirmation", async () => {
+	reset();
+	const first = row("sw-1", { credit_account: "AR - SP", credit_amount: 10, credit_exchange_rate: 1, credit_description: "note" });
+	const frm = form({ operation_type: "Receipt" }, [first]);
+	frm.doc.operation_type = "Payment";
+	await spReceiptOperation.changed(frm);
+	assert.equal(calls.confirm.length, 1);
+	assert.ok(calls.confirm[0].includes("دریافت") && calls.confirm[0].includes("پرداخت"));
+	assert.deepEqual(
+		[first.debit_account, first.debit_amount, first.debit_description, first.credit_account, first.credit_amount],
+		["AR - SP", 10, "note", null, null],
+	);
+	assert.equal(spReceiptForm.state(frm).operationType, "Payment");
+	assert.ok(frm.fields_dict.operational_pairs.grid.resets >= 1);
+	assert.equal(gridProperty("debit_amount", "in_list_view", frm.doc), 1);
+	assert.deepEqual([gridProperty("debit_account", "hidden", frm.doc), gridProperty("debit_amount", "hidden", frm.doc)], [0, 0]);
+	assert.equal(gridProperty("credit_amount", "hidden", frm.doc), 1);
+});
+
+test("28 cancelling the operation change restores Receipt and keeps the credit side", async () => {
+	reset();
+	confirmAnswer = false;
+	const first = row("sw-2", { credit_account: "AR - SP", credit_amount: 4 });
+	const frm = form({ operation_type: "Receipt" }, [first]);
+	frm.doc.operation_type = "Payment";
+	await spReceiptOperation.changed(frm);
+	assert.equal(frm.doc.operation_type, "Receipt");
+	assert.deepEqual([first.credit_account, first.credit_amount, first.debit_account], ["AR - SP", 4, undefined]);
+	assert.equal(spReceiptForm.state(frm).operationType, "Receipt");
+});
+
+test("29 Payment to Receipt retargets debit values and an empty form skips the confirmation", async () => {
+	reset();
+	const first = row("sw-3", { debit_account: "Creditors - SP", debit_amount: 8 });
+	const frm = form({ operation_type: "Payment" }, [first]);
+	frm.doc.operation_type = "Receipt";
+	await spReceiptOperation.changed(frm);
+	assert.equal(calls.confirm.length, 1);
+	assert.deepEqual([first.credit_account, first.credit_amount, first.debit_account], ["Creditors - SP", 8, null]);
+	assert.deepEqual([gridProperty("credit_account", "hidden", frm.doc), gridProperty("credit_amount", "hidden", frm.doc)], [0, 0]);
+	assert.deepEqual([gridProperty("debit_account", "hidden", frm.doc), gridProperty("debit_amount", "hidden", frm.doc)], [1, 1]);
+	const empty = form({ operation_type: "Receipt" });
+	reset();
+	empty.doc.operation_type = "Payment";
+	await spReceiptOperation.changed(empty);
+	assert.equal(calls.confirm.length, 0);
+	assert.equal(spReceiptForm.state(empty).operationType, "Payment");
+});
+
+test("30 the row type Link lists every configured option on click or clear", () => {
+	const frm = form({ operation_type: "Payment" });
+	spReceiptForm.state(frm).payerTypeOptions = [
+		{ value: "Customer", label: "مشتری" },
+		{ value: "Bank Account", label: "حساب بانکی" },
+		{ value: "Account", label: "سایر حساب‌ها" },
+	];
+	const listed = [];
+	const control = {
+		get_value: () => "Customer",
+		$input: { val: () => "Customer" },
+		awesomplete: {
+			minChars: 2,
+			list: [],
+			evaluate() {
+				listed.push(this.list.map((item) => item.value));
+			},
+		},
+		get_data() {
+			listed.push(["from-query"]);
+		},
+	};
+	spReceiptRowQueries.preparePayerTypeControl(frm, control, true);
+	assert.equal(control.awesomplete.minChars, 0);
+	assert.deepEqual(listed.at(-1), ["Customer", "Bank Account", "Account"]);
+	control.get_value = () => "";
+	control.$input.val = () => "";
+	spReceiptRowQueries.openPayerTypes(frm, control);
+	assert.deepEqual(listed.at(-1), ["Customer", "Bank Account", "Account"]);
+	const receipt = form({});
+	spReceiptForm.state(receipt).payerTypeOptions = spReceiptForm.state(frm).payerTypeOptions;
+	spReceiptRowQueries.preparePayerTypeControl(receipt, control, true);
+	assert.deepEqual(listed.at(-1), ["Customer", "Bank Account", "Account"]);
+});
+
+test("30b RTL grid lists pin to the cell right edge so extra width opens left", () => {
+	assert.equal(spReceiptRowQueries.rtlListLeft(347, 20, 250), 77);
+	assert.equal(spReceiptRowQueries.rtlListLeft(100, 0, 250), -150);
+	const wrapper = {
+		classList: { contains: (name) => name === "awesomplete_list_6" },
+		style: { position: "absolute", left: "200px", minWidth: "", width: "" },
+	};
+	const other = {
+		classList: { contains: () => false },
+		style: { position: "absolute", left: "200px", minWidth: "", width: "" },
+	};
+	const skipped = { classList: { contains: () => true }, style: { position: "relative", left: "200px" } };
+	spReceiptRowQueries.alignRtlGridDropdown(
+		{
+			getAttribute: (name) => (name === "aria-owns" ? "awesomplete_list_6" : ""),
+			getBoundingClientRect: () => ({ left: 120, right: 347, width: 101 }),
+		},
+		{
+			getBoundingClientRect: () => ({ left: 20 }),
+			querySelectorAll: () => [wrapper, other, skipped],
+		},
+	);
+	assert.equal(wrapper.style.left, "77px");
+	assert.equal(wrapper.style.minWidth, "250px");
+	assert.equal(wrapper.style.width, "250px");
+	assert.equal(other.style.left, "200px");
+	assert.equal(skipped.style.left, "200px");
+});
+
+test("31 Receipt→Payment→Receipt remaps account and amount to the visible editable side", () => {
+	const editors = (doc) => ({
+		credit: ["credit_account", "credit_amount"].map((field) => gridProperty(field, "hidden", doc)),
+		debit: ["debit_account", "debit_amount"].map((field) => gridProperty(field, "hidden", doc)),
+	});
+	const receipt = editors({ operation_type: "Receipt" });
+	const payment = editors({ operation_type: "Payment" });
+	assert.deepEqual(receipt, { credit: [0, 0], debit: [1, 1] });
+	assert.deepEqual(payment, { credit: [1, 1], debit: [0, 0] });
+	assert.deepEqual(editors({ operation_type: "Receipt" }), receipt);
+	assert.deepEqual(editors({ operation_type: "Payment" }), payment);
+});
+
+test("33 Shareholder stays out of new documents until both settings flags are on", () => {
+	const previous = globalThis.frappe.boot;
+	globalThis.frappe.boot = {};
+	assert.deepEqual(spReceiptConfig.documentPartyTypes(), [
+		"Customer",
+		"Supplier",
+		"Employee",
+		"SmartProcess Financial Intermediary",
+	]);
+	assert.equal(spReceiptConfig.PARTY_ACCOUNT_TYPES.Shareholder, "Payable");
+	assert.equal(spReceiptConfig.RECEIVER_KIND_LABELS.Shareholder, "سهامدار");
+	assert.deepEqual(
+		spReceiptConfig.receiverKindValues("بانک\nCustomer\nEmployee\nصندوق", "بانک"),
+		["بانک", "Customer", "Employee", "صندوق"],
+	);
+	globalThis.frappe.boot = {
+		smartprocess_accounting: { shareholder_accounting: { enabled: 1, show_in_smart_document: 1 } },
+	};
+	assert.ok(spReceiptConfig.documentPartyTypes().includes("Shareholder"));
+	assert.deepEqual(
+		spReceiptConfig.receiverKindValues("بانک\nCustomer\nEmployee\nصندوق", "بانک"),
+		["بانک", "Customer", "Employee", "Shareholder", "صندوق"],
+	);
+	globalThis.frappe.boot = {
+		smartprocess_accounting: { shareholder_accounting: { enabled: 1, show_in_smart_document: 0 } },
+	};
+	assert.ok(!spReceiptConfig.documentPartyTypes().includes("Shareholder"));
+	assert.deepEqual(
+		spReceiptConfig.receiverKindValues("بانک\nCustomer\nShareholder\nEmployee", "بانک"),
+		["بانک", "Customer", "Employee"],
+	);
+	assert.deepEqual(
+		spReceiptConfig.receiverKindValues("بانک\nCustomer\nShareholder\nEmployee", "Shareholder"),
+		["بانک", "Customer", "Shareholder", "Employee"],
+	);
+	globalThis.frappe.boot = previous;
+});
+
+test("32 new documents only offer Receipt and Payment", () => {
+	assert.equal(spReceiptConfig.operationTypeOptions({}), "Receipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Receipt" }), "Receipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Payment" }), "Receipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Transfer" }), "Receipt\nPayment\nTransfer");
+	assert.equal(
+		spReceiptConfig.operationTypeOptions({ operation_type: "Currency Conversion" }),
+		"Receipt\nPayment\nCurrency Conversion",
+	);
+	assert.equal(docField("operation_type").options, "Receipt\nPayment\nTransfer\nCurrency Conversion");
+	assert.ok(clientSource.includes("applyOperationTypeOptions"));
 });
 
 test("modules stay small and are included by the form", () => {

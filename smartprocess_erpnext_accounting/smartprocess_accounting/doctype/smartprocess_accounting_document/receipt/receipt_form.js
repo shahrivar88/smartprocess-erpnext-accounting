@@ -8,6 +8,7 @@ const SP_PAIR_SIDE_FIELDS = [
 	"amount", "exchange_rate", "company_amount", "rate_direction", "description",
 ];
 const SP_ROW_SIDE_HIDDEN_FIELDS = ["account_category", "suggested_account", "party_type", "party", "account_currency", "rate_direction"];
+const SP_ROW_SIDE_VISIBLE_FIELDS = ["account", "amount", "exchange_rate", "company_amount", "description"];
 // Column sizes only; the column order stays the Pair metadata order. The row
 // Exchange Rate column joins them only for a foreign row currency.
 const SP_RECEIPT_LIST_COLUMNS = [
@@ -56,6 +57,7 @@ const spReceiptForm = {
 				payerTypeDefault: null,
 				payerTypeOptions: null,
 				numberSettings: null,
+				operationType: frm.doc.operation_type || "",
 			};
 		}
 		return frm.__sp_receipt;
@@ -78,13 +80,22 @@ const spReceiptForm = {
 	},
 
 	setup(frm) {
+		this.applyOperationTypeOptions(frm);
 		spReceiptHeader.setupQueries(frm);
 		spReceiptRowQueries.setupQueries(frm);
 	},
 
+	applyOperationTypeOptions(frm) {
+		frm.set_df_property("operation_type", "options", spReceiptConfig.operationTypeOptions(frm.doc));
+	},
+
 	async refresh(frm) {
+		this.applyOperationTypeOptions(frm);
 		const isFlow = spReceiptConfig.isFlow(frm.doc);
-		this.state(frm);
+		const state = this.state(frm);
+		if (!state.operationType) {
+			state.operationType = frm.doc.operation_type || "";
+		}
 		spReceiptHeader.configure(frm, isFlow);
 		this.configureGrid(frm, isFlow);
 		if (!isFlow) {
@@ -99,6 +110,7 @@ const spReceiptForm = {
 		this.configureGrid(frm, isFlow);
 		spReceiptSummary.render(frm);
 		spReceiptSummary.schedule(frm, 0);
+		spReceiptSettlement.refresh(frm);
 	},
 
 	validate(frm) {
@@ -124,6 +136,9 @@ const spReceiptForm = {
 		for (const [fieldname, property, value] of latest.values()) {
 			changed = this.setGridProperty(frm, grid, fieldname, property, value) || changed;
 		}
+		if (changed) {
+			grid.visible_columns = [];
+		}
 		if (changed && !grid.open_grid_row && !document.querySelector(".jalali-picker:not(.pwt-hide)")) {
 			grid.reset_grid();
 		}
@@ -138,10 +153,17 @@ const spReceiptForm = {
 		const text = spFlowText.of(doc);
 		const properties = [];
 		for (const name of SP_PAIR_SIDE_FIELDS) {
-			properties.push([`${headerSide}_${name}`, "hidden", 1], [`${headerSide}_${name}`, "reqd", 0]);
+			properties.push(
+				[`${headerSide}_${name}`, "hidden", 1],
+				[`${headerSide}_${name}`, "reqd", 0],
+				[`${headerSide}_${name}`, "in_list_view", 0],
+			);
+		}
+		for (const name of SP_ROW_SIDE_VISIBLE_FIELDS) {
+			properties.push([row(name), "hidden", 0]);
 		}
 		for (const fieldname of ["credit_column", "receipt_payer_exchange_rate", ...SP_ROW_SIDE_HIDDEN_FIELDS.map(row)]) {
-			properties.push([fieldname, "hidden", 1]);
+			properties.push([fieldname, "hidden", 1], [fieldname, "in_list_view", 0]);
 		}
 		for (const fieldname of SP_RECEIPT_GRID_FIELDS) {
 			properties.push([fieldname, "hidden", 0]);
@@ -201,16 +223,32 @@ const spReceiptForm = {
 		return [...restored, ...generic];
 	},
 
-	// The grid-level docfields (copied by new rows) and every existing row's
-	// docfield copy get the same value, like frm.set_df_property for a row.
+	// Meta copies, grid.docfields, fields_map and every grid_row copy stay in
+	// sync. Frappe Grid only shows !hidden && in_list_view columns.
 	setGridProperty(frm, grid, fieldname, property, value) {
-		const names = [frm.docname, ...(frm.doc[spReceiptConfig.TABLE] || []).map((row) => row.name)];
 		let changed = false;
+		const apply = (docfield) => {
+			if (!docfield || (docfield[property] ?? null) === (value ?? null)) {
+				return;
+			}
+			docfield[property] = value;
+			changed = true;
+		};
+		const names = [frm.docname, ...(frm.doc[spReceiptConfig.TABLE] || []).map((row) => row.name)];
 		for (const name of names) {
-			const docfield = frappe.meta.get_docfield(grid.doctype, fieldname, name);
-			if (docfield && (docfield[property] ?? null) !== (value ?? null)) {
-				docfield[property] = value;
-				changed = true;
+			apply(frappe.meta.get_docfield(grid.doctype, fieldname, name));
+		}
+		for (const docfield of grid.docfields || []) {
+			if (docfield.fieldname === fieldname) {
+				apply(docfield);
+			}
+		}
+		apply(grid.fields_map?.[fieldname]);
+		for (const gridRow of grid.grid_rows || []) {
+			for (const docfield of gridRow.docfields || []) {
+				if (docfield.fieldname === fieldname) {
+					apply(docfield);
+				}
 			}
 		}
 		return changed;

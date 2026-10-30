@@ -16,6 +16,7 @@ SIDEBAR_ITEMS = (
 	(MODULE_LABEL, "DocType", "SmartProcess Accounting Document", None),
 	("تبدیل ارز", "DocType", "SmartProcess Receipt Conversion", None),
 	("گردش حساب", "Page", "party-account-explorer", "list"),
+	("تطبیق و تسویه", "Page", "settlement-workbench", "list"),
 	("واسطه مالی", "DocType", "SmartProcess Financial Intermediary", None),
 	("تنظیمات حسابداری هوشمند", "DocType", "SmartProcess Accounting Settings", None),
 )

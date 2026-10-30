@@ -46,7 +46,7 @@ const spConversionForm = {
 		const legs = spConversionLegs;
 		frm.set_query("source_receipt", () => ({ filters: legs.RECEIPT_FILTERS }));
 		frm.set_query("target_currency", () => ({ filters: legs.currencyFilters(this.state(frm).companyCurrency) }));
-		frm.set_query("target_party_type", legs.TABLE, () => ({ filters: { name: ["in", legs.PARTY_TYPES] } }));
+		frm.set_query("target_party_type", legs.TABLE, () => ({ filters: { name: ["in", legs.documentPartyTypes()] } }));
 		frm.set_query("target_account", legs.TABLE, (doc, cdt, cdn) => {
 			const row = frappe.get_doc(cdt, cdn);
 			return { filters: legs.accountFilters(doc.company, doc.target_currency, row.target_party_type, row.target_party) };

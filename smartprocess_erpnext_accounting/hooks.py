@@ -35,7 +35,7 @@ extend_doctype_class = {
 
 app_include_css = [
 	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.11.0",
-	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.9.2",
+	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.9.3",
 ]
 
 app_include_js = [
@@ -64,6 +64,7 @@ doctype_js = {
 	"Quotation": "public/js/native_rate_fields.js",
 	"Sales Order": "public/js/native_rate_fields.js",
 	"Purchase Order": "public/js/native_rate_fields.js",
+	"Shareholder": "public/js/shareholder.js",
 }
 
 doc_events = {
@@ -78,6 +79,9 @@ doc_events = {
 	},
 	"Journal Entry": {
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.journal_entry_party.validate_disabled_parties",
+	},
+	"Shareholder": {
+		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting.validate_shareholder",
 	},
 	"Transaction Deletion Record": {
 		"validate": "smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_guard.validate_transaction_deletion_record",

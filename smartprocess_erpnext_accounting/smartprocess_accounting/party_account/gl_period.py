@@ -40,6 +40,17 @@ class Period:
 		return {"from_date": self.from_date, "to_date": self.to_date}
 
 
+def hide_zero_having():
+	"""Keep a row when closing is not zero, or the selected period has debit or credit."""
+	clauses = []
+	for _suffix, debit, credit in SIDES:
+		opening = f"sum(case when {GL}.posting_date < %(from_date)s then {GL}.{debit} - {GL}.{credit} else 0 end)"
+		period_debit = f"sum(case when {GL}.posting_date >= %(from_date)s then {GL}.{debit} else 0 end)"
+		period_credit = f"sum(case when {GL}.posting_date >= %(from_date)s then {GL}.{credit} else 0 end)"
+		clauses += [f"({opening} + {period_debit} - {period_credit}) != 0", f"{period_debit} != 0", f"{period_credit} != 0"]
+	return " having " + " or ".join(clauses)
+
+
 def balance_columns():
 	"""Opening is everything before from_date; it is never part of period movement."""
 	columns = []

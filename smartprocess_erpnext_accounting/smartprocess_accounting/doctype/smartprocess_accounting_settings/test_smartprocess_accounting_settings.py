@@ -39,6 +39,7 @@ LAYOUT_TYPES = {"Tab Break", "Section Break", "Column Break"}
 TABS = {
 	"عمومی": [
 		"enable_v2_posting",
+		"enable_payment_entry_settlement",
 		"enable_counterpart_proposal",
 		"prevent_receivable_currency_mismatch",
 		"receipt_recipient_type_options",
@@ -67,10 +68,17 @@ TABS = {
 	],
 	"نرخ ارز و تبدیل": ["allow_exchange_rate_editing", "enable_manual_invoice_rate_feature", "base_currency_rounding_tolerance"],
 	"حساب‌های پیش‌فرض": ["enable_central_default_accounts", "default_account_priority", "default_accounts"],
-	"تأثیرات بر سایر ماژول‌ها": ["cross_app_impact_html"],
+	"تأثیرات بر سایر ماژول‌ها": [
+		"enable_shareholder_accounting",
+		"show_shareholder_default_currency",
+		"suggest_shareholder_current_account",
+		"show_shareholder_in_smart_document",
+		"show_shareholder_in_party_explorer",
+		"cross_app_impact_html",
+	],
 	"پیشرفته": ["enable_templates", DEPRECATED],
 }
-SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش حساب", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
+SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش حساب", "تطبیق و تسویه", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
 
 
 class TestSmartProcessAccountingSettings(unittest.TestCase):
@@ -135,6 +143,8 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 				"hide_trailing_zeros_doctypes",
 				"live_separator_doctypes",
 				"cross_app_impacts",
+				"shareholder_accounting",
+				"payment_entry_settlement",
 			},
 		)
 		self.assertIn("Sales Invoice", payload["hide_trailing_zeros_doctypes"])
@@ -144,6 +154,13 @@ class TestSmartProcessAccountingSettings(unittest.TestCase):
 		self.assertIn(payload["allow_exchange_rate_editing"], (0, 1))
 		self.assertEqual(payload["central_default_accounts"], int(default_accounts.is_enabled()))
 		self.assertEqual(payload["live_number_separator"], get_number_input_settings())
+		self.assertEqual(payload["shareholder_accounting"]["enabled"], 0)
+		self.assertEqual(payload["shareholder_accounting"]["show_in_smart_document"], 0)
+		self.assertIn(payload["payment_entry_settlement"], (0, 1))
+		self.assertIn(
+			"فعال‌سازی حسابداری سهامداران",
+			{row["feature"] for row in payload["cross_app_impacts"]},
+		)
 
 
 class TestSettingsLayout(unittest.TestCase):
