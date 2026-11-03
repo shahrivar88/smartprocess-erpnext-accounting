@@ -1,16 +1,45 @@
 // Balance Conversion form: the server returns the balance, the maximum and the Target Amount.
 const spBalanceForm = {
 	MODE: "Balance",
-	DELAY: 300,
+	DELAY: 0,
 	SOURCE_FIELDS: ["source_party_type", "source_party", "source_account"],
 	NUMBER_FIELDS: ["conversion_amount", "target_rate"],
+	SOURCE_TABLE: [
+		["as_of_balance", "مانده حساب"],
+		["balance_side", "ماهیت مانده"],
+	],
+	// Amount/rate live in the HTML host. Destination Links stay native Frappe fields
+	// so Awesomplete is not clipped by a custom overflow host.
+	CONVERSION_TABLE: [
+		["conversion_amount", "مبلغ تبدیل"],
+		["target_rate", "نرخ"],
+		["target_amount", "مبلغ ارز مقصد"],
+	],
+	DESTINATION_FIELDS: ["target_party_type", "target_party", "target_account"],
+	TABLE_FIELDS: ["receiver_conversion_section", "receiver_conversion_html", "payer_conversion_section", "payer_conversion_html"],
+	DUPLICATE_FIELDS: [
+		"as_of_balance",
+		"balance_side",
+		"max_convertible",
+		"conversion_amount",
+		"fill_max_convertible",
+		"target_rate",
+		"target_amount",
+		"column_break_balance_source",
+		"column_break_balance_conversion",
+		"balance_conversion_section",
+	],
 	MODE_LABELS: { Receipt: "از رسید", Balance: "از مانده حساب" },
 	BALANCE_SIDE_LABELS: { Debit: "بدهکار", Credit: "بستانکار" },
+	OFF_BALANCE_SIDE_LABELS: { Debit: "مقصد بدهکار", Credit: "مقصد بستانکار" },
 	MESSAGES: {
 		legsLabel: "تخصیص‌های داخلی (فقط برای حسابرسی)",
 		currencyKept: "ارز پیشنهادی این طرف حساب {0} است. ارز مقصد انتخاب‌شده ({1}) تغییر نکرد.",
 		partial:
-			"بخشی از مانده حساب از اسنادی است که فعلاً قابل تبدیل نیستند (مثل اسناد استاندارد ERPNext یا سند ثبت مبهم). فقط «حداکثر قابل تبدیل» قابل تبدیل است.",
+			"بخشی از مانده حساب از اسنادی است که فعلاً قابل تبدیل نیستند (مثل اسناد استاندارد ERPNext یا سند ثبت مبهم). فقط سقف معتبر سرور قابل ثبت است.",
+		overBalance: "مبلغ این تبدیل از مانده قابل‌تبدیل بیشتر است. در حالت «تبدیل خارج از مانده» ثبت مجاز است و اسناد قبلی مصرف نمی‌شوند.",
+		invalidRate: "نرخ باید بزرگ‌تر از صفر باشد.",
+		destinationNature: "ماهیت حساب مقصد",
 	},
 
 	isBalance(frm) {
@@ -48,20 +77,55 @@ const spBalanceForm = {
 	},
 
 	refresh(frm) {
+		this.applyLayout(frm);
 		frm.set_df_property("conversion_mode", "options", this.selectOptions(this.MODE_LABELS));
 		frm.set_df_property("balance_side", "options", [{ value: "", label: "" }, ...this.selectOptions(this.BALANCE_SIDE_LABELS)]);
+		frm.set_df_property("off_balance_side", "label", this.MESSAGES.destinationNature);
+		frm.set_df_property("off_balance_side", "options", [{ value: "", label: "" }, ...this.selectOptions(this.OFF_BALANCE_SIDE_LABELS)]);
+		frm.fields_dict.off_balance_side?.$wrapper?.find(".control-label").text(this.MESSAGES.destinationNature);
 		if (!this.isBalance(frm)) {
+			this.teardownLayout(frm);
 			return;
 		}
 		frm.set_df_property(spConversionLegs.TABLE, "label", this.MESSAGES.legsLabel);
 		frm.set_df_property(spConversionLegs.TABLE, "read_only", 1);
-		for (const fieldname of this.NUMBER_FIELDS) {
-			spReceiptNumbers.prepare(frm, frm.fields_dict[fieldname], spConversionForm.numberOptions(frm));
-		}
+		this.renderLayout(frm);
 		this.showDifference(frm);
 		if (frm.doc.docstatus === 0) {
 			return this.loadSummary(frm);
 		}
+	},
+
+	// JSON metadata may still be the previous layout until migrate. JS hides
+	// duplicate amount fields, keeps the two HTML hosts, and shows native destination Links.
+	applyLayout(frm) {
+		for (const fieldname of this.TABLE_FIELDS) {
+			frm.set_df_property(fieldname, "depends_on", "");
+			frm.set_df_property(fieldname, "hidden", 0);
+		}
+		for (const fieldname of this.DUPLICATE_FIELDS) {
+			frm.set_df_property(fieldname, "hidden", 1);
+		}
+		const balanceDepends = "eval:doc.conversion_mode==='Balance'";
+		frm.set_df_property("balance_target_section", "depends_on", balanceDepends);
+		frm.set_df_property("balance_target_section", "hidden", 0);
+		frm.set_df_property("balance_target_section", "label", "مقصد");
+		frm.set_df_property("column_break_balance_target", "hidden", 0);
+		for (const fieldname of this.DESTINATION_FIELDS) {
+			frm.set_df_property(fieldname, "depends_on", balanceDepends);
+			frm.set_df_property(fieldname, "hidden", 0);
+		}
+		frm.set_df_property("target_party_type", "label", "نوع طرف مقصد");
+		frm.set_df_property("target_party", "label", "طرف مقصد");
+		frm.set_df_property("target_account", "label", "حساب مقصد");
+		frm.fields_dict.balance_target_section?.refresh?.();
+		for (const fieldname of this.DESTINATION_FIELDS) {
+			frm.refresh_field(fieldname);
+		}
+		if (this.isBalance(frm) && frm.fields_dict.balance_target_section?.collapse) {
+			frm.fields_dict.balance_target_section.collapse(false);
+		}
+		spConversionSides.relabel(frm);
 	},
 
 	selectOptions(labels) {
@@ -69,7 +133,11 @@ const spBalanceForm = {
 	},
 
 	modeChanged(frm) {
+		this.applyLayout(frm);
+		spConversionSides.teardown(frm);
+		this.teardownLayout(frm);
 		if (!this.isBalance(frm)) {
+			spConversionSides.refresh(frm);
 			return;
 		}
 		frm.doc.source_receipt = null;
@@ -152,11 +220,27 @@ const spBalanceForm = {
 		this.scheduleSummary(frm);
 	},
 
-	fillMax(frm) {
+	async fillMax(frm) {
 		if (frm.doc.docstatus !== 0) {
 			return;
 		}
-		return frm.set_value("conversion_amount", Number(frm.doc.max_convertible) || 0);
+		if (frm.doc.company && this.SOURCE_FIELDS.every((fieldname) => frm.doc[fieldname])) {
+			await this.loadSummary(frm);
+		}
+		const balance = Math.abs(Number(frm.doc.as_of_balance) || 0);
+		const offBalance = Number(frm.doc.off_balance_conversion);
+		if (offBalance && this.OFF_BALANCE_SIDE_LABELS[frm.doc.balance_side]) {
+			await frm.set_value("off_balance_side", frm.doc.balance_side);
+			frm.refresh_field("off_balance_side");
+		}
+		if (!offBalance && balance > Number(frm.doc.max_convertible || 0)) {
+			frappe.show_alert({ message: this.MESSAGES.partial, indicator: "orange" });
+		}
+		await frm.set_value("conversion_amount", balance);
+		this.refreshConversionValue(frm, "conversion_amount");
+		this.showDifference(frm);
+		await this.preview(frm);
+		this.refreshConversionValue(frm, "target_amount");
 	},
 
 	async loadSummary(frm) {
@@ -196,6 +280,8 @@ const spBalanceForm = {
 		}
 		frm.set_df_property("source_account", "description", summary?.error ? frappe.utils.escape_html(summary.error) : "");
 		this.showDifference(frm);
+		this.renderSourceTable(frm);
+		this.refreshConversionValue(frm, "max_convertible");
 	},
 
 	summaryValues(summary) {
@@ -211,6 +297,11 @@ const spBalanceForm = {
 
 	// The balance and the convertible maximum may differ; the form always says so.
 	showDifference(frm) {
+		if (Number(frm.doc.off_balance_conversion)) {
+			const over = Number(frm.doc.conversion_amount) > Number(frm.doc.max_convertible || 0);
+			frm.set_df_property("max_convertible", "description", over ? this.MESSAGES.overBalance : "");
+			return;
+		}
 		const differs = this.differs(frm.doc.as_of_balance, frm.doc.max_convertible);
 		frm.set_df_property("max_convertible", "description", differs ? this.MESSAGES.partial : "");
 	},
@@ -232,6 +323,9 @@ const spBalanceForm = {
 				target_party: suggestion.target_party || "",
 				target_account: suggestion.target_account,
 			});
+			for (const fieldname of this.DESTINATION_FIELDS) {
+				frm.refresh_field(fieldname);
+			}
 		} finally {
 			state.prefilling = false;
 		}
@@ -249,13 +343,20 @@ const spBalanceForm = {
 		state.summaryTimer = setTimeout(() => this.loadSummary(frm), this.DELAY);
 	},
 
-	// Only target_amount is written; target_rate is never touched.
+	// Only target_amount is written; target_rate is never touched. The server share is the truth.
 	async preview(frm) {
 		const state = this.state(frm);
 		const doc = frm.doc;
 		if (!this.isBalance(frm) || doc.docstatus !== 0 || !doc.company || !doc.target_currency) {
 			return;
 		}
+		const rate = Number(doc.target_rate);
+		if (doc.target_rate !== null && doc.target_rate !== "" && doc.target_rate !== undefined && !(rate > 0)) {
+			frm.set_df_property("target_rate", "description", this.MESSAGES.invalidRate);
+			frappe.show_alert({ message: this.MESSAGES.invalidRate, indicator: "orange" });
+			return;
+		}
+		frm.set_df_property("target_rate", "description", "");
 		const request = ++state.previewRequest;
 		const amounts = await frappe.xcall(spConversionLegs.method("receipt_conversion_api.preview_target_amounts"), {
 			company: doc.company,
@@ -268,8 +369,220 @@ const spBalanceForm = {
 		const value = spConversionLegs.previewValue(amounts?.total);
 		if ((frm.doc.target_amount ?? null) !== value) {
 			frm.doc.target_amount = value;
-			frm.refresh_field("target_amount");
+			this.refreshConversionValue(frm, "target_amount");
 		}
+	},
+
+	canRender(frm) {
+		return typeof $ !== "undefined" && Boolean(frm.fields_dict?.receiver_conversion_html?.$wrapper);
+	},
+
+	// Receipt-style pair of scrollable tables. Header Links stay the selectors.
+	renderLayout(frm) {
+		if (!this.canRender(frm)) {
+			return;
+		}
+		this.renderSourceTable(frm);
+		this.renderConversionTable(frm);
+		for (const fieldname of this.NUMBER_FIELDS) {
+			const control = frm.__sp_balance_ui?.controls?.[fieldname] || frm.fields_dict[fieldname];
+			spReceiptNumbers.prepare(frm, control, spConversionForm.numberOptions(frm));
+		}
+		this.refreshConversionValue(frm, "target_amount");
+	},
+
+	teardownLayout(frm) {
+		const ui = frm.__sp_balance_ui;
+		if (!ui) {
+			return;
+		}
+		for (const [fieldname, native] of Object.entries(ui.natives || {})) {
+			if (native) {
+				frm.fields_dict[fieldname] = native;
+			}
+		}
+		ui.source?.empty();
+		ui.conversion?.remove();
+		delete frm.__sp_balance_ui;
+	},
+
+	renderSourceTable(frm) {
+		const wrapper = frm.fields_dict.receiver_conversion_html?.$wrapper;
+		if (!wrapper) {
+			return;
+		}
+		frm.__sp_balance_ui = frm.__sp_balance_ui || { natives: {}, controls: {} };
+		if (!frm.__sp_balance_ui.source) {
+			frm.__sp_balance_ui.source = $("<div>").appendTo(wrapper.empty());
+			wrapper.on("click", "[data-sp-balance-fill]", () => this.fillMax(frm));
+		}
+		frm.__sp_balance_ui.source.html(this.sourceTableHtml(frm.doc, this.sourceOptions(frm)));
+	},
+
+	sourceOptions(frm) {
+		return {
+			editable: frm.doc.docstatus === 0,
+			format: (fieldname, doc) => {
+				if (fieldname === "balance_side") {
+					return frappe.utils.escape_html(this.BALANCE_SIDE_LABELS[doc.balance_side] || doc.balance_side || "—");
+				}
+				const df = frappe.meta.get_docfield(spConversionLegs.CONVERSION, fieldname, frm.docname);
+				return frappe.format(doc[fieldname], df, { inline: true }, doc) || "—";
+			},
+		};
+	},
+
+	sourceTableHtml(doc, { editable, format }) {
+		const escape = (text) => frappe.utils.escape_html(text ?? "");
+		const ready = this.SOURCE_FIELDS.every((fieldname) => doc[fieldname]);
+		if (!ready) {
+			return `<div class="text-muted small">${escape("پس از انتخاب طرف حساب و حساب مبدأ، مانده این بخش اینجا نمایش داده می‌شود.")}</div>`;
+		}
+		const heads = ["#", "طرف حساب", "حساب مبدأ", ...this.SOURCE_TABLE.map(([, label]) => label)];
+		const head = heads.map((label) => `<th>${escape(label)}</th>`).join("") + (editable ? "<th></th>" : "");
+		const party = doc.source_party || "—";
+		const amounts = this.SOURCE_TABLE.map(([fieldname]) => `<td class="text-right">${format(fieldname, doc)}</td>`);
+		const fill = editable
+			? `<td><button type="button" class="btn btn-xs btn-default" data-sp-balance-fill="1">${escape("کل مانده")}</button></td>`
+			: "";
+		const note = Number(doc.off_balance_conversion)
+			? `<div class="text-muted small">${escape(this.MESSAGES.overBalance)}</div>`
+			: this.differs(doc.as_of_balance, doc.max_convertible)
+				? `<div class="text-muted small">${escape(this.MESSAGES.partial)}</div>`
+				: "";
+		return `<div class="sp-conversion-scroll" style="overflow-x:auto" dir="rtl"><table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody><tr><td>1</td><td>${escape(party)}</td><td>${escape(doc.source_account)}</td>${amounts.join("")}${fill}</tr></tbody></table></div>${note}`;
+	},
+
+	conversionMarkup() {
+		const escape = (text) => frappe.utils.escape_html(text);
+		const cells = this.CONVERSION_TABLE.map(
+			([fieldname, label]) =>
+				`<div class="sp-balance-field" data-sp-balance-field="${escape(fieldname)}" style="flex:1 1 160px;min-width:140px"><div class="text-muted small">${escape(label)}</div></div>`,
+		).join("");
+		return `<div class="sp-balance-conversion" dir="rtl" style="display:flex;flex-wrap:wrap;gap:12px 16px">${cells}</div>`;
+	},
+
+	renderConversionTable(frm) {
+		if (frm.__sp_balance_ui?.conversion) {
+			this.restoreControlRefs(frm);
+			this.refreshConversionValue(frm, "target_amount");
+			return;
+		}
+		const wrapper = frm.fields_dict.payer_conversion_html?.$wrapper;
+		if (!wrapper || typeof frappe.ui?.form?.make_control !== "function") {
+			return;
+		}
+		const ui = (frm.__sp_balance_ui = frm.__sp_balance_ui || { natives: {}, controls: {} });
+		const host = $(this.conversionMarkup());
+		for (const [fieldname] of this.CONVERSION_TABLE) {
+			const cell = host.find(`[data-sp-balance-field="${fieldname}"]`);
+			ui.natives[fieldname] = frm.fields_dict[fieldname];
+			const native = frappe.meta.get_docfield(spConversionLegs.CONVERSION, fieldname, frm.docname) || {};
+			const readOnly = frm.doc.docstatus > 0 || fieldname === "target_amount" || native.read_only;
+			const control = frappe.ui.form.make_control({
+				df: {
+					...native,
+					fieldname,
+					label: "",
+					hidden: 0,
+					reqd: 0,
+					read_only: 0,
+				},
+				parent: cell,
+				frm,
+				doc: frm.doc,
+				doctype: frm.doctype,
+				docname: frm.docname,
+				only_input: true,
+				render_input: true,
+			});
+			control.df.read_only = readOnly;
+			if (readOnly) {
+				control.$input?.prop({ disabled: true, readOnly: true });
+			}
+			frm.fields_dict[fieldname] = control;
+			this.bindConversionControl(frm, control, fieldname);
+			control.$wrapper.css({ margin: 0, maxWidth: "none" }).find(".clearfix, .help, .tooltip-content").hide();
+			control.$wrapper.find(".form-group").css({ margin: 0 });
+			ui.controls[fieldname] = control;
+			this.writeControlValue(control, frm.doc[fieldname]);
+		}
+		wrapper.empty().append(host);
+		ui.conversion = host;
+	},
+
+	restoreControlRefs(frm) {
+		for (const [fieldname, control] of Object.entries(frm.__sp_balance_ui?.controls || {})) {
+			frm.fields_dict[fieldname] = control;
+			control.doc = frm.doc;
+			control.frm = frm;
+			control.docname = frm.docname;
+		}
+	},
+
+	// Read-only Currency.refresh() clears only_input values; write the formatted value directly.
+	refreshConversionValue(frm, fieldname) {
+		const control = frm.__sp_balance_ui?.controls?.[fieldname];
+		if (!control) {
+			return;
+		}
+		control.doc = frm.doc;
+		control.frm = frm;
+		control.docname = frm.docname;
+		this.writeControlValue(control, frm.doc[fieldname]);
+	},
+
+	writeControlValue(control, value) {
+		control.value = value ?? null;
+		if (typeof control.set_formatted_input === "function") {
+			control.set_formatted_input(control.value);
+			return;
+		}
+		if (control.$input) {
+			control.$input.val(control.value ?? "");
+		}
+	},
+
+	bindConversionControl(frm, control, fieldname) {
+		if (!this.NUMBER_FIELDS.includes(fieldname)) {
+			return;
+		}
+		const changed = () => {
+			this.syncFromControl(frm, control, fieldname);
+			this.showDifference(frm);
+			this.preview(frm);
+		};
+		control.df.onchange = changed;
+		control.df.change = changed;
+		control.$input?.off(".spBalancePreview").on("change.spBalancePreview input.spBalancePreview blur.spBalancePreview", changed);
+	},
+
+	syncFromControl(frm, control, fieldname) {
+		if (!control || frm.doc.docstatus > 0) {
+			return;
+		}
+		try {
+			const raw = typeof control.get_input_value === "function" ? control.get_input_value() : control.$input?.val?.();
+			const parsed = typeof control.parse === "function" ? control.parse(raw) : raw;
+			if (parsed === undefined) {
+				return;
+			}
+			if ((frm.doc[fieldname] ?? null) !== parsed) {
+				frm.doc[fieldname] = parsed;
+			}
+			control.value = parsed;
+		} catch (error) {
+			return;
+		}
+	},
+
+	offBalanceChanged(frm) {
+		if (!Number(frm.doc.off_balance_conversion) && frm.doc.off_balance_side) {
+			frm.doc.off_balance_side = "";
+			frm.refresh_field("off_balance_side");
+		}
+		this.showDifference(frm);
+		this.renderSourceTable(frm);
 	},
 };
 

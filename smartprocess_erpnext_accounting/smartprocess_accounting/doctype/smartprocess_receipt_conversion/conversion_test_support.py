@@ -199,8 +199,8 @@ class ConversionFixtures(AccountingFixtureTestCase):
 				"general_reference": frappe.generate_hash(length=10),
 				"receipt_payer_currency": self.base,
 				"receipt_credit_currency": payer_currency,
-				"receipt_receiver_kind": "بانک",
-				"receipt_bank_account": self.bank.name,
+				"receipt_receiver_kind": "سایر حساب‌ها",
+				"receipt_payer_account": self.generic_account(self.base),
 				"operational_pairs": pairs,
 			}
 		)

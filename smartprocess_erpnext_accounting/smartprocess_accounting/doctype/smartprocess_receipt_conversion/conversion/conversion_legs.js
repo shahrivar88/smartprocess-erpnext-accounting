@@ -44,6 +44,22 @@ const spConversionLegs = {
 		return `${leg.source_pair}|${leg.source_side}`;
 	},
 
+	keys(legs) {
+		return new Set((legs || []).map((leg) => this.key(leg)));
+	},
+
+	// Only missing Receipt sides that still have convertible remaining. Fully
+	// converted sides stay on the form if the user already loaded them.
+	restorable(existing, fresh) {
+		const present = this.keys(existing);
+		return (fresh || []).filter((leg) => {
+			if (!leg.source_pair || !this.SIDE_LABELS[leg.source_side] || present.has(this.key(leg))) {
+				return false;
+			}
+			return Number(leg.remaining_amount) > 0;
+		});
+	},
+
 	// Fresh server legs for the selected currency. Only the Conversion Amount of
 	// a still-offered side carries over; targets, rates and amounts start again.
 	mergeLegs(existing, fresh, targetCurrency) {

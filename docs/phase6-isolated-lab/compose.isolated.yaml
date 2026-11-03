@@ -1,0 +1,143 @@
+# Isolated Phase 6 lab. Project name must stay smartprocess-accounting-lab.
+# Never include this file from finance-mgmt. Never join erpnext_default.
+# Images are local-only (pull_policy: never). Bind host port to 127.0.0.1.
+
+name: smartprocess-accounting-lab
+
+x-lab-image: &lab_image
+  image: smartprocess/erpnext:v16.52.1-official-apps.1
+  pull_policy: never
+  platform: linux/amd64
+  restart: "no"
+  extra_hosts:
+    - "lab.localhost:127.0.0.1"
+  environment:
+    PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+  volumes:
+    - lab-sites:/home/frappe/frappe-bench/sites
+    - type: bind
+      source: C:/Users/shahr/Documents/ChatGPT/New project/smartprocess-erpnext-accounting
+      target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+      read_only: true
+    - type: bind
+      source: C:/Users/shahr/Documents/ChatGPT/New project/smartprocess-erpnext-accounting/docs/phase6-isolated-lab/hooks.lab.py
+      target: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting/smartprocess_erpnext_accounting/hooks.py
+      read_only: true
+  networks:
+    - lab-net
+
+services:
+  lab-db:
+    image: mariadb:11.8
+    pull_policy: never
+    container_name: smartprocess-accounting-lab-db
+    restart: "no"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-lock-wait-timeout=5
+      - --transaction-isolation=REPEATABLE-READ
+    environment:
+      MYSQL_ROOT_PASSWORD: lab-only-not-a-secret
+      MARIADB_AUTO_UPGRADE: 1
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - lab-db-data:/var/lib/mysql
+    networks:
+      - lab-net
+    mem_limit: 512m
+
+  lab-redis-cache:
+    image: redis:8.6-alpine
+    pull_policy: never
+    container_name: smartprocess-accounting-lab-redis-cache
+    restart: "no"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - lab-net
+    mem_limit: 64m
+
+  lab-redis-queue:
+    image: redis:8.6-alpine
+    pull_policy: never
+    container_name: smartprocess-accounting-lab-redis-queue
+    restart: "no"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    volumes:
+      - lab-redis-queue-data:/data
+    networks:
+      - lab-net
+    mem_limit: 64m
+
+  lab-configurator:
+    <<: *lab_image
+    container_name: smartprocess-accounting-lab-configurator
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host lab-db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache "redis://lab-redis-cache:6379";
+        bench set-config -g redis_queue "redis://lab-redis-queue:6379";
+        bench set-config -g redis_socketio "redis://lab-redis-queue:6379";
+        bench set-config -gp socketio_port 9000;
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+      DB_HOST: lab-db
+      DB_PORT: "3306"
+      REDIS_CACHE: lab-redis-cache:6379
+      REDIS_QUEUE: lab-redis-queue:6379
+    depends_on:
+      lab-db:
+        condition: service_healthy
+      lab-redis-cache:
+        condition: service_started
+      lab-redis-queue:
+        condition: service_started
+    mem_limit: 512m
+
+  lab-backend:
+    <<: *lab_image
+    container_name: smartprocess-accounting-lab-backend
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+      GUNICORN_WORKERS: "1"
+      GUNICORN_THREADS: "2"
+      GUNICORN_TIMEOUT: "120"
+    depends_on:
+      lab-configurator:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18080:8000"
+    mem_limit: 768m
+
+  lab-queue-long:
+    <<: *lab_image
+    container_name: smartprocess-accounting-lab-queue-long
+    command: bench worker --queue long,default,short
+    environment:
+      PYTHONPATH: /home/frappe/frappe-bench/apps/smartprocess_erpnext_accounting
+    depends_on:
+      lab-configurator:
+        condition: service_completed_successfully
+    mem_limit: 384m
+
+volumes:
+  lab-db-data:
+    name: smartprocess-accounting-lab-db-data
+  lab-sites:
+    name: smartprocess-accounting-lab-sites
+  lab-redis-queue-data:
+    name: smartprocess-accounting-lab-redis-queue-data
+
+networks:
+  lab-net:
+    name: smartprocess-accounting-lab-net
+    driver: bridge

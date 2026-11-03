@@ -51,6 +51,24 @@ class TestPostingLineAgainstReference(unittest.TestCase):
 			_make_gl_entry(_GLDictDoc(), _line(against_voucher="SP-POST-X"))
 
 
+class TestConversionStatusOnRead(unittest.TestCase):
+	def test_missing_posting_unit_ledger_does_not_fail_status_read(self):
+		receipt = frappe._dict(name="RR-READ", company="Co")
+		related = {"linked_count": 0, "active_count": 0, "names": []}
+		with patch.object(receipt_conversion_api, "load_source_receipt", return_value=receipt):
+			with patch.object(receipt_conversion_api, "related_conversions", return_value=related):
+				with patch.object(receipt_conversion_api, "get_company_currency", return_value="IRR"):
+					with patch.object(
+						receipt_conversion_api,
+						"_company_currency_sources",
+						side_effect=frappe.ValidationError(
+							"Receipt row 1 needs exactly one active debit ledger line; found 0."
+						),
+					):
+						result = get_receipt_conversion_status("RR-READ")
+		self.assertEqual(result, {"status": None, **related})
+
+
 class TestSourceConsumptionBounds(unittest.TestCase):
 	def test_consumption_outside_the_source_is_reported_not_clamped(self):
 		source = SourceLeg("REC", "POST", "PAIR", 1, "Payer", "Co", "2026-10-06", "AR", "XBA", None, None, HUNDRED_M)
@@ -72,7 +90,7 @@ class TestReceiptConversion(ConversionFixtures):
 		self.assertEqual(Decimal(str(payer.conversion_amount)), 0)
 		rows = self.gl(conversion)
 		self.assertEqual({row.voucher_detail_no for row in rows}, {receiver.name})
-		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertPair(conversion, receiver, (self.generic_account(self.base), "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
 		self.assertEqual({receipt.name in row.remarks for row in rows}, {True}, "narration names the source Receipt")
 
 	def test_receiver_full_payer_half_posts_two_independent_pairs(self):
@@ -80,7 +98,7 @@ class TestReceiptConversion(ConversionFixtures):
 		conversion = self.convert(receipt, receiver=HUNDRED_M, payer="50000000")
 		receiver, payer = self.legs(conversion)
 		self.assertEqual(len(self.gl(conversion)), 4)
-		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertPair(conversion, receiver, (self.generic_account(self.base), "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
 		self.assertPair(conversion, payer, (self.receivable, "debit", "50000000"), (self.target_receivable, "credit", "555.56"))
 
 	def test_receiver_full_payer_full_consumes_both_sides(self):
@@ -95,7 +113,7 @@ class TestReceiptConversion(ConversionFixtures):
 		receipt = self.submitted_receipt()
 		conversion = self.convert(receipt, receiver=HUNDRED_M, payer=HUNDRED_M, payer_rate="92000")
 		receiver, payer = self.legs(conversion)
-		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertPair(conversion, receiver, (self.generic_account(self.base), "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
 		self.assertPair(conversion, payer, (self.receivable, "debit", HUNDRED_M), (self.target_receivable, "credit", "1086.96"))
 		self.assertEqual((Decimal(str(receiver.target_rate)), Decimal(str(payer.target_rate))), (Decimal("90000"), Decimal("92000")))
 
@@ -168,7 +186,7 @@ class TestReceiptConversion(ConversionFixtures):
 		self.assertEqual((Decimal(str(receiver.conversion_amount)), Decimal(str(payer.conversion_amount))), (HUNDRED_M, Decimal("45000000")))
 		self.assertEqual((receiver.target_account, payer.target_account), (self.target_receiver, self.target_receivable))
 		self.assertEqual((payer.target_party_type, payer.target_party), ("Customer", self.target_customer))
-		self.assertPair(conversion, receiver, (self.bank.account, "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+		self.assertPair(conversion, receiver, (self.generic_account(self.base), "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
 		self.assertPair(conversion, payer, (self.receivable, "debit", "45000000"), (self.target_receivable, "credit", "500"))
 		conversion.cancel()
 		self.assertEqual(self.gl(conversion), [])
@@ -459,13 +477,77 @@ class TestReceiptConversion(ConversionFixtures):
 		self.assertEqual((picture.as_of_balance, picture.max_convertible), (Decimal("-150000000"), HUNDRED_M))
 		native = self.balance_source(picture, journal)
 		self.assertEqual((native.item.voucher_type, native.convertible), ("Journal Entry", 0))
-		self.assertIn("Only SmartProcess Receipt postings", native.reason)
+		self.assertIn("Only SmartProcess Receipt and Payment postings", native.reason)
 		self.convert(receipt, payer="40000000")
 		self.simulate_balance_consumption(receipt, payer="30000000")
 		picture = balance_conversion_sources(self.company, "Customer", customer, self.receivable)
 		self.assertEqual((picture.as_of_balance, picture.max_convertible), (Decimal("-80000000"), Decimal("30000000")))
 		with self.assertRaisesRegex(frappe.ValidationError, "only today's posting date"):
 			balance_conversion_sources(self.company, "Customer", customer, self.receivable, add_days(nowdate(), -1))
+
+	def test_omitted_side_does_not_touch_receipt_or_remaining(self):
+		receipt = self.submitted_receipt()
+		receipt_gl = frappe.db.count("GL Entry", {"voucher_type": RECEIPT, "voucher_no": receipt.name, "is_cancelled": 0})
+		doc = self.draft(receipt, receiver=HUNDRED_M)
+		doc.remove(self.legs(doc)[1])
+		conversion = doc.insert()
+		conversion.submit()
+		self.assertEqual([leg.source_side for leg in self.legs(conversion)], ["Receiver"])
+		self.assertEqual(self.remaining(receipt), {"Receiver": 0, "Payer": HUNDRED_M})
+		self.assertEqual(frappe.db.get_value(RECEIPT, receipt.name, "docstatus"), 1)
+		self.assertEqual(
+			frappe.db.count("GL Entry", {"voucher_type": RECEIPT, "voucher_no": receipt.name, "is_cancelled": 0}),
+			receipt_gl,
+		)
+		self.assertPair(conversion, self.legs(conversion)[0], (self.generic_account(self.base), "credit", HUNDRED_M), (self.target_receiver, "debit", "1111.11"))
+
+	def test_omitted_leg_can_be_restored_from_source_without_duplicate(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, receiver=HUNDRED_M)
+		doc.remove(self.legs(doc)[1])
+		doc.insert()
+		payer = next(leg for leg in get_conversion_legs(receipt.name, self.target)["legs"] if leg["source_side"] == "Payer")
+		doc.append("legs", payer)
+		self.legs(doc)[1].update(
+			{
+				"conversion_amount": "50000000",
+				"target_account": self.target_receivable,
+				"target_party_type": "Customer",
+				"target_party": self.target_customer,
+				"target_rate": "90000",
+			}
+		)
+		doc.save()
+		self.assertEqual([leg.source_side for leg in self.legs(doc)], ["Receiver", "Payer"])
+		self.assertEqual(self.remaining(receipt), {"Receiver": HUNDRED_M, "Payer": HUNDRED_M})
+		doc.append("legs", {"source_pair": payer["source_pair"], "source_side": "Payer"})
+		with self.assertRaisesRegex(frappe.ValidationError, "already appears"):
+			doc.save()
+		doc.reload()
+		doc.submit()
+		self.assertEqual(self.remaining(receipt), {"Receiver": 0, "Payer": Decimal("50000000")})
+		self.assertEqual(frappe.db.get_value(RECEIPT, receipt.name, "docstatus"), 1)
+
+	def test_all_legs_removed_cannot_be_saved(self):
+		receipt = self.submitted_receipt()
+		doc = self.draft(receipt, receiver=HUNDRED_M)
+		for leg in list(doc.legs):
+			doc.remove(leg)
+		with self.assertRaisesRegex(frappe.ValidationError, "At least one Conversion Leg"):
+			doc.insert()
+		self.assertEqual(frappe.db.count(CONVERSION, {"source_receipt": receipt.name}), 0)
+		self.assertEqual(self.remaining(receipt), {"Receiver": HUNDRED_M, "Payer": HUNDRED_M})
+
+	def test_submitted_conversion_cannot_drop_a_leg(self):
+		receipt = self.submitted_receipt()
+		conversion = self.convert(receipt, receiver=HUNDRED_M, payer="50000000")
+		conversion.reload()
+		conversion.remove(self.legs(conversion)[1])
+		with self.assertRaises(frappe.ValidationError):
+			conversion.save()
+		stored = frappe.get_doc(CONVERSION, conversion.name)
+		self.assertEqual([leg.source_side for leg in self.legs(stored)], ["Receiver", "Payer"])
+		self.assertEqual(self.remaining(receipt), {"Receiver": 0, "Payer": Decimal("50000000")})
 
 	def assertConsumption(self, receipt, side, *, converted):
 		pair = receipt.operational_pairs[0].name

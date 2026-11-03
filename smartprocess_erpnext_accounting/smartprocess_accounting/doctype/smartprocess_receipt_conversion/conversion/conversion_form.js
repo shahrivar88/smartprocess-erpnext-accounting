@@ -21,6 +21,9 @@ const spConversionForm = {
 		foreignSides:
 			"این رسید سمت ارزی هم دارد. فقط ردیف‌های با ارز پایه شرکت برای تبدیل در این مرحله نمایش داده می‌شوند.",
 		allZero: "حداقل یک ردیف باید «مبلغ این تبدیل» بزرگ‌تر از صفر داشته باشد.",
+		restore: "بازگرداندن ردیف‌های رسید",
+		restoreNone: "ردیفی برای بازگرداندن نیست.",
+		noRemaining: "مانده قابل تبدیل این ردیف صفر است.",
 	},
 
 	// One state per loaded document; frm is reused across documents.
@@ -36,7 +39,12 @@ const spConversionForm = {
 				loadRequest: 0,
 				previewRequest: 0,
 				noteRequest: 0,
+				sourceRequest: 0,
 				numberSettings: null,
+				// After the first successful load, an empty table means the user omitted
+				// every row. Refresh must not fetch the Receipt sides again.
+				loaded: false,
+				sources: [],
 			};
 		}
 		return frm.__sp_conversion;
@@ -63,9 +71,10 @@ const spConversionForm = {
 
 	async refresh(frm) {
 		const state = this.state(frm);
-		// Legs come only from the server; a zero leg stays visible instead of being removed.
-		frm.set_df_property(spConversionLegs.TABLE, "cannot_add_rows", 1);
-		frm.set_df_property(spConversionLegs.TABLE, "cannot_delete_rows", 1);
+		// New rows still come from the Receipt. Draft may omit a loaded side; boolean
+		// `true` keeps Frappe Grid from toggling the Add button back on.
+		frm.set_df_property(spConversionLegs.TABLE, "cannot_add_rows", true);
+		frm.set_df_property(spConversionLegs.TABLE, "cannot_delete_rows", frm.doc.docstatus > 0);
 		if (this.applyFormatters(frm)) {
 			frm.refresh_field(spConversionLegs.TABLE);
 		}
@@ -76,11 +85,18 @@ const spConversionForm = {
 			this.prepareNewDoc(frm, state);
 		}
 		spConversionSides.refresh(frm);
-		if (this.canLoad(frm) && !this.rows(frm).length) {
+		if (this.rows(frm).length) {
+			// A reopened Draft already has the user's omitted set; do not rebuild legs.
+			state.loaded = true;
+			if (this.canLoad(frm)) {
+				await this.loadSources(frm);
+			} else {
+				await this.loadReceiptNote(frm);
+			}
+		} else if (this.canLoad(frm) && !state.loaded) {
 			await this.loadLegs(frm);
-		} else if (this.rows(frm).length) {
-			await this.loadReceiptNote(frm);
 		}
+		this.removeRestoreButton(frm);
 	},
 
 	numberOptions(frm) {
@@ -115,6 +131,7 @@ const spConversionForm = {
 		}
 		const state = this.state(frm);
 		state.touched.clear();
+		state.loaded = false;
 		state.loadRequest++;
 		this.showReceiptNote(frm, "");
 		frm.clear_table(spConversionLegs.TABLE);
@@ -192,29 +209,115 @@ const spConversionForm = {
 
 	async loadLegs(frm) {
 		const state = this.state(frm);
+		const docname = frm.docname;
 		const request = ++state.loadRequest;
 		const response = await frappe.xcall(spConversionLegs.method("receipt_conversion_api.get_conversion_legs"), {
 			source_receipt: frm.doc.source_receipt,
 			target_currency: frm.doc.target_currency || null,
 		});
-		if (request !== state.loadRequest || state.doc !== frm.doc) {
+		if (request !== state.loadRequest || frm.docname !== docname) {
 			return;
 		}
 		this.showReceiptNote(frm, response?.error || (response?.foreign_sides > 0 ? this.MESSAGES.foreignSides : ""));
 		await this.adoptCompany(frm, state, response?.company);
-		this.rememberTitles(response?.titles);
-		const rows = spConversionLegs.mergeLegs(this.rows(frm), response?.legs, frm.doc.target_currency);
+		this.rememberSources(frm, response);
+		const existing = this.rows(frm);
+		let rows = spConversionLegs.mergeLegs(existing, response?.legs, frm.doc.target_currency);
+		if (state.loaded) {
+			const keep = spConversionLegs.keys(existing);
+			rows = rows.filter((leg) => keep.has(spConversionLegs.key(leg)));
+		}
+		if (!response?.error) {
+			state.loaded = true;
+		}
 		frm.clear_table(spConversionLegs.TABLE);
 		for (const row of rows) {
 			frm.add_child(spConversionLegs.TABLE, row);
 		}
 		this.applyFormatters(frm);
 		this.refreshLegs(frm);
+		this.removeRestoreButton(frm);
 		if (!rows.length && !response?.error) {
 			frappe.show_alert({ message: this.MESSAGES.noLegs, indicator: "orange" });
 		}
 		await spCommonRate.apply(frm);
 		this.schedulePreview(frm);
+	},
+
+	removeRestoreButton(frm) {
+		if (typeof frm.remove_custom_button === "function") {
+			frm.remove_custom_button(this.MESSAGES.restore);
+		}
+	},
+
+	// Fresh server remaining for one Receipt side. Draft only; never trusts the grid.
+	async fillSource(frm, sourceKey) {
+		if (frm.doc.docstatus !== 0 || !this.canLoad(frm) || !sourceKey) {
+			return;
+		}
+		const docname = frm.docname;
+		const response = await frappe.xcall(spConversionLegs.method("receipt_conversion_api.get_conversion_legs"), {
+			source_receipt: frm.doc.source_receipt,
+			target_currency: frm.doc.target_currency || null,
+		});
+		if (frm.docname !== docname || !this.canLoad(frm)) {
+			return;
+		}
+		this.showReceiptNote(frm, response?.error || (response?.foreign_sides > 0 ? this.MESSAGES.foreignSides : ""));
+		this.rememberSources(frm, response);
+		const server = (response?.legs || []).find((leg) => spConversionLegs.key(leg) === sourceKey);
+		const remaining = Number(server?.remaining_amount) || 0;
+		let row = this.rows(frm).find((leg) => spConversionLegs.key(leg) === sourceKey);
+		if (!server || remaining <= 0) {
+			if (!row) {
+				frappe.show_alert({ message: this.MESSAGES.noRemaining, indicator: "blue" });
+			} else if (server) {
+				this.applySourceFields(row, server);
+				await frappe.model.set_value(row.doctype, row.name, "conversion_amount", 0);
+			}
+			this.refreshLegs(frm);
+			return;
+		}
+		if (!row) {
+			row = frm.add_child(spConversionLegs.TABLE, spConversionLegs.mergeLegs([], [server], frm.doc.target_currency)[0]);
+		} else {
+			this.applySourceFields(row, server);
+		}
+		this.state(frm).loaded = true;
+		await frappe.model.set_value(row.doctype, row.name, "conversion_amount", remaining);
+		this.applyFormatters(frm);
+		this.refreshLegs(frm);
+		await spCommonRate.apply(frm);
+		this.schedulePreview(frm);
+	},
+
+	async loadSources(frm) {
+		const state = this.state(frm);
+		const docname = frm.docname;
+		const request = ++state.sourceRequest;
+		const response = await frappe.xcall(spConversionLegs.method("receipt_conversion_api.get_conversion_legs"), {
+			source_receipt: frm.doc.source_receipt,
+			target_currency: frm.doc.target_currency || null,
+		});
+		if (request !== state.sourceRequest || frm.docname !== docname) {
+			return;
+		}
+		this.showReceiptNote(frm, response?.error || (response?.foreign_sides > 0 ? this.MESSAGES.foreignSides : ""));
+		this.rememberSources(frm, response);
+		spConversionSides.refresh(frm);
+	},
+
+	rememberSources(frm, response) {
+		this.state(frm).sources = response?.error ? [] : response?.legs || [];
+		this.rememberTitles(response?.titles);
+	},
+
+	applySourceFields(row, server) {
+		for (const fieldname of spConversionLegs.SOURCE_FIELDS) {
+			if (server[fieldname] !== null && server[fieldname] !== undefined) {
+				row[fieldname] = server[fieldname];
+			}
+		}
 	},
 
 	// The Conversion always belongs to the Company of its source Receipt.
@@ -229,11 +332,8 @@ const spConversionForm = {
 	},
 
 	fillRemaining(frm, cdt, cdn) {
-		if (frm.doc.docstatus !== 0) {
-			return;
-		}
-		const row = frappe.get_doc(cdt, cdn);
-		return frappe.model.set_value(cdt, cdn, "conversion_amount", row.remaining_amount || 0);
+		const row = typeof frappe.get_doc === "function" ? frappe.get_doc(cdt, cdn) : null;
+		return this.fillSource(frm, row ? spConversionLegs.key(row) : cdn);
 	},
 
 	targetTouched(frm, cdt, cdn) {

@@ -59,8 +59,11 @@ These paths reject new writes. Their tables stay in place.
 | File | Role |
 |---|---|
 | `docs/CURRENT.md` | Current product map |
+| `docs/handoff/` | Agent transfer pack (status, UI OPEN bugs, test recipes) |
 | `docs/v2/` | Design contracts still in force, with status notes |
 | `docs/archive/` | Cancelled proofs and obsolete drafts |
 | `docs/ROLLBACK.md` | Uninstall and restore |
 | `docs/v2/MIGRATION_AND_ROLLBACK.md` | Migration policy |
 | `docs/cross-app-impact-standard.md` | Cross-app settings contract |
+
+For the next agent: start at `docs/handoff/NEXT_AGENT_INSTRUCTIONS.md`. Balance UI OPEN items in `docs/handoff/UI_DESIGN_AND_BUGS.md` override older PASS claims.

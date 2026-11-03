@@ -64,17 +64,23 @@ def get_receipt_conversion_status(source_receipt: str) -> dict:
 	"""Read-only status derived from the posted ledger on every call; nothing is stored.
 
 	Every Company-currency Receipt side counts on its own, so one fully converted side
-	next to an unconverted one is a partial conversion.
+	next to an unconverted one is a partial conversion. Form load must not raise: a
+	Receipt posted through Payment Entry has no posting-unit GL for this lookup.
 	"""
 	receipt = load_source_receipt(source_receipt)
-	company_currency = get_company_currency(receipt.company)
-	balances = [
-		(consumption.original, consumption.converted)
-		for consumption in map(source_consumption, _company_currency_sources(receipt.name, company_currency))
-	]
+	related = related_conversions(receipt.name)
+	try:
+		company_currency = get_company_currency(receipt.company)
+		balances = [
+			(consumption.original, consumption.converted)
+			for consumption in map(source_consumption, _company_currency_sources(receipt.name, company_currency))
+		]
+	except frappe.ValidationError:
+		frappe.clear_messages()
+		return {"status": None, **related}
 	return {
 		"status": conversion_status(balances),
-		**related_conversions(receipt.name),
+		**related,
 	}
 
 
@@ -102,7 +108,10 @@ def get_conversion_legs(source_receipt: str, target_currency: str | None = None)
 	except frappe.ValidationError as error:
 		frappe.clear_messages()
 		return {"error": str(error), "legs": [], "titles": {}}
-	legs = [leg.as_dict(no_default_fields=True) for leg in doc.legs]
+	legs = [
+		leg.as_dict(no_default_fields=True, no_child_table_fields=True, no_private_properties=True)
+		for leg in doc.legs
+	]
 	every_side = 2 * len(receipt_pair_names(doc.source_receipt))
 	return {
 		"company": doc.company,

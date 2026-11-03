@@ -20,6 +20,7 @@ CONVERSION_DOCTYPE = "SmartProcess Receipt Conversion"
 LEG_DOCTYPE = "SmartProcess Receipt Conversion Leg"
 RECEIPT_MODE = "Receipt"
 BALANCE_MODE = "Balance"
+OFF_BALANCE_PAIR = "off-balance"
 
 RECEIVER = "Receiver"
 PAYER = "Payer"
@@ -70,7 +71,7 @@ def lock_source_receipt(name: str) -> None:
 	"""Serialize every Conversion submit and Receipt cancel on the same Receipt."""
 	docstatus = frappe.db.get_value(RECEIPT_DOCTYPE, name, "docstatus", for_update=True)
 	if cint(docstatus) != 1:
-		frappe.throw(_("Source Receipt {0} must be submitted.").format(name))
+		frappe.throw(_("Source document {0} must be submitted.").format(name))
 
 
 def receipt_pair_names(receipt: str) -> list[str]:

@@ -77,8 +77,8 @@ class LegPosting:
 			amount=self.base_amount,
 			exchange_rate=Decimal("1"),
 			against=leg.target_account,
-			against_voucher_type=POSTING_DOCTYPE,
-			against_voucher=source.posting,
+			against_voucher_type=POSTING_DOCTYPE if source.posting else None,
+			against_voucher=source.posting or None,
 		)
 		target = PostingLine(
 			**common,
@@ -96,6 +96,10 @@ class LegPosting:
 	def narration(self, doc) -> str:
 		"""Default GL remarks naming the real source: one Receipt row, or one allocation of a Party balance."""
 		source = self.source
+		if doc.conversion_mode == BALANCE_MODE and not source.posting:
+			return _("Off-balance Conversion of {0} {1} · {2} · {3}").format(
+				_(source.party_type), source.party, source.account, _(source.side)
+			)
 		if doc.conversion_mode == BALANCE_MODE:
 			return _("Balance Conversion of {0} {1} · {2} · Source {3} Row {4} · {5}").format(
 				_(source.party_type), source.party, source.account, source.posting, source.pair_index, _(source.side)

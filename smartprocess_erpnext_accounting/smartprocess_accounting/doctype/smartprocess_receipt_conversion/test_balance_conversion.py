@@ -101,17 +101,16 @@ class TestBalanceConversion(ConversionFixtures):
 		frappe.set_user("Guest")
 		self.assertEqual(related_conversions(receipt.name), {"linked_count": 0, "active_count": 0, "names": []})
 
-	def test_payment_postings_are_never_a_conversion_source(self):
+	def test_payment_posting_is_convertible_like_a_receipt(self):
 		payment = self.debit_payment("40000000")
 		picture = self.picture()
-		self.assertEqual((picture.side, picture.max_convertible), ("debit", 0))
+		self.assertEqual((picture.side, picture.max_convertible), ("debit", D("40000000")))
 		(source,) = picture.sources
-		self.assertEqual((source.item.voucher_no, source.source), (self.source_posting(payment), None))
-		self.assertEqual((source.convertible, bool(source.reason)), (0, True))
-		receipt = self.debit_receipt(HUNDRED_M)
-		self.assertPicture(balance="140000000", maximum=HUNDRED_M)
-		conversion = self.balance(HUNDRED_M)
-		self.assertEqual({leg.source_posting for leg in conversion.legs}, {self.source_posting(receipt)})
+		self.assertEqual((source.item.voucher_no, source.convertible), (self.source_posting(payment), D("40000000")))
+		conversion = self.balance("40000000")
+		self.assertEqual({leg.source_posting for leg in conversion.legs}, {self.source_posting(payment)})
+		self.assertLeg(conversion, conversion.legs[0], (self.receivable, "credit", "40000000"), (self.target_receivable, "debit", "444.44"))
+		self.assertPicture(balance=0, maximum=0)
 
 	def test_fifo_follows_posting_date_before_creation(self):
 		newer = self.credit_receipt("50000000")
@@ -252,6 +251,40 @@ class TestBalanceConversion(ConversionFixtures):
 			with self.subTest(hidden), patch.object(frappe, "has_permission", side_effect=deny):
 				with self.assertRaises(frappe.PermissionError):
 					self.summary()
+
+	def test_off_balance_posts_without_consuming_open_items(self):
+		receipt = self.credit_receipt(HUNDRED_M)
+		conversion = self.balance("150000000", off_balance_conversion=1, off_balance_side="Debit")
+		(leg,) = conversion.legs
+		self.assertEqual((leg.source_pair, leg.source_posting, leg.source_side), ("off-balance", None, "Receiver"))
+		rows = [row for row in self.gl(conversion) if row.voucher_detail_no == leg.name]
+		source_row = next(row for row in rows if row.account == self.receivable)
+		target_row = next(row for row in rows if row.account == self.target_receivable)
+		self.assertEqual((source_row.credit, source_row.against_voucher_type, source_row.against_voucher), (D("150000000"), None, None))
+		self.assertEqual((target_row.debit, target_row.against_voucher_type, target_row.against_voucher), (D("150000000"), None, None))
+		self.assertTrue(all(row.against_voucher_type != POSTING for row in self.ple(conversion)))
+		self.assertEqual(self.converted(receipt), 0)
+		conversion.cancel()
+		self.assertFalse(self.gl(conversion))
+		self.assertPicture(balance=HUNDRED_M, maximum=HUNDRED_M)
+
+	def test_off_balance_opposite_side_does_not_consume_receipt(self):
+		receipt = self.credit_receipt(HUNDRED_M)
+		conversion = self.balance("30000000", off_balance_conversion=1, off_balance_side="Credit")
+		source_row = next(row for row in self.gl(conversion) if row.account == self.receivable)
+		self.assertEqual((source_row.debit, source_row.against_voucher), (D("30000000"), None))
+		self.assertEqual(self.converted(receipt), 0)
+		self.assertPicture(balance="70000000", maximum="70000000")
+
+	def test_off_balance_credit_and_zero_source_are_allowed(self):
+		conversion = self.balance("10000000", off_balance_conversion=1, off_balance_side="Credit")
+		(leg,) = conversion.legs
+		self.assertEqual(leg.source_side, "Payer")
+		source_row = next(row for row in self.gl(conversion) if row.account == self.receivable)
+		target_row = next(row for row in self.gl(conversion) if row.account == self.target_receivable)
+		self.assertEqual((source_row.debit, target_row.credit), (D("10000000"), D("10000000")))
+		self.assertEqual((source_row.against_voucher, target_row.against_voucher), (None, None))
+		self.assertPicture(balance="10000000", maximum=0)
 
 	def balance(self, amount, *, rate="90000", submit=True, **values):
 		doc = frappe.get_doc(

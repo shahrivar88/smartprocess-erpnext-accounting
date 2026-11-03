@@ -13,6 +13,7 @@ from decimal import Decimal
 import frappe
 from frappe import _
 from frappe.model.naming import set_new_name
+from frappe.utils import cint
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import (
 	BalanceSource,
@@ -28,12 +29,19 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion 
 	validate_target,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
+	OFF_BALANCE_PAIR,
+	PAYER,
+	RECEIVER,
+	SourceLeg,
 	lock_source_receipt,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import (
 	assert_one_currency_per_party,
 	get_company_currency,
+	validate_account,
+	validate_party,
+	validate_party_ledger_currency,
 )
 
 BALANCE_SIDE = {"debit": "Debit", "credit": "Credit"}
@@ -50,7 +58,7 @@ class BalanceConversionService:
 		doc = self.doc
 		doc.source_receipt = None
 		self._validate_header()
-		picture = self._locked_picture() if for_submit else self._picture()
+		picture = self._display_picture() if self.is_off_balance() else self._locked_picture() if for_submit else self._picture()
 		self._show(picture)
 		amount = self._conversion_amount(picture)
 		rate = self._target_rate()
@@ -62,7 +70,9 @@ class BalanceConversionService:
 		doc.target_amount = decimal_text(total)
 		doc.set("legs", [])
 		self.postings = []
-		if for_submit:
+		if for_submit and self.is_off_balance():
+			self._build_off_balance_leg(amount, rate, allocation)
+		elif for_submit:
 			self._build_legs(_allocate(picture, amount), rate, allocation)
 
 	def posting_lines(self) -> list[PostingLine]:
@@ -105,7 +115,10 @@ class BalanceConversionService:
 			picture = self._picture(lock=True)
 		return picture
 
-	def _show(self, picture: BalanceSources) -> None:
+	def _show(self, picture: BalanceSources | None) -> None:
+		if picture is None:
+			self.doc.update({"as_of_balance": None, "balance_side": "", "max_convertible": None})
+			return
 		self.doc.update(
 			{
 				"as_of_balance": decimal_text(abs(picture.as_of_balance)),
@@ -114,18 +127,31 @@ class BalanceConversionService:
 			}
 		)
 
-	def _conversion_amount(self, picture: BalanceSources) -> Decimal:
+	def is_off_balance(self) -> bool:
+		return bool(cint(self.doc.get("off_balance_conversion")))
+
+	def _display_picture(self):
+		"""Balance is informational for off-balance; a ledger problem must not block posting."""
+		try:
+			return self._picture()
+		except frappe.ValidationError:
+			return None
+
+	def _conversion_amount(self, picture: BalanceSources | None) -> Decimal:
 		amount = to_decimal(self.doc.conversion_amount, _("Conversion Amount"))
 		if amount <= 0:
 			frappe.throw(_("Conversion Amount must be greater than zero."))
 		if not has_company_places(amount, self.company_places):
 			frappe.throw(_("Conversion Amount has more decimals than the Company currency allows."))
-		if amount > picture.max_convertible:
-			frappe.throw(
-				_("Conversion Amount {0} exceeds the maximum convertible amount {1}.").format(
-					decimal_text(amount), decimal_text(picture.max_convertible)
+		if not self.is_off_balance():
+			if picture is None:
+				frappe.throw(_("Source balance could not be read."))
+			if amount > picture.max_convertible:
+				frappe.throw(
+					_("Conversion Amount {0} exceeds the maximum convertible amount {1}.").format(
+						decimal_text(amount), decimal_text(picture.max_convertible)
+					)
 				)
-			)
 		return amount
 
 	def _target_rate(self) -> Decimal:
@@ -162,6 +188,67 @@ class BalanceConversionService:
 			leg = self.doc.append("legs", self._leg_values(balance_source, base, rate, share))
 			set_new_name(leg)
 			self.postings.append(LegPosting(leg, balance_source.source, base, share.amount, share.rate))
+
+	def _off_balance_source(self) -> SourceLeg:
+		doc = self.doc
+		choice = doc.get("off_balance_side")
+		if choice not in BALANCE_SIDE.values():
+			frappe.throw(_("Conversion Type is required."))
+		account = validate_account(doc.source_account, doc.company)
+		if account.account_currency != self.company_currency:
+			frappe.throw(_("Source Account must be in the Company currency {0}.").format(self.company_currency))
+		validate_party(doc.source_party_type, doc.source_party, account.account_type)
+		validate_party_ledger_currency(doc.source_party_type, doc.source_party, doc.company, self.company_currency)
+		return SourceLeg(
+			receipt="",
+			posting="",
+			pair=OFF_BALANCE_PAIR,
+			pair_index=0,
+			side=RECEIVER if choice == "Debit" else PAYER,
+			company=doc.company,
+			posting_date=doc.posting_date,
+			account=doc.source_account,
+			account_currency=account.account_currency,
+			party_type=doc.source_party_type,
+			party=doc.source_party,
+			original_amount=Decimal("0"),
+		)
+
+	def _build_off_balance_leg(self, amount: Decimal, rate: Decimal, allocation) -> None:
+		source = self._off_balance_source()
+		frappe.db.get_value(self.doc.source_party_type, self.doc.source_party, "name", for_update=True)
+		(share,) = allocation.shares([amount])
+		if share.amount <= 0:
+			frappe.throw(_("Conversion Amount is too small: the Target Amount rounds to zero."))
+		if share.rate is None:
+			frappe.throw(_("No exchange rate can reproduce the exact Company-currency amount."))
+		leg = self.doc.append("legs", self._off_balance_leg_values(source, amount, rate, share))
+		set_new_name(leg)
+		self.postings.append(LegPosting(leg, source, amount, share.amount, share.rate))
+
+	def _off_balance_leg_values(self, source: SourceLeg, base: Decimal, rate: Decimal, share) -> dict:
+		doc = self.doc
+		return {
+			"source_pair": source.pair,
+			"source_side": source.side,
+			"source_posting": None,
+			"source_account": source.account,
+			"source_party_type": source.party_type,
+			"source_party": source.party,
+			"company_currency": self.company_currency,
+			"original_amount": doc.as_of_balance,
+			"already_converted": 0,
+			"remaining_amount": decimal_text(base),
+			"conversion_amount": decimal_text(base),
+			"target_rate": decimal_text(rate),
+			"target_currency": doc.target_currency,
+			"target_party_type": doc.target_party_type or None,
+			"target_party": doc.target_party or None,
+			"target_account": doc.target_account,
+			"target_amount": decimal_text(share.amount),
+			"posting_exchange_rate": decimal_text(share.rate),
+			"posted_base_amount": decimal_text(base),
+		}
 
 	def _leg_values(self, balance_source: BalanceSource, base: Decimal, rate: Decimal, share) -> dict:
 		doc, source, consumption = self.doc, balance_source.source, balance_source.consumption

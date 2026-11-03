@@ -37,6 +37,12 @@ const spConversionSides = {
 		return this.EDIT_COLUMNS.map(([fieldname, columns]) => ({ fieldname, columns }));
 	},
 
+	// Server sides stay visible after a Draft omits the matching conversion row.
+	sourceRows(frm, side) {
+		const sources = (spConversionForm.state(frm).sources || []).filter((row) => row.source_side === side);
+		return sources.length ? sources : this.rows(frm, side);
+	},
+
 	// `format(fieldname, row)` returns display HTML; every other cell is escaped here.
 	sourceHtml(rows, side, { editable, format, titleOf }) {
 		const escape = (text) => frappe.utils.escape_html(text ?? "");
@@ -50,12 +56,12 @@ const spConversionSides = {
 				const party = row.source_party ? titleOf(row.source_party_type, row.source_party) || row.source_party : "—";
 				const amounts = this.SOURCE_AMOUNTS.map(([fieldname]) => `<td class="text-right">${format(fieldname, row)}</td>`);
 				const fill = editable
-					? `<td><button type="button" class="btn btn-xs btn-default" data-sp-fill="${escape(row.name)}">${escape(this.TEXT.fill)}</button></td>`
+					? `<td><button type="button" class="btn btn-xs btn-default" data-sp-fill="${escape(spConversionLegs.key(row))}">${escape(this.TEXT.fill)}</button></td>`
 					: "";
 				return `<tr><td>${index + 1}</td><td>${escape(party)}</td><td>${escape(row.source_account)}</td>${amounts.join("")}${fill}</tr>`;
 			})
 			.join("");
-		return `<table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+		return `<div class="sp-conversion-scroll" style="overflow-x:auto" dir="rtl"><table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 	},
 
 	setup(frm) {
@@ -79,7 +85,9 @@ const spConversionSides = {
 	},
 
 	refresh(frm) {
+		this.relabel(frm);
 		if (!this.isReceiptMode(frm.doc)) {
+			this.teardown(frm);
 			return;
 		}
 		this.prepareColumns(frm);
@@ -89,9 +97,11 @@ const spConversionSides = {
 			if (!entry) {
 				continue;
 			}
-			entry.source.html(this.sourceHtml(this.rows(frm, side), side, this.sourceOptions(frm)));
+			entry.source.html(this.sourceHtml(this.sourceRows(frm, side), side, this.sourceOptions(frm)));
 			entry.control.grid.visible_columns = null;
+			this.lockGrid(entry.control.grid, frm);
 			entry.control.grid.refresh();
+			this.lockGrid(entry.control.grid, frm);
 		}
 	},
 
@@ -130,7 +140,14 @@ const spConversionSides = {
 		}
 		const source = $("<div>").appendTo(wrapper);
 		const control = frappe.ui.form.make_control({
-			df: { fieldname: spConversionLegs.TABLE, fieldtype: "Table", options: spConversionLegs.LEG, label: "", cannot_add_rows: 1, cannot_delete_rows: 1 },
+			df: {
+				fieldname: spConversionLegs.TABLE,
+				fieldtype: "Table",
+				options: spConversionLegs.LEG,
+				label: "",
+				cannot_add_rows: true,
+				cannot_delete_rows: frm.doc.docstatus > 0,
+			},
 			parent: $("<div>").appendTo(wrapper),
 			frm,
 			render_input: false,
@@ -153,14 +170,29 @@ const spConversionSides = {
 		grid.editable_fields = this.editableFields();
 		grid.fieldinfo = legs.grid.fieldinfo;
 		grid.get_data = () => this.rows(frm, side);
+		this.lockGrid(grid, frm);
 		// Dragging a filtered row would renumber the rows of the other side too.
 		grid.sortable_setup_done = true;
 		wrapper.on("click", "[data-sp-fill]", (event) =>
-			spConversionForm.fillRemaining(frm, spConversionLegs.LEG, event.currentTarget.dataset.spFill),
+			spConversionForm.fillSource(frm, event.currentTarget.dataset.spFill),
 		);
 		spConversionForm.installNumbers(frm, control.$wrapper.get(0));
 		frm.__sp_sides[side] = { control, source };
 		return frm.__sp_sides[side];
+	},
+
+	// Boolean `true` (not `1`) so Grid.setup_check cannot toggle Add back on.
+	lockGrid(grid, frm) {
+		const locked = frm.doc.docstatus > 0;
+		grid.cannot_add_rows = true;
+		grid.cannot_delete_rows = locked;
+		if (grid.df) {
+			grid.df.cannot_add_rows = true;
+			grid.df.cannot_delete_rows = locked;
+		}
+		if (grid.wrapper) {
+			grid.wrapper.find(".grid-add-row, .grid-add-multiple-rows").addClass("hidden");
+		}
 	},
 
 	// Display only: each side counts its own rows from 1. `idx` and `data-idx` keep
@@ -177,6 +209,33 @@ const spConversionSides = {
 			}
 			this.numberRow(grid, row);
 		}
+	},
+
+	relabel(frm) {
+		const receipt = this.isReceiptMode(frm.doc);
+		const labels = {
+			receiver_conversion_section: receipt ? "تبدیل دریافت‌کننده" : "منبع",
+			payer_conversion_section: receipt ? "تبدیل پرداخت‌کنندگان" : "تبدیل",
+		};
+		for (const [fieldname, label] of Object.entries(labels)) {
+			frm.set_df_property(fieldname, "label", label);
+			const head = frm.fields_dict[fieldname]?.$wrapper?.find(".section-head").first();
+			if (head?.length) {
+				const extra = head.children().detach();
+				head.text(label);
+				head.append(extra);
+			}
+		}
+	},
+
+	teardown(frm) {
+		if (!frm.__sp_sides) {
+			return;
+		}
+		for (const side of Object.keys(this.SIDES)) {
+			frm.fields_dict[this.SIDES[side].field]?.$wrapper?.empty();
+		}
+		delete frm.__sp_sides;
 	},
 
 	numberRow(grid, row) {

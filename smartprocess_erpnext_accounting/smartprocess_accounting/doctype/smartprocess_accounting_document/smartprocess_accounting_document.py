@@ -70,7 +70,7 @@ class SmartProcessAccountingDocument(AccountsController):
 			post_document(self)
 
 	def before_cancel(self):
-		if self.operation_type == "Receipt":
+		if self.operation_type in ("Receipt", "Payment"):
 			assert_no_active_conversions(self.name)
 		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.engine import (
 			cancel_settlement_if_present,
@@ -111,7 +111,7 @@ class SmartProcessAccountingDocument(AccountsController):
 		)
 
 	def before_update_after_submit(self):
-		if self.operation_type == "Receipt":
+		if self.operation_type in ("Receipt", "Payment"):
 			assert_no_active_conversions(self.name)
 		if self.has_value_changed("correction_reason") and not self.flags.in_correction:
 			frappe.throw(_("Correction Reason can only be set through the Correction action."))

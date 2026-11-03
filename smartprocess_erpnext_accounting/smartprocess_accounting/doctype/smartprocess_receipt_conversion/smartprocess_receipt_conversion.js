@@ -31,6 +31,12 @@ frappe.ui.form.on("SmartProcess Receipt Conversion", {
 	source_receipt(frm) {
 		return spConversionForm.receiptChanged(frm);
 	},
+	legs_remove(frm) {
+		if (!spBalanceForm.isBalance(frm)) {
+			spConversionSides.refresh(frm);
+			spConversionForm.removeRestoreButton(frm);
+		}
+	},
 	use_common_rate(frm) {
 		return spCommonRate.toggled(frm);
 	},
@@ -66,6 +72,12 @@ frappe.ui.form.on("SmartProcess Receipt Conversion", {
 	},
 	target_party(frm) {
 		return spBalanceForm.targetPartyChanged(frm);
+	},
+	off_balance_conversion(frm) {
+		return spBalanceForm.offBalanceChanged(frm);
+	},
+	off_balance_side(frm) {
+		spBalanceForm.showDifference(frm);
 	},
 });
 

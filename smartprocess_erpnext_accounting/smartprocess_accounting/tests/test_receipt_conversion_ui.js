@@ -96,19 +96,26 @@ function form(values = {}) {
 		refreshed: 0,
 		tableProperties: {},
 		set_query() {},
+		customButtons: [],
 		set_df_property(fieldname, property, value) {
 			this.tableProperties[`${fieldname}:${property}`] = value;
+		},
+		add_custom_button(label) {
+			this.customButtons.push(label);
+		},
+		remove_custom_button(label) {
+			this.customButtons = this.customButtons.filter((name) => name !== label);
 		},
 		refresh_field() {
 			this.refreshed++;
 		},
 		clear_table(fieldname) {
-			doc[fieldname] = [];
+			this.doc[fieldname] = [];
 		},
 		add_child(fieldname, row) {
-			const child = { doctype: LEG, name: `leg-${++counter}`, parent: doc.name, ...row };
+			const child = { doctype: LEG, name: `leg-${++counter}`, parent: this.doc.name, ...row };
 			docs.set(child.name, child);
-			doc[fieldname].push(child);
+			this.doc[fieldname].push(child);
 			return child;
 		},
 		async set_value(fieldname, value) {
@@ -119,6 +126,11 @@ function form(values = {}) {
 			await spConversionForm.currencyChanged(frm);
 		},
 	};
+	for (const row of doc.legs) {
+		if (row.name) {
+			docs.set(row.name, row);
+		}
+	}
 	spConversionForm.state(frm);
 	return frm;
 }
@@ -168,11 +180,162 @@ test("a new Conversion drops Frappe's default Company currency and empty mandato
 	await spConversionForm.refresh(frm);
 	assert.equal(frm.doc.target_currency, "");
 	assert.deepEqual(frm.doc.legs, []);
-	assert.deepEqual(frm.tableProperties, { "legs:cannot_add_rows": 1, "legs:cannot_delete_rows": 1 });
+	assert.equal(frm.tableProperties["legs:cannot_add_rows"], true);
+	assert.equal(frm.tableProperties["legs:cannot_delete_rows"], false);
 	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_conversion_legs")));
 	await selectCurrency(frm, "USD");
 	assert.equal(calls.confirm.length, 0);
 	assert.equal(frm.doc.legs.length, 2);
+});
+
+test("Draft may omit loaded sides; refresh and currency change do not restore them", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	assert.ok(!frm.customButtons.includes(spConversionForm.MESSAGES.restore));
+	frm.doc.legs = frm.doc.legs.filter((leg) => leg.source_side === "Receiver");
+	Object.assign(frm.doc.legs[0], { conversion_amount: 100000000, target_rate: 90000, target_account: "USD Bank - SP" });
+	calls.xcall = [];
+	await spConversionForm.refresh(frm);
+	assert.deepEqual(frm.doc.legs.map((leg) => leg.source_side), ["Receiver"]);
+	await selectCurrency(frm, "EUR");
+	assert.deepEqual(frm.doc.legs.map((leg) => [leg.source_side, leg.conversion_amount]), [["Receiver", 100000000]]);
+});
+
+test("کل مانده on an omitted side restores that source key and fills remaining", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	const receiver = frm.doc.legs[0];
+	Object.assign(receiver, { conversion_amount: 40000000, target_rate: 90000, target_account: "USD Bank - SP" });
+	frm.doc.legs = [receiver];
+	responses.get_conversion_legs = {
+		legs: [serverLeg("Receiver", { remaining_amount: "60000000" }), serverLeg("Payer", { remaining_amount: "80000000" })],
+		titles: {},
+	};
+	await spConversionForm.fillSource(frm, "pair-1|Payer");
+	await settle();
+	assert.deepEqual(frm.doc.legs.map((leg) => [leg.source_side, Number(leg.conversion_amount), leg.target_account]), [
+		["Receiver", 40000000, "USD Bank - SP"],
+		["Payer", 80000000, undefined],
+	]);
+	await spConversionForm.fillSource(frm, "pair-1|Payer");
+	await settle();
+	assert.equal(frm.doc.legs.length, 2);
+	assert.equal(Number(frm.doc.legs[1].conversion_amount), 80000000);
+});
+
+test("a reopened saved Draft fills an omitted side from کل مانده after reload", async () => {
+	const frm = form({
+		__islocal: 0,
+		name: "SP-RCONV-SAVED",
+		target_currency: "USD",
+		legs: [{ doctype: LEG, name: "saved-receiver", ...serverLeg("Receiver"), conversion_amount: 40 }],
+	});
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver"), serverLeg("Payer", { remaining_amount: "90000000" })], titles: {} };
+	await spConversionForm.refresh(frm);
+	assert.equal(spConversionForm.state(frm).loaded, true);
+	assert.ok(!frm.customButtons.includes(spConversionForm.MESSAGES.restore));
+	await spConversionForm.fillSource(frm, "pair-1|Payer");
+	await settle();
+	assert.deepEqual(
+		frm.doc.legs.map((leg) => [leg.source_side, Number(leg.conversion_amount)]),
+		[
+			["Receiver", 40],
+			["Payer", 90000000],
+		],
+	);
+});
+
+test("کل مانده still applies after Frappe replaces frm.doc during the request", async () => {
+	const frm = form({
+		__islocal: 0,
+		name: "SP-RCONV-SAVED",
+		target_currency: "USD",
+		legs: [{ doctype: LEG, name: "saved-receiver", ...serverLeg("Receiver"), conversion_amount: 40 }],
+	});
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver"), serverLeg("Payer", { remaining_amount: "50000000" })], titles: {} };
+	await spConversionForm.refresh(frm);
+	const original = frappe.xcall;
+	frappe.xcall = async (method, args) => {
+		const result = await original(method, args);
+		if (String(method).endsWith("get_conversion_legs")) {
+			frm.doc = { ...frm.doc };
+		}
+		return result;
+	};
+	try {
+		await spConversionForm.fillSource(frm, "pair-1|Payer");
+		await settle();
+	} finally {
+		frappe.xcall = original;
+	}
+	assert.deepEqual(
+		frm.doc.legs.map((leg) => [leg.source_side, Number(leg.conversion_amount)]),
+		[
+			["Receiver", 40],
+			["Payer", 50000000],
+		],
+	);
+});
+
+test("کل مانده does not create a fully converted side and does not add duplicates", async () => {
+	responses.get_conversion_legs = {
+		legs: [serverLeg("Receiver"), serverLeg("Payer", { remaining_amount: "0" }), serverLeg("Receiver", { source_pair: "pair-2", remaining_amount: "30000000" })],
+		titles: {},
+	};
+	const frm = form({
+		__islocal: 0,
+		name: "SP-RCONV-SAVED",
+		target_currency: "USD",
+		legs: [{ doctype: LEG, name: "saved-receiver", ...serverLeg("Receiver"), conversion_amount: 10 }],
+	});
+	await spConversionForm.fillSource(frm, "pair-1|Payer");
+	await settle();
+	assert.equal(frm.doc.legs.length, 1);
+	assert.equal(calls.alerts[0].message, spConversionForm.MESSAGES.noRemaining);
+	await spConversionForm.fillSource(frm, "pair-2|Receiver");
+	await settle();
+	assert.deepEqual(
+		frm.doc.legs.map((leg) => [leg.source_pair, leg.source_side, Number(leg.conversion_amount)]),
+		[
+			["pair-1", "Receiver", 10],
+			["pair-2", "Receiver", 30000000],
+		],
+	);
+	await spConversionForm.fillSource(frm, "pair-2|Receiver");
+	await settle();
+	assert.equal(frm.doc.legs.length, 2);
+});
+
+test("refresh does not reload an emptied table after the first server load", async () => {
+	const frm = form();
+	await selectCurrency(frm, "USD");
+	frm.doc.legs = [];
+	calls.xcall = [];
+	await spConversionForm.refresh(frm);
+	assert.deepEqual(frm.doc.legs, []);
+	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_conversion_legs")));
+});
+
+test("a submitted Conversion cannot add or delete rows", async () => {
+	const frm = form({ docstatus: 1, target_currency: "USD", legs: [{ doctype: LEG, name: "saved-1", ...serverLeg("Receiver") }] });
+	await spConversionForm.refresh(frm);
+	assert.equal(frm.tableProperties["legs:cannot_add_rows"], true);
+	assert.equal(frm.tableProperties["legs:cannot_delete_rows"], true);
+	assert.ok(!frm.customButtons.includes(spConversionForm.MESSAGES.restore));
+	assert.ok(!calls.xcall.some((call) => call.method.endsWith("get_conversion_legs")));
+});
+
+test("clone grids keep Add hidden with boolean cannot_add_rows and allow Draft delete", () => {
+	const wrapper = { hidden: [], find: () => ({ addClass: (name) => wrapper.hidden.push(name) }) };
+	const grid = { df: { cannot_add_rows: 1, cannot_delete_rows: 1 }, wrapper };
+	spConversionSides.lockGrid(grid, { doc: { docstatus: 0 } });
+	assert.equal(grid.cannot_add_rows, true);
+	assert.equal(grid.cannot_delete_rows, false);
+	assert.equal(grid.df.cannot_add_rows, true);
+	assert.equal(grid.df.cannot_delete_rows, false);
+	spConversionSides.lockGrid(grid, { doc: { docstatus: 1 } });
+	assert.equal(grid.cannot_delete_rows, true);
+	assert.equal(grid.cannot_add_rows, true);
 });
 
 test("only server legs are shown: a foreign side the server does not return never appears", async () => {
@@ -280,13 +443,18 @@ test("کل مانده copies the remaining amount and still allows manual amount
 	const frm = form();
 	await selectCurrency(frm, "USD");
 	const payer = frm.doc.legs[1];
-	payer.remaining_amount = "70000000";
+	payer.conversion_amount = 1000;
+	responses.get_conversion_legs = {
+		legs: [serverLeg("Receiver"), serverLeg("Payer", { remaining_amount: "70000000" })],
+		titles: {},
+	};
 	await spConversionForm.fillRemaining(frm, LEG, payer.name);
-	assert.equal(payer.conversion_amount, "70000000");
+	await settle();
+	assert.equal(Number(payer.conversion_amount), 70000000);
 	frm.doc.docstatus = 1;
-	payer.remaining_amount = "1";
+	responses.get_conversion_legs = { legs: [serverLeg("Payer", { remaining_amount: "1" })], titles: {} };
 	await spConversionForm.fillRemaining(frm, LEG, payer.name);
-	assert.equal(payer.conversion_amount, "70000000", "a submitted Conversion never changes");
+	assert.equal(Number(payer.conversion_amount), 70000000, "a submitted Conversion never changes");
 });
 
 test("submit with every amount zero stops with a Persian message", async () => {
@@ -370,6 +538,7 @@ test("the Receipt only gains an unsaved-Conversion button", () => {
 	const conversionForm = read(path.join(CONVERSION_DIR, "conversion", "conversion_form.js"));
 	assert.ok(!/\.save\(|\.savesubmit\(|\.submit\(/.test(conversionForm), "the form never saves or submits by itself");
 	assert.ok(!/posting_exchange_rate/.test(conversionForm), "the hidden posting rate is never written");
+	assert.ok(!/setRestoreButton|restoreLegs/.test(conversionForm), "the global restore button is gone");
 	const doctypeScript = read(path.join(CONVERSION_DIR, "smartprocess_receipt_conversion.js"));
 	for (const file of ["receipt/receipt_numbers.js", "conversion/conversion_legs.js", "conversion/conversion_form.js"]) {
 		assert.ok(doctypeScript.includes(`${file}" %}`), file);
@@ -414,6 +583,14 @@ test("related Conversions button shows the active count and lists Receipt- and B
 	assert.deepEqual(routes, [["List", "SmartProcess Receipt Conversion", { name: ["in", names] }]]);
 	assert.equal(spReceiptConversionStatus.listLabel(0), "تبدیل‌های مرتبط", "only drafts/cancelled: no count");
 	delete frappe.set_route;
+});
+
+test("a settlement Receipt with no conversion status still opens", async () => {
+	const { frm, shown } = receiptForm();
+	responses.get_receipt_conversion_status = { status: null, linked_count: 0, active_count: 0, names: [] };
+	await spReceiptConversionStatus.refresh(frm);
+	assert.deepEqual(shown.indicators, []);
+	assert.deepEqual(shown.buttons, []);
 });
 
 test("status is shown only on a submitted Receipt and a stale response is dropped", async () => {
@@ -471,6 +648,32 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	for (const name of ["as_of_balance", "balance_side", "max_convertible", "target_amount"]) {
 		assert.equal(field(conversionMeta, name).read_only, 1, name);
 	}
+	for (const name of ["as_of_balance", "balance_side", "max_convertible", "conversion_amount", "fill_max_convertible", "target_rate", "target_amount"]) {
+		assert.equal(field(conversionMeta, name).hidden, 1, name);
+	}
+	for (const name of ["target_party_type", "target_party", "target_account", "balance_target_section"]) {
+		assert.ok(!field(conversionMeta, name).hidden, name);
+		assert.equal(field(conversionMeta, name).depends_on, "eval:doc.conversion_mode==='Balance'", name);
+	}
+	assert.equal(field(conversionMeta, "target_party_type").label, "نوع طرف مقصد");
+	assert.equal(field(conversionMeta, "target_party").label, "طرف مقصد");
+	assert.equal(field(conversionMeta, "target_account").label, "حساب مقصد");
+	assert.equal(field(conversionMeta, "off_balance_conversion").label, "تبدیل خارج از مانده");
+	assert.equal(field(conversionMeta, "off_balance_side").label, "ماهیت حساب مقصد");
+	assert.equal(field(conversionMeta, "off_balance_side").depends_on, "eval:doc.conversion_mode==='Balance' && doc.off_balance_conversion");
+	assert.ok(!field(conversionMeta, "off_balance_conversion").hidden);
+	assert.equal(conversionMeta.field_order[conversionMeta.field_order.indexOf("payer_conversion_html") + 1], "balance_conversion_section");
+	assert.ok(spBalanceForm.TABLE_FIELDS.includes("receiver_conversion_html"));
+	assert.ok(spBalanceForm.DUPLICATE_FIELDS.includes("fill_max_convertible"));
+	assert.ok(!spBalanceForm.DUPLICATE_FIELDS.includes("target_party_type"));
+	assert.deepEqual(spBalanceForm.DESTINATION_FIELDS, ["target_party_type", "target_party", "target_account"]);
+	assert.equal(spBalanceForm.CONVERSION_TABLE.length, 3);
+	assert.deepEqual(
+		spBalanceForm.CONVERSION_TABLE.map(([, label]) => label),
+		["مبلغ تبدیل", "نرخ", "مبلغ ارز مقصد"],
+	);
+	assert.deepEqual(spBalanceForm.OFF_BALANCE_SIDE_LABELS, { Debit: "مقصد بدهکار", Credit: "مقصد بستانکار" });
+	assert.equal(spBalanceForm.MESSAGES.destinationNature, "ماهیت حساب مقصد");
 	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
 });
 
@@ -571,13 +774,54 @@ test("a Party default currency fills only an empty Balance Target Currency and n
 	}
 });
 
-test("the full-maximum button uses max_convertible, never the account balance", async () => {
-	const frm = balanceForm({ as_of_balance: 150000000, max_convertible: 100000000 });
+test("off-balance کل مانده fills the displayed balance and sets destination nature", async () => {
+	responses.get_balance_summary = { ...SUMMARY, suggestion: null };
+	const frm = balanceForm({
+		off_balance_conversion: 1,
+		as_of_balance: 150000000,
+		max_convertible: 0,
+		conversion_amount: 1,
+		balance_side: "Credit",
+		target_rate: 1500000,
+	});
 	await spBalanceForm.fillMax(frm);
-	assert.equal(frm.doc.conversion_amount, 100000000);
-	const submitted = balanceForm({ docstatus: 1, max_convertible: 5, conversion_amount: 1 });
+	assert.equal(frm.doc.conversion_amount, 150000000);
+	assert.equal(frm.doc.off_balance_side, "Credit");
+	assert.equal(frm.doc.target_amount, 1111.11);
+	const empty = balanceForm({ off_balance_conversion: 1, as_of_balance: 0, max_convertible: 0, conversion_amount: 9 });
+	responses.get_balance_summary = { company_currency: "IRR", as_of_balance: "0", balance_side: "", max_convertible: "0" };
+	await spBalanceForm.fillMax(empty);
+	assert.equal(empty.doc.conversion_amount, 0);
+});
+
+test("کل مانده copies the displayed source balance and does not bypass the server cap", async () => {
+	responses.get_balance_summary = { ...SUMMARY, suggestion: null };
+	const frm = balanceForm({ as_of_balance: 150000000, max_convertible: 100000000, balance_side: "Credit", target_rate: 90000 });
+	await spBalanceForm.fillMax(frm);
+	assert.equal(frm.doc.conversion_amount, 150000000);
+	assert.match(calls.alerts.at(-1).message, /سقف معتبر سرور/);
+	const submitted = balanceForm({ docstatus: 1, as_of_balance: 5, max_convertible: 5, conversion_amount: 1 });
 	await spBalanceForm.fillMax(submitted);
 	assert.equal(submitted.doc.conversion_amount, 1);
+});
+
+test("Balance source table is a compact RTL row with کل مانده", () => {
+	const html = spBalanceForm.sourceTableHtml(
+		{ source_party_type: "Customer", source_party: "CUST-1", source_account: "Debtors - SP", as_of_balance: 150000000, balance_side: "Credit", max_convertible: 100000000 },
+		{ editable: true, format: (fieldname, doc) => String(doc[fieldname]) },
+	);
+	for (const text of ["مانده حساب", "ماهیت مانده", "CUST-1", "Debtors - SP", "کل مانده", "sp-conversion-scroll", "overflow-x:auto"]) {
+		assert.ok(html.includes(text), text);
+	}
+	assert.ok(html.includes("data-sp-balance-fill"));
+	const conversion = spBalanceForm.conversionMarkup();
+	assert.ok(conversion.includes("مبلغ تبدیل"));
+	assert.ok(conversion.includes("مبلغ ارز مقصد"));
+	assert.ok(!conversion.includes("مبلغ قابل‌تبدیل"));
+	assert.ok(!conversion.includes("نوع طرف مقصد"));
+	assert.ok(!conversion.includes("overflow-x:auto"));
+	assert.ok(conversion.includes("sp-balance-conversion"));
+	assert.ok(!spBalanceForm.sourceTableHtml({ source_party: "", source_account: "" }, { editable: true, format: () => "" }).includes("<table"));
 });
 
 test("the Balance Target Amount is a server preview and the rate is never written", async () => {
@@ -587,6 +831,10 @@ test("the Balance Target Amount is a server preview and the rate is never writte
 	assert.ok(call.method.endsWith("receipt_conversion_api.preview_target_amounts"));
 	assert.deepEqual(call.args.legs, [{ name: "total", conversion_amount: 100000000, target_rate: 90000 }]);
 	assert.deepEqual([frm.doc.target_amount, frm.doc.target_rate], [1111.11, 90000]);
+	frm.doc.target_rate = 0;
+	await spBalanceForm.preview(frm);
+	assert.match(calls.alerts.at(-1).message, /نرخ باید بزرگ‌تر از صفر/);
+	assert.equal(frm.doc.target_amount, 1111.11, "an invalid rate does not overwrite the last valid amount");
 });
 
 test("Receipt-mode legs never load for a Balance Conversion", async () => {
@@ -611,8 +859,9 @@ test("Receipt mode has separate Receiver and Payer sections before the stored le
 		["تبدیل دریافت‌کننده", "تبدیل پرداخت‌کنندگان"],
 	);
 	for (const fieldname of ["receiver_conversion_section", "payer_conversion_section"]) {
-		assert.equal(field(conversionMeta, fieldname).depends_on, "eval:doc.conversion_mode!=='Balance'");
+		assert.ok(!field(conversionMeta, fieldname).depends_on, fieldname);
 	}
+	assert.ok(conversionMeta.field_order.indexOf("receiver_conversion_section") < conversionMeta.field_order.indexOf("as_of_balance"));
 	assert.equal(field(conversionMeta, "receiver_conversion_html").fieldtype, "HTML");
 	assert.equal(field(conversionMeta, "payer_conversion_html").fieldtype, "HTML");
 });
@@ -622,6 +871,8 @@ test("each side shows only its own rows and Balance mode shows none", async () =
 	await selectCurrency(frm, "USD");
 	assert.deepEqual(spConversionSides.rows(frm, "Receiver").map((row) => row.source_side), ["Receiver"]);
 	assert.deepEqual(spConversionSides.rows(frm, "Payer").map((row) => row.source_side), ["Payer"]);
+	frm.doc.legs = frm.doc.legs.filter((leg) => leg.source_side === "Receiver");
+	assert.deepEqual(spConversionSides.sourceRows(frm, "Payer").map((row) => row.source_side), ["Payer"]);
 	frm.doc.conversion_mode = "Balance";
 	assert.deepEqual(spConversionSides.rows(frm, "Receiver"), []);
 });
@@ -650,7 +901,8 @@ test("source info is a read-only block with party, account and amounts; fill onl
 	for (const text of ["پرداخت‌کننده", "مشتری یک", "Debtors - SP", "#100000000", "#40000000", "#60000000", "حساب مبدا", "مانده قابل تبدیل"]) {
 		assert.ok(html.includes(text), text);
 	}
-	assert.ok(html.includes('data-sp-fill="leg-2"'));
+	assert.ok(html.includes('data-sp-fill="pair-1|Payer"'));
+	assert.ok(html.includes("overflow-x:auto"));
 	assert.ok(!html.includes("<input"));
 	assert.ok(!spConversionSides.sourceHtml(rows, "Payer", { ...options, editable: false }).includes("data-sp-fill"));
 	assert.ok(spConversionSides.sourceHtml([], "Receiver", options).includes("رسید مبدا"));
@@ -1003,19 +1255,18 @@ test("Conversion inputs group thousands live through the shared Receipt helper; 
 test("a reopened Receipt-mode Conversion asks the server for the foreign-side note", async () => {
 	const frm = form({ target_currency: "USD", legs: [{ doctype: LEG, name: "saved-1", ...serverLeg("Receiver") }] });
 	responses.get_company_currency = "IRR";
-	responses.get_foreign_side_count = 1;
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver")], titles: {}, foreign_sides: 1 };
 	await spConversionForm.refresh(frm);
-	const call = calls.xcall.find((entry) => entry.method.endsWith("get_foreign_side_count"));
-	assert.deepEqual(call.args, { source_receipt: "SP-REC-1" });
+	const call = calls.xcall.find((entry) => entry.method.endsWith("get_conversion_legs"));
+	assert.deepEqual(call.args, { source_receipt: "SP-REC-1", target_currency: "USD" });
 	assert.equal(frm.tableProperties["source_receipt:description"], spConversionForm.MESSAGES.foreignSides);
-	assert.ok(!calls.xcall.some((entry) => entry.method.endsWith("get_conversion_legs")));
-	responses.get_foreign_side_count = 0;
+	responses.get_conversion_legs = { legs: [serverLeg("Receiver")], titles: {}, foreign_sides: 0 };
 	await spConversionForm.refresh(frm);
 	assert.equal(frm.tableProperties["source_receipt:description"], "");
 	assert.deepEqual([calls.confirm.length, calls.alerts.length], [0, 0]);
 	calls.xcall = [];
 	await spConversionForm.refresh(balanceForm());
-	assert.ok(!calls.xcall.some((entry) => entry.method.endsWith("get_foreign_side_count")));
+	assert.ok(!calls.xcall.some((entry) => entry.method.endsWith("get_conversion_legs")));
 });
 
 (async () => {
