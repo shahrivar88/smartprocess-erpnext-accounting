@@ -8,13 +8,18 @@ const spBalanceForm = {
 		["as_of_balance", "مانده حساب"],
 		["balance_side", "ماهیت مانده"],
 	],
-	// Amount/rate live in the HTML host. Destination Links stay native Frappe fields
-	// so Awesomplete is not clipped by a custom overflow host.
+	// The second table holds the six approved columns. Amount/rate/target get their
+	// own controls; the native destination Links are moved into the cells so their
+	// queries, model wiring and Awesomplete stay Frappe-native.
 	CONVERSION_TABLE: [
-		["conversion_amount", "مبلغ تبدیل"],
-		["target_rate", "نرخ"],
-		["target_amount", "مبلغ ارز مقصد"],
+		["conversion_amount", "مبلغ تبدیل", "16%"],
+		["target_rate", "نرخ", "14%"],
+		["target_amount", "مبلغ ارز مقصد", "16%"],
+		["target_party_type", "نوع طرف مقصد", "16%"],
+		["target_party", "طرف مقصد", "18%"],
+		["target_account", "حساب مقصد", "20%"],
 	],
+	CUSTOM_FIELDS: ["conversion_amount", "target_rate", "target_amount"],
 	DESTINATION_FIELDS: ["target_party_type", "target_party", "target_account"],
 	TABLE_FIELDS: ["receiver_conversion_section", "receiver_conversion_html", "payer_conversion_section", "payer_conversion_html"],
 	DUPLICATE_FIELDS: [
@@ -96,8 +101,9 @@ const spBalanceForm = {
 		}
 	},
 
-	// JSON metadata may still be the previous layout until migrate. JS hides
-	// duplicate amount fields, keeps the two HTML hosts, and shows native destination Links.
+	// JSON metadata may still be the previous layout until migrate. JS hides the
+	// duplicate amount fields and the empty native «مقصد» section; the destination
+	// fields themselves move into the second table's cells.
 	applyLayout(frm) {
 		for (const fieldname of this.TABLE_FIELDS) {
 			frm.set_df_property(fieldname, "depends_on", "");
@@ -106,11 +112,9 @@ const spBalanceForm = {
 		for (const fieldname of this.DUPLICATE_FIELDS) {
 			frm.set_df_property(fieldname, "hidden", 1);
 		}
+		frm.set_df_property("balance_target_section", "hidden", 1);
+		frm.set_df_property("column_break_balance_target", "hidden", 1);
 		const balanceDepends = "eval:doc.conversion_mode==='Balance'";
-		frm.set_df_property("balance_target_section", "depends_on", balanceDepends);
-		frm.set_df_property("balance_target_section", "hidden", 0);
-		frm.set_df_property("balance_target_section", "label", "مقصد");
-		frm.set_df_property("column_break_balance_target", "hidden", 0);
 		for (const fieldname of this.DESTINATION_FIELDS) {
 			frm.set_df_property(fieldname, "depends_on", balanceDepends);
 			frm.set_df_property(fieldname, "hidden", 0);
@@ -118,13 +122,6 @@ const spBalanceForm = {
 		frm.set_df_property("target_party_type", "label", "نوع طرف مقصد");
 		frm.set_df_property("target_party", "label", "طرف مقصد");
 		frm.set_df_property("target_account", "label", "حساب مقصد");
-		frm.fields_dict.balance_target_section?.refresh?.();
-		for (const fieldname of this.DESTINATION_FIELDS) {
-			frm.refresh_field(fieldname);
-		}
-		if (this.isBalance(frm) && frm.fields_dict.balance_target_section?.collapse) {
-			frm.fields_dict.balance_target_section.collapse(false);
-		}
 		spConversionSides.relabel(frm);
 	},
 
@@ -384,7 +381,7 @@ const spBalanceForm = {
 		}
 		this.renderSourceTable(frm);
 		this.renderConversionTable(frm);
-		for (const fieldname of this.NUMBER_FIELDS) {
+		for (const fieldname of [...this.NUMBER_FIELDS, "target_amount"]) {
 			const control = frm.__sp_balance_ui?.controls?.[fieldname] || frm.fields_dict[fieldname];
 			spReceiptNumbers.prepare(frm, control, spConversionForm.numberOptions(frm));
 		}
@@ -395,6 +392,20 @@ const spBalanceForm = {
 		const ui = frm.__sp_balance_ui;
 		if (!ui) {
 			return;
+		}
+		for (const [fieldname, placement] of Object.entries(ui.placements || {})) {
+			const control = frm.fields_dict[fieldname];
+			if (!control?.$wrapper) {
+				continue;
+			}
+			control.$wrapper.removeClass("sp-balance-native").css({ margin: "", maxWidth: "", width: "" });
+			if (placement?.parent?.length) {
+				if (placement.next?.length) {
+					placement.next.before(control.$wrapper);
+				} else {
+					placement.parent.append(control.$wrapper);
+				}
+			}
 		}
 		for (const [fieldname, native] of Object.entries(ui.natives || {})) {
 			if (native) {
@@ -438,7 +449,7 @@ const spBalanceForm = {
 		if (!ready) {
 			return `<div class="text-muted small">${escape("پس از انتخاب طرف حساب و حساب مبدأ، مانده این بخش اینجا نمایش داده می‌شود.")}</div>`;
 		}
-		const heads = ["#", "طرف حساب", "حساب مبدأ", ...this.SOURCE_TABLE.map(([, label]) => label)];
+		const heads = ["طرف حساب", "حساب مبدأ", ...this.SOURCE_TABLE.map(([, label]) => label)];
 		const head = heads.map((label) => `<th>${escape(label)}</th>`).join("") + (editable ? "<th></th>" : "");
 		const party = doc.source_party || "—";
 		const amounts = this.SOURCE_TABLE.map(([fieldname]) => `<td class="text-right">${format(fieldname, doc)}</td>`);
@@ -450,21 +461,44 @@ const spBalanceForm = {
 			: this.differs(doc.as_of_balance, doc.max_convertible)
 				? `<div class="text-muted small">${escape(this.MESSAGES.partial)}</div>`
 				: "";
-		return `<div class="sp-conversion-scroll" style="overflow-x:auto" dir="rtl"><table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody><tr><td>1</td><td>${escape(party)}</td><td>${escape(doc.source_account)}</td>${amounts.join("")}${fill}</tr></tbody></table></div>${note}`;
+		return `<div class="sp-conversion-scroll" style="overflow-x:auto" dir="rtl"><table class="table table-bordered table-sm small sp-conversion-source"><thead><tr>${head}</tr></thead><tbody><tr><td>${escape(party)}</td><td>${escape(doc.source_account)}</td>${amounts.join("")}${fill}</tr></tbody></table></div>${note}`;
 	},
 
 	conversionMarkup() {
 		const escape = (text) => frappe.utils.escape_html(text);
-		const cells = this.CONVERSION_TABLE.map(
-			([fieldname, label]) =>
-				`<div class="sp-balance-field" data-sp-balance-field="${escape(fieldname)}" style="flex:1 1 160px;min-width:140px"><div class="text-muted small">${escape(label)}</div></div>`,
+		const head = this.CONVERSION_TABLE.map(
+			([, label, width]) => `<th style="width:${escape(width)}">${escape(label)}</th>`,
 		).join("");
-		return `<div class="sp-balance-conversion" dir="rtl" style="display:flex;flex-wrap:wrap;gap:12px 16px">${cells}</div>`;
+		const cells = this.CONVERSION_TABLE.map(
+			([fieldname]) => `<td data-sp-balance-field="${escape(fieldname)}"></td>`,
+		).join("");
+		return `<div class="sp-balance-conversion" dir="rtl">${this.tableStyles()}<table class="table table-bordered table-sm small sp-balance-target"><thead><tr>${head}</tr></thead><tbody><tr>${cells}</tr></tbody></table></div>`;
+	},
+
+	// Scoped to this table only. It deliberately has no overflow box, so an open
+	// Awesomplete list is not clipped by a scroll parent.
+	tableStyles() {
+		return `<style>
+.sp-balance-conversion .sp-balance-target{table-layout:fixed;width:100%;margin-bottom:0}
+.sp-balance-conversion .sp-balance-target th{white-space:nowrap}
+.sp-balance-conversion .sp-balance-target td{vertical-align:top;min-width:0}
+.sp-balance-conversion .frappe-control{margin:0;max-width:none;width:100%}
+.sp-balance-conversion .frappe-control > .form-group > .clearfix,
+.sp-balance-conversion .frappe-control .help-box{display:none}
+.sp-balance-conversion .frappe-control .control-input,
+.sp-balance-conversion .frappe-control .control-input-wrapper,
+.sp-balance-conversion .awesomplete{width:100%}
+</style>`;
 	},
 
 	renderConversionTable(frm) {
-		if (frm.__sp_balance_ui?.conversion) {
+		const ui = (frm.__sp_balance_ui = frm.__sp_balance_ui || { natives: {}, controls: {}, placements: {} });
+		if (ui.conversion) {
 			this.restoreControlRefs(frm);
+			const wrapper = frm.fields_dict.payer_conversion_html?.$wrapper;
+			if (wrapper && !ui.conversion.parent().length) {
+				wrapper.append(ui.conversion);
+			}
 			this.refreshConversionValue(frm, "target_amount");
 			return;
 		}
@@ -472,43 +506,73 @@ const spBalanceForm = {
 		if (!wrapper || typeof frappe.ui?.form?.make_control !== "function") {
 			return;
 		}
-		const ui = (frm.__sp_balance_ui = frm.__sp_balance_ui || { natives: {}, controls: {} });
+		ui.natives = ui.natives || {};
+		ui.controls = ui.controls || {};
+		ui.placements = ui.placements || {};
 		const host = $(this.conversionMarkup());
 		for (const [fieldname] of this.CONVERSION_TABLE) {
 			const cell = host.find(`[data-sp-balance-field="${fieldname}"]`);
-			ui.natives[fieldname] = frm.fields_dict[fieldname];
-			const native = frappe.meta.get_docfield(spConversionLegs.CONVERSION, fieldname, frm.docname) || {};
-			const readOnly = frm.doc.docstatus > 0 || fieldname === "target_amount" || native.read_only;
-			const control = frappe.ui.form.make_control({
-				df: {
-					...native,
-					fieldname,
-					label: "",
-					hidden: 0,
-					reqd: 0,
-					read_only: 0,
-				},
-				parent: cell,
-				frm,
-				doc: frm.doc,
-				doctype: frm.doctype,
-				docname: frm.docname,
-				only_input: true,
-				render_input: true,
-			});
-			control.df.read_only = readOnly;
-			if (readOnly) {
-				control.$input?.prop({ disabled: true, readOnly: true });
+			if (!cell.length) {
+				continue;
 			}
-			frm.fields_dict[fieldname] = control;
-			this.bindConversionControl(frm, control, fieldname);
-			control.$wrapper.css({ margin: 0, maxWidth: "none" }).find(".clearfix, .help, .tooltip-content").hide();
-			control.$wrapper.find(".form-group").css({ margin: 0 });
-			ui.controls[fieldname] = control;
-			this.writeControlValue(control, frm.doc[fieldname]);
+			if (this.CUSTOM_FIELDS.includes(fieldname)) {
+				this.mountNumberControl(frm, ui, cell, fieldname);
+			} else {
+				this.mountNativeControl(frm, ui, cell, fieldname);
+			}
 		}
 		wrapper.empty().append(host);
 		ui.conversion = host;
+		this.refreshConversionValue(frm, "target_amount");
+	},
+
+	mountNumberControl(frm, ui, cell, fieldname) {
+		ui.natives[fieldname] = frm.fields_dict[fieldname];
+		const native = frappe.meta.get_docfield(spConversionLegs.CONVERSION, fieldname, frm.docname) || {};
+		const readOnly = frm.doc.docstatus > 0 || fieldname === "target_amount" || native.read_only;
+		const control = frappe.ui.form.make_control({
+			df: {
+				...native,
+				fieldname,
+				label: "",
+				hidden: 0,
+				reqd: 0,
+				read_only: 0,
+			},
+			parent: cell,
+			frm,
+			doc: frm.doc,
+			doctype: frm.doctype,
+			docname: frm.docname,
+			only_input: true,
+			render_input: true,
+		});
+		control.df.read_only = readOnly;
+		if (readOnly) {
+			control.$input?.prop({ disabled: true, readOnly: true });
+		}
+		frm.fields_dict[fieldname] = control;
+		this.bindConversionControl(frm, control, fieldname);
+		control.$wrapper.css({ margin: 0, maxWidth: "none", width: "100%" });
+		ui.controls[fieldname] = control;
+		this.writeControlValue(control, frm.doc[fieldname]);
+	},
+
+	// The native Link keeps its own control, so its query, model commit and
+	// Awesomplete stay exactly as Frappe built them; only the DOM cell changes.
+	mountNativeControl(frm, ui, cell, fieldname) {
+		const control = frm.fields_dict[fieldname];
+		if (!control?.$wrapper) {
+			return;
+		}
+		if (!ui.placements[fieldname]) {
+			ui.placements[fieldname] = { parent: control.$wrapper.parent(), next: control.$wrapper.next() };
+		}
+		control.$wrapper
+			.addClass("sp-balance-native")
+			.css({ margin: 0, maxWidth: "none", width: "100%" })
+			.appendTo(cell);
+		control.$wrapper.find(".form-group").css({ margin: 0 });
 	},
 
 	restoreControlRefs(frm) {
@@ -534,12 +598,13 @@ const spBalanceForm = {
 
 	writeControlValue(control, value) {
 		control.value = value ?? null;
+		const formatted =
+			typeof control.format_for_input === "function" ? control.format_for_input(control.value) : (control.value ?? "");
 		if (typeof control.set_formatted_input === "function") {
 			control.set_formatted_input(control.value);
-			return;
 		}
 		if (control.$input) {
-			control.$input.val(control.value ?? "");
+			control.$input.val(formatted);
 		}
 	},
 

@@ -639,7 +639,7 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	const labels = Object.fromEntries(conversionMeta.fields.map((df) => [df.fieldname, df.label]));
 	assert.deepEqual(
 		["balance_source_section", "as_of_balance", "max_convertible", "balance_conversion_section", "fill_max_convertible", "target_amount", "balance_target_section"].map((name) => labels[name]),
-		["منبع", "مانده حساب", "حداکثر قابل تبدیل", "تبدیل", "کل مانده قابل تبدیل", "مبلغ مقصد", "مقصد"],
+		["منبع", "مانده حساب", "حداکثر قابل تبدیل", "تبدیل", "کل مانده قابل تبدیل", "مبلغ ارز مقصد", "مقصد"],
 	);
 	assert.equal(field(conversionMeta, "conversion_mode").default, "Receipt");
 	assert.equal(field(conversionMeta, "source_receipt").depends_on, "eval:doc.conversion_mode!=='Balance'");
@@ -651,10 +651,12 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	for (const name of ["as_of_balance", "balance_side", "max_convertible", "conversion_amount", "fill_max_convertible", "target_rate", "target_amount"]) {
 		assert.equal(field(conversionMeta, name).hidden, 1, name);
 	}
-	for (const name of ["target_party_type", "target_party", "target_account", "balance_target_section"]) {
+	for (const name of ["target_party_type", "target_party", "target_account"]) {
 		assert.ok(!field(conversionMeta, name).hidden, name);
 		assert.equal(field(conversionMeta, name).depends_on, "eval:doc.conversion_mode==='Balance'", name);
 	}
+	assert.equal(field(conversionMeta, "balance_target_section").hidden, 1);
+	assert.equal(field(conversionMeta, "column_break_balance_target").hidden, 1);
 	assert.equal(field(conversionMeta, "target_party_type").label, "نوع طرف مقصد");
 	assert.equal(field(conversionMeta, "target_party").label, "طرف مقصد");
 	assert.equal(field(conversionMeta, "target_account").label, "حساب مقصد");
@@ -667,14 +669,30 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	assert.ok(spBalanceForm.DUPLICATE_FIELDS.includes("fill_max_convertible"));
 	assert.ok(!spBalanceForm.DUPLICATE_FIELDS.includes("target_party_type"));
 	assert.deepEqual(spBalanceForm.DESTINATION_FIELDS, ["target_party_type", "target_party", "target_account"]);
-	assert.equal(spBalanceForm.CONVERSION_TABLE.length, 3);
+	assert.equal(spBalanceForm.CONVERSION_TABLE.length, 6);
+	assert.deepEqual(
+		spBalanceForm.CONVERSION_TABLE.map(([fieldname]) => fieldname),
+		["conversion_amount", "target_rate", "target_amount", "target_party_type", "target_party", "target_account"],
+	);
 	assert.deepEqual(
 		spBalanceForm.CONVERSION_TABLE.map(([, label]) => label),
-		["مبلغ تبدیل", "نرخ", "مبلغ ارز مقصد"],
+		["مبلغ تبدیل", "نرخ", "مبلغ ارز مقصد", "نوع طرف مقصد", "طرف مقصد", "حساب مقصد"],
 	);
+	assert.deepEqual(spBalanceForm.CUSTOM_FIELDS, ["conversion_amount", "target_rate", "target_amount"]);
 	assert.deepEqual(spBalanceForm.OFF_BALANCE_SIDE_LABELS, { Debit: "مقصد بدهکار", Credit: "مقصد بستانکار" });
 	assert.equal(spBalanceForm.MESSAGES.destinationNature, "ماهیت حساب مقصد");
 	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
+});
+
+test("Balance layout hides the empty native destination section and keeps the six table fields visible", () => {
+	const frm = balanceForm();
+	spBalanceForm.applyLayout(frm);
+	assert.equal(frm.tableProperties["balance_target_section:hidden"], 1);
+	assert.equal(frm.tableProperties["column_break_balance_target:hidden"], 1);
+	for (const fieldname of spBalanceForm.DESTINATION_FIELDS) {
+		assert.equal(frm.tableProperties[`${fieldname}:hidden`], 0, fieldname);
+		assert.equal(frm.tableProperties[`${fieldname}:depends_on`], "eval:doc.conversion_mode==='Balance'", fieldname);
+	}
 });
 
 test("the list shows mode, source Receipt, date, currency, source Party and amount with contextual mode labels", () => {
@@ -815,12 +833,18 @@ test("Balance source table is a compact RTL row with کل مانده", () => {
 	}
 	assert.ok(html.includes("data-sp-balance-fill"));
 	const conversion = spBalanceForm.conversionMarkup();
-	assert.ok(conversion.includes("مبلغ تبدیل"));
-	assert.ok(conversion.includes("مبلغ ارز مقصد"));
-	assert.ok(!conversion.includes("مبلغ قابل‌تبدیل"));
-	assert.ok(!conversion.includes("نوع طرف مقصد"));
-	assert.ok(!conversion.includes("overflow-x:auto"));
 	assert.ok(conversion.includes("sp-balance-conversion"));
+	assert.ok(conversion.includes("<table"));
+	assert.ok(conversion.includes("sp-balance-target"));
+	for (const label of ["مبلغ تبدیل", "نرخ", "مبلغ ارز مقصد", "نوع طرف مقصد", "طرف مقصد", "حساب مقصد"]) {
+		assert.ok(conversion.includes(label), label);
+	}
+	for (const fieldname of ["conversion_amount", "target_rate", "target_amount", "target_party_type", "target_party", "target_account"]) {
+		assert.ok(conversion.includes(`data-sp-balance-field="${fieldname}"`), fieldname);
+	}
+	assert.ok(!conversion.includes("مبلغ قابل‌تبدیل"));
+	assert.ok(!conversion.includes("overflow-x:auto"), "the conversion table must not create a clipping scroll box");
+	assert.ok(!conversion.includes("display:flex"), "the six columns live in a table, not a flex host");
 	assert.ok(!spBalanceForm.sourceTableHtml({ source_party: "", source_account: "" }, { editable: true, format: () => "" }).includes("<table"));
 });
 
@@ -835,6 +859,35 @@ test("the Balance Target Amount is a server preview and the rate is never writte
 	await spBalanceForm.preview(frm);
 	assert.match(calls.alerts.at(-1).message, /نرخ باید بزرگ‌تر از صفر/);
 	assert.equal(frm.doc.target_amount, 1111.11, "an invalid rate does not overwrite the last valid amount");
+});
+
+test("the preview writes the formatted Target Amount into the visible control", async () => {
+	const frm = balanceForm({ conversion_amount: 100000000, target_rate: 90000 });
+	const element = { value: "" };
+	const control = {
+		df: { fieldtype: "Currency", fieldname: "target_amount" },
+		value: null,
+		format_for_input: (value) => (value === null || value === undefined ? "" : String(value)),
+		set_formatted_input(value) {
+			this.$input.val(this.format_for_input(value));
+		},
+		$input: {
+			val(value) {
+				if (value === undefined) {
+					return element.value;
+				}
+				element.value = value;
+				return this;
+			},
+		},
+	};
+	frm.__sp_balance_ui = { natives: {}, controls: { target_amount: control } };
+	await spBalanceForm.preview(frm);
+	assert.deepEqual([frm.doc.target_amount, element.value], [1111.11, "1111.11"]);
+	frm.doc.target_amount = null;
+	frm.__sp_balance_ui.controls.target_amount.value = 55;
+	spBalanceForm.refreshConversionValue(frm, "target_amount");
+	assert.equal(element.value, "", "a cleared Target Amount clears the visible input too");
 });
 
 test("Receipt-mode legs never load for a Balance Conversion", async () => {

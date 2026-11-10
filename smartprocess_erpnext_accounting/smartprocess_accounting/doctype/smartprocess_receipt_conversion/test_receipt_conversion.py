@@ -35,6 +35,20 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_
 
 from .conversion_test_support import CONVERSION, HUNDRED_M, POSTING, RECEIPT, ConversionFixtures
 
+_PREVIOUS_LANG = None
+
+
+def setUpModule():
+	"""Pin message assertions to the source strings, independent of the site language."""
+	global _PREVIOUS_LANG
+	_PREVIOUS_LANG = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+
+
+def tearDownModule():
+	if _PREVIOUS_LANG is not None:
+		frappe.local.lang = _PREVIOUS_LANG
+
 
 class TestPostingLineAgainstReference(unittest.TestCase):
 	def test_existing_callers_get_no_against_voucher_keys(self):

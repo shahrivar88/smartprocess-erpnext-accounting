@@ -212,10 +212,10 @@ const spConversionSides = {
 	},
 
 	relabel(frm) {
-		const receipt = this.isReceiptMode(frm.doc);
+		// The approved Balance design keeps the Receipt headings for both tables.
 		const labels = {
-			receiver_conversion_section: receipt ? "تبدیل دریافت‌کننده" : "منبع",
-			payer_conversion_section: receipt ? "تبدیل پرداخت‌کنندگان" : "تبدیل",
+			receiver_conversion_section: "تبدیل دریافت‌کننده",
+			payer_conversion_section: "تبدیل پرداخت‌کنندگان",
 		};
 		for (const [fieldname, label] of Object.entries(labels)) {
 			frm.set_df_property(fieldname, "label", label);

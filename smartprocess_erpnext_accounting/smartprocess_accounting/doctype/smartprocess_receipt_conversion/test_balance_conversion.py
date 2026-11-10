@@ -26,6 +26,20 @@ from .conversion_test_support import CONVERSION, HUNDRED_M, POSTING, RECEIPT, Co
 
 D = Decimal
 
+_PREVIOUS_LANG = None
+
+
+def setUpModule():
+	"""Pin message assertions to the source strings, independent of the site language."""
+	global _PREVIOUS_LANG
+	_PREVIOUS_LANG = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+
+
+def tearDownModule():
+	if _PREVIOUS_LANG is not None:
+		frappe.local.lang = _PREVIOUS_LANG
+
 
 class TestBalanceConversion(ConversionFixtures):
 	def setUp(self):

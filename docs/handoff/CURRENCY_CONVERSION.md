@@ -51,7 +51,7 @@ Important DocType fields (`smartprocess_receipt_conversion.json`):
 - Destination: `target_party_type`, `target_party`, `target_account`, `target_currency`
 - Flags: `off_balance_conversion`, `off_balance_side`
 - HTML hosts: `receiver_conversion_html`, `payer_conversion_html`
-- Section: `balance_target_section` (native destination Links in current code)
+- Section: `balance_target_section` (hidden; the native destination Links are moved into table 2 by `balance_form.js`)
 
 ## APIs
 

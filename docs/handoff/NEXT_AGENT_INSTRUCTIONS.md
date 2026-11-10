@@ -5,7 +5,7 @@ You continue SmartProcess Accounting without this chat history. Read the handoff
 ## Start here (read order)
 
 1. `docs/handoff/CURRENT_STATUS.md`
-2. `docs/handoff/UI_DESIGN_AND_BUGS.md` — **OPEN bugs are authoritative**
+2. `docs/handoff/UI_DESIGN_AND_BUGS.md`
 3. `docs/handoff/CURRENCY_CONVERSION.md`
 4. `docs/handoff/ACCOUNTING_ARCHITECTURE.md`
 5. `docs/handoff/TESTING.md`
@@ -28,9 +28,9 @@ Load the SmartProcess ERPNext skill on this machine before changing accounting c
 ## Hard decisions from the user
 
 - Receipt mode stays.
-- Balance UI: **two tables**; destination fields belong in table 2.
+- Balance UI: **two tables**; all six fields belong in table 2.
 - Remove display of «مبلغ قابل‌تبدیل» from table 2 (server cap remains).
-- Rename amount label to «مبلغ تبدیل».
+- Amount label is «مبلغ تبدیل».
 - Off-balance nature: UI «مقصد بدهکار» / «مقصد بستانکار»; storage stays `Debit` / `Credit`.
 - Debit choice ⇒ source Credit, target Debit. Credit choice ⇒ source Debit, target Credit.
 - Live target = amount ÷ rate; server preview is truth.
@@ -42,9 +42,19 @@ Load the SmartProcess ERPNext skill on this machine before changing accounting c
 - Stop if Core change, destructive schema, or GL/PLE incompatibility is required — ask the user.
 - Isolated tests only with `SP_ALLOW_ACCOUNTING_FIXTURES=1` and rollback.
 
-## Immediate work (Step 2 expected)
+## State at this handoff (2026-11-10)
 
-Fix OPEN-1 and OPEN-2 in `UI_DESIGN_AND_BUGS.md`. Do not start unrelated refactors. After code change: `bench build` / `clear-cache` as needed, then **real browser** proof on 8080. Unit-test green alone is not enough for UI PASS.
+OPEN-1 and OPEN-2 are **closed** and were verified in the real Desk:
+
+- Two tables, six fields inside table 2, native destination Links relocated into
+  the cells, the old «مقصد» section hidden.
+- Target amount updates live for both entry orders.
+- All three destination dropdowns open without clipping.
+- Real Save/Reload on draft `SP-RCONV-2026-00058` matched the server; the draft
+  was deleted. No GL posted.
+- `bench migrate` applied the JSON metadata on the site; no pending patches
+  existed in any installed app.
+- JS 64 passed; Balance Python 23 passed; Receipt Python 42 passed.
 
 ## Install / verify commands
 
@@ -56,15 +66,27 @@ node --test smartprocess_erpnext_accounting/smartprocess_accounting/tests/test_r
 # see TESTING.md console recipe with SP_ALLOW_ACCOUNTING_FIXTURES=1
 ```
 
-After JS/asset edits inside the container mount:
+After JS edits inside the container mount:
 
 ```bash
 bench --site SmartProcessERP clear-cache
-bench build --app smartprocess_erpnext_accounting
+bench build --app smartprocess_erpnext_accounting   # only if not in developer_mode
 ```
+
+## Next work
+
+Do not reopen the two-table layout. If a future change touches the Balance form:
+
+- keep table 2 free of any overflow/scroll wrapper, or Awesomplete will clip;
+- keep the native Links as the selectors (queries, model commits, Awesomplete);
+- re-run the browser checklist in `TESTING.md`, including a real Save/Reload.
 
 ## Knowledge that is fact vs unverified
 
-**Fact (in code):** off-balance posting, Payment eligibility, preview API, `writeControlValue` bypass for read_only Currency, destination Links currently native outside table 2.
+**Fact (verified in browser and tests):** two-table layout, six in-table fields,
+live target amount, dropdown placement, real Save/Reload, 65 Python tests, 64 JS
+tests, migrated DocType metadata.
 
-**Unverified / rejected by user:** claims that dropdown and live target amount are PASS in Desk. Treat as OPEN until you see it yourself.
+**Not exercised visually:** «کل مانده» with a nonzero Company-currency source
+balance (this site had none in the sampled parties); its logic is covered by two
+unit tests.
