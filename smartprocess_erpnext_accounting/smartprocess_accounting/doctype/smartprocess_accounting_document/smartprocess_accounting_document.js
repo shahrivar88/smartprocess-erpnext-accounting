@@ -131,6 +131,14 @@ function startReceiptConversion(frm) {
 	return frappe.new_doc(SP_RECEIPT_CONVERSION, { source_receipt: frm.doc.name, company: frm.doc.company });
 }
 
+const CORRECTION_TEXT = {
+	continueLabel: "ادامه",
+	confirm:
+		"با ادامه این عملیات، سند اصلی لغو شده و یک سند اصلاحی جدید به‌صورت پیش‌نویس ایجاد می‌شود. سند اصلی و سوابق حسابداری آن حفظ خواهند شد. آیا مطمئن هستید؟",
+	confirmLabel: "تأیید و اصلاح",
+	cancelLabel: "انصراف",
+};
+
 function promptForCorrection(frm) {
 	frappe.prompt(
 		[
@@ -141,9 +149,21 @@ function promptForCorrection(frm) {
 				reqd: 1,
 			},
 		],
-		(values) => startCorrection(frm, values.correction_reason),
+		(values) => confirmCorrection(frm, values.correction_reason),
 		__("Correction"),
-		__("Create Draft"),
+		CORRECTION_TEXT.continueLabel,
+	);
+}
+
+// The server call is reachable only from the primary action; dismissing the
+// standard confirmation (or closing it) sends nothing.
+function confirmCorrection(frm, correctionReason) {
+	frappe.confirm(
+		CORRECTION_TEXT.confirm,
+		() => startCorrection(frm, correctionReason),
+		null,
+		CORRECTION_TEXT.confirmLabel,
+		CORRECTION_TEXT.cancelLabel,
 	);
 }
 
