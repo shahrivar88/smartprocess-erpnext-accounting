@@ -150,6 +150,9 @@ function promptForCorrection(frm) {
 function startCorrection(frm, correctionReason) {
 	return frm.call({
 		method: "start_correction",
+		// Without the doc, Frappe resolves the name against the module; the
+		// whitelisted method lives on the controller class (run_doc_method).
+		doc: frm.doc,
 		args: { correction_reason: correctionReason },
 		freeze: true,
 		freeze_message: __("Creating correction Draft..."),
