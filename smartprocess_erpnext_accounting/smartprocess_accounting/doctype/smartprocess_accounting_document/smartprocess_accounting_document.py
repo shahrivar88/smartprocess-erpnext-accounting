@@ -24,6 +24,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import cano
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import (
 	assert_no_active_conversions,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.transfer import canonicalize_transfer
 
 SERIES_FIELDS = {
 	"Receipt": "receipt_naming_series",
@@ -162,5 +163,6 @@ class SmartProcessAccountingDocument(AccountsController):
 
 	def _validate_accounting(self):
 		canonicalize_receipt(self)
+		canonicalize_transfer(self)
 		canonicalize_payment(self)
 		return validate_document(self)

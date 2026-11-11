@@ -205,7 +205,7 @@ const spReceiptForm = {
 	},
 
 	// Restores the DocType metadata for every property the Receipt or Payment
-	// layout changes, so Transfer / Conversion keep their generic grid.
+	// layout changes, so a Conversion keeps its generic grid.
 	genericGridProperties() {
 		const changed = [spReceiptConfig.OPERATION, spReceiptConfig.PAYMENT].flatMap((operation_type) =>
 			this.receiptGridProperties({ operation_type }),

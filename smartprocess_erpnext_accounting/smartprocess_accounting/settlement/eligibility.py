@@ -62,7 +62,7 @@ def settlement_leg(doc, *, enabled=None, has_posting=None, accounts=None) -> Set
 	if not enabled:
 		return SettlementSkip("تسویه از مسیر Payment Entry خاموش است.", "disabled")
 	if doc.operation_type not in FLOW_OPERATIONS:
-		return SettlementSkip("فقط دریافت و پرداخت از این مسیر تسویه می‌شوند.", "operation")
+		return SettlementSkip("فقط دریافت، پرداخت و انتقال از این مسیر تسویه می‌شوند.", "operation")
 	if has_posting is None and getattr(doc, "name", None):
 		has_posting = bool(frappe.db.exists("SmartProcess Accounting Posting", {"source_document": doc.name}))
 	if has_posting:
@@ -72,15 +72,15 @@ def settlement_leg(doc, *, enabled=None, has_posting=None, accounts=None) -> Set
 
 def pair_leg(doc, accounts=None) -> SettlementLeg | SettlementSkip:
 	if doc.operation_type not in FLOW_OPERATIONS:
-		return SettlementSkip("فقط دریافت و پرداخت از این مسیر تسویه می‌شوند.", "operation")
+		return SettlementSkip("فقط دریافت، پرداخت و انتقال از این مسیر تسویه می‌شوند.", "operation")
 	pairs = list(doc.operational_pairs or [])
 	if len(pairs) != 1:
 		return SettlementSkip(
-			"رسید چندردیفی با چند Payment Entry هنوز از نظر اتمیک بودن روی این سایت اثبات نشده و در مسیر ثبت فعلی می‌ماند.",
+			"سند چندردیفی با چند Payment Entry هنوز از نظر اتمیک بودن روی این سایت اثبات نشده و در مسیر ثبت فعلی می‌ماند.",
 			"multi_row",
 		)
 	row = pairs[0]
-	if doc.operation_type == "Receipt":
+	if doc.operation_type in ("Receipt", "Transfer"):
 		return _leg_from_sides(
 			doc, row, party_side="credit", money_side="debit", payment_type="Receive", accounts=accounts
 		)

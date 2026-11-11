@@ -2,7 +2,9 @@
 
 Status: Historical design contract. Current product status is in [`docs/CURRENT.md`](../CURRENT.md).
 
-Cancelled after this contract: multi-currency Party on one Party record; live Transfer posting; document-level Currency Conversion posting. Those schema values remain for history. New documents offer Receipt and Payment only. Live currency conversion is `SmartProcess Receipt Conversion`.
+Cancelled after this contract: multi-currency Party on one Party record; document-level Currency Conversion posting. Those schema values remain for history. Live currency conversion is `SmartProcess Receipt Conversion`.
+
+Live Transfer posting was reinstated on its own engine and, in this release, follows Receipt's behaviour exactly. New documents offer Receipt, Payment and Transfer.
 
 ## Purpose
 

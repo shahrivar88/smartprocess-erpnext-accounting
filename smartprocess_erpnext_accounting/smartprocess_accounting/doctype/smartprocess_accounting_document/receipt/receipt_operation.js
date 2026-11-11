@@ -37,7 +37,8 @@ const spReceiptOperation = {
 	},
 
 	confirm(previous, current, escape = (value) => frappe.utils.escape_html(value)) {
-		const label = (type) => (type === "Payment" ? "پرداخت" : type === "Receipt" ? "دریافت" : type || "—");
+		const label = (type) =>
+			type === "Payment" ? "پرداخت" : type === "Receipt" ? "دریافت" : type === "Transfer" ? "انتقال" : type || "—";
 		const message = __(spFlowText.of({ operation_type: current }).operationChange, [
 			escape(label(previous)),
 			escape(label(current)),

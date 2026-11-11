@@ -2,7 +2,9 @@
 
 Status: Historical behavior contract. Current live operations are in [`docs/CURRENT.md`](../CURRENT.md).
 
-Receipt and Payment are live. Transfer and document-level Currency Conversion remain in schema and stay blocked on Submit.
+Receipt, Payment and Transfer are live. Document-level Currency Conversion remains in schema and stays blocked on Submit.
+
+Transfer is live with Receipt's behaviour. The debit/credit direction in the table below describes the operation type's intended meaning and is not implemented yet; Transfer currently records the Receipt direction — rows credit the payer, the header debits the receiver.
 
 ## Initial operation types
 

@@ -1,6 +1,6 @@
 # SmartProcess_ERPNext_Accounting
 
-اپ Frappe/ERPNext برای رسید، پرداخت، تبدیل ارز و گردش حساب روی GL استاندارد. نسخه: **0.5.0**.
+اپ Frappe/ERPNext برای رسید، پرداخت، انتقال، تبدیل ارز و گردش حساب روی GL استاندارد. نسخه: **0.5.0**.
 
 نیاز: Frappe `>=16,<17`، ERPNext `>=16,<17`، Python `>=3.10`.
 
@@ -8,7 +8,7 @@
 
 ## وضعیت عملیات
 
-- **Receipt** و **Payment** مسیر ثبت فعال هستند. فرم سند جدید فقط همین دو گزینه را نشان می‌دهد.
+- **Receipt**، **Payment** و **Transfer** مسیر ثبت فعال هستند. فرم سند جدید همین سه گزینه را نشان می‌دهد.
 - تبدیل ارز فعال DocType جداگانه `SmartProcess Receipt Conversion` است.
 - تسویه اختیاری Path A: یک ردیف Customer یا Supplier در برابر بانک یا صندوق، یک `Payment Entry` استاندارد می‌سازد. حالت‌ها: Auto، Manual، Open.
 - صفحه «تطبیق و تسویه» تخصیص پس از ثبت و Unreconcile را از مسیر استاندارد Payment Reconciliation انجام می‌دهد.
@@ -17,7 +17,8 @@
 - چندردیفی و عملیات ناسازگار روی Path B (ثبت فعلی SmartProcess) می‌مانند.
 - فلگ `enable_payment_entry_settlement` پیش‌فرض خاموش است.
 - تهاتر Common Party: نرخ هر دو ردیف هم‌ارز از تنظیمات «منبع نرخ ارز تهاتر» می‌آید. پیش‌فرض نرخ فاکتور مبدأ است. JE دستی و تهاتر SmartProcess تغییر نمی‌کنند.
-- **Transfer** و Currency Conversion روی سند حسابداری در Submit مسدودند و از انتخاب سند جدید مخفی‌اند. Schema برای اسناد تاریخی می‌ماند.
+- **Transfer** موتور مستقل دارد (`transfer_api.py`، `transfer_builder.py`، `transfer_posting.py`) و در این نسخه دقیقاً مثل Receipt رفتار می‌کند: همان فرم، اعتبارسنجی، محاسبه، ثبت، تسویه، اصلاح و گزارش.
+- Currency Conversion روی سند حسابداری در Submit مسدود است و از انتخاب سند جدید مخفی است. Schema برای اسناد تاریخی می‌ماند.
 - هر Account فقط `account_currency` خودش را می‌پذیرد.
 - DocTypeهای بازنشسته فقط Read+Report دارند؛ کنترلر آن‌ها throw می‌کند.
 - Hybrid Lock در کد تولید خاموش است (`LIVE_LOCKS_ENABLED = False`).
@@ -47,7 +48,7 @@ bench --site <site> clear-website-cache
 ## ورود
 
 1. Desk → «رسید هوشمند».
-2. سند `SmartProcess Accounting Document` با نوع Receipt یا Payment.
+2. سند `SmartProcess Accounting Document` با نوع Receipt، Payment یا Transfer.
 
 ## تهاتر Common Party
 
@@ -67,7 +68,7 @@ bench --site <site> clear-website-cache
 
 - رسید یا پرداخت چندردیفی هنوز چند `Payment Entry` در یک Submit نمی‌سازد.
 - تهاتر چندارزی خاموش است. هر دو طرف باید شرکت، ارز و نرخ یکسان داشته باشند.
-- Transfer هنوز پیاده‌سازی نشده است و از فرم سند جدید مخفی است.
+- Transfer فعلاً همان اعتبارسنجی و حساب‌داری Receipt را دارد. واگرایی آینده — فیلد، قاعده، محاسبه، ثبت، تسویه و گزارش — فقط از راه `transfer_contract.py` و `transfer_builder.py` انجام می‌شود.
 - Override کلاس `Payment Entry` اضافه نشده است. مسیر اجرا همان Override موجود HRMS است.
 
 ## پشتیبان و حذف اپ
@@ -84,7 +85,7 @@ bench --site <site> clear-website-cache
 
 ## تست‌های Transfer
 
-Submit عملیات Transfer و Currency Conversion روی رسید هوشمند مسدود است. تست‌های موتور ثبت آن عملیات‌ها حذف شدند؛ پوشش فعال در Receipt / Payment / `test_live_readiness.py` است.
+Submit عملیات Currency Conversion روی رسید هوشمند مسدود است. Transfer در `test_transfer.py` پوشش دارد: نوع ذخیره‌شده و سری نام‌گذاری مستقل، برابری GL و Payment Ledger Entry با Receipt، لغو، اصلاح و بی‌اثر بودن Transfer روی Receipt. `test_live_readiness.py` هر سه عملیات فعال را ثبت و لغو می‌کند.
 
 ## CI
 

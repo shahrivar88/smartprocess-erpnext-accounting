@@ -325,7 +325,7 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 		frappe.set_user("Administrator")
 		super().tearDown()
 
-	def document(self, pairs, *, operation_type="Transfer", company=COMPANY):
+	def document(self, pairs, *, operation_type="Currency Conversion", company=COMPANY):
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
@@ -338,9 +338,9 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 		)
 
 	def submit_document(self, pairs, *, operation_type="Receipt", company=COMPANY):
-		if operation_type in ("Transfer", "Currency Conversion"):
+		if operation_type == "Currency Conversion":
 			raise AssertionError(
-				f"{operation_type} submit is blocked on purpose; use Receipt or Payment"
+				"Currency Conversion submit is blocked on purpose; use Receipt, Payment or Transfer"
 			)
 		doc = self.document(pairs, operation_type=operation_type, company=company).insert()
 		doc.submit()
@@ -351,6 +351,34 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 			{
 				"doctype": "SmartProcess Accounting Document",
 				"operation_type": "Receipt",
+				"company": COMPANY,
+				"posting_date": nowdate(),
+				"general_reference": frappe.generate_hash(length=10),
+				"receipt_payer_currency": BASE,
+				"receipt_payer_account": RECEIVABLE_BASE,
+				"receipt_payer_exchange_rate": 1,
+				"receipt_credit_currency": BASE,
+				"receipt_payer_type": "Customer",
+				"receipt_payer": CUSTOMER_BASE,
+				"receipt_receiver_kind": "Customer",
+				"operational_pairs": [
+					{
+						"receipt_recipient_type": "Account",
+						"receipt_currency": BASE,
+						"credit_account": BASE_BANK,
+						"credit_amount": 100,
+						"credit_exchange_rate": 1,
+					}
+				],
+			}
+		).insert().submit()
+
+	def submit_base_transfer(self):
+		"""A base-currency Transfer shaped exactly like ``submit_base_receipt``."""
+		return frappe.get_doc(
+			{
+				"doctype": "SmartProcess Accounting Document",
+				"operation_type": "Transfer",
 				"company": COMPANY,
 				"posting_date": nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
@@ -484,7 +512,7 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 		)
 
 	def accounting_vouchers(self, doc, *, include_cancelled=False):
-		if doc.operation_type not in ("Receipt", "Payment"):
+		if doc.operation_type not in ("Receipt", "Payment", "Transfer"):
 			return doc.doctype, [doc.name]
 		filters = {"source_document": doc.name}
 		if not include_cancelled:

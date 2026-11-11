@@ -4,7 +4,7 @@ This file is the current architecture map. Design history lives in `docs/v2/` an
 
 ## Live operations
 
-- Receipt and Payment on `SmartProcess Accounting Document`
+- Receipt, Payment and Transfer on `SmartProcess Accounting Document`
 - Currency conversion on `SmartProcess Receipt Conversion` (from a receipt or from a balance)
 - Financial Intermediary as a standard ERPNext Party Type
 - Party Account Explorer on standard `GL Entry`
@@ -12,7 +12,9 @@ This file is the current architecture map. Design history lives in `docs/v2/` an
 - Currency-specific party accounts on Sales Invoice and Purchase Invoice
 - Optional Shareholder current-account paths, all off by default
 
-Transfer and document-level Currency Conversion stay in the DocType schema. Submit is blocked. New forms offer only Receipt and Payment.
+Document-level Currency Conversion stays in the DocType schema and its Submit stays blocked. New forms offer Receipt, Payment and Transfer.
+
+Transfer has its own engine — `transfer_api.py`, `transfer_builder.py`, `transfer_posting.py` and `transfer_contract.py` — over the shared posting infrastructure. In this release it behaves exactly like Receipt in the form, validation, calculation, posting, settlement, correction and reports. The stored `operation_type`, the `SP-TRF-` naming series and every entry point are Transfer's own, so the two can diverge without touching Receipt.
 
 ## Shareholder accounting
 

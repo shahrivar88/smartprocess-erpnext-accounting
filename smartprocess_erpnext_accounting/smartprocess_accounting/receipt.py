@@ -12,13 +12,16 @@ from frappe import _
 from frappe.utils import escape_html
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import decimal_text
+from smartprocess_erpnext_accounting.smartprocess_accounting.pair_sides import (
+	apply_header,
+	apply_row,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_builder import ReceiptBuilder
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import (
 	ACCOUNT_RECIPIENT,
 	BANK_ACCOUNT_RECIPIENT,
 	PAYER_TYPES,
 	CanonicalReceipt,
-	CanonicalRow,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_lookups import ReceiptLookups
 
@@ -95,46 +98,9 @@ def _text(value) -> str | None:
 
 
 def _apply_receipt(doc, receipt: CanonicalReceipt) -> None:
-	receiver = receipt.receiver
-	doc.company_currency = receipt.company_currency
-	doc.receipt_payer_exchange_rate = decimal_text(receipt.receiver_rate)
-	doc.receipt_payer_account = receiver.account
-	doc.receipt_payer_type = receiver.party_type
-	doc.receipt_payer = receiver.party
-	doc.receipt_bank_account = receiver.bank_account
+	apply_header(doc, receipt)
 	for row, canonical in zip(doc.operational_pairs, receipt.rows, strict=True):
-		_apply_row(row, canonical, receipt)
-
-
-def _apply_row(row, canonical: CanonicalRow, receipt: CanonicalReceipt) -> None:
-	receiver = receipt.receiver
-	base_amount = decimal_text(canonical.base_amount)
-	row.update(
-		{
-			"receipt_currency": canonical.currency,
-			"receipt_posting_date": canonical.posting_date,
-			"receipt_payer_exchange_rate": None,
-			"company_currency": receipt.company_currency,
-			"credit_account": canonical.account,
-			"credit_party_type": canonical.party_type,
-			"credit_party": canonical.party,
-			"credit_account_currency": canonical.currency,
-			"credit_amount": decimal_text(canonical.amount),
-			"credit_exchange_rate": decimal_text(canonical.exchange_rate),
-			"credit_company_amount": base_amount,
-			"debit_account": receiver.account,
-			"debit_party_type": receiver.party_type,
-			"debit_party": receiver.party,
-			"debit_account_currency": receipt.receiver_currency,
-			"debit_amount": decimal_text(canonical.receiver_amount),
-			"debit_exchange_rate": decimal_text(canonical.receiver_rate),
-			"debit_company_amount": base_amount,
-			"debit_suggested_account": None,
-			"debit_description": row.get("credit_description"),
-		}
-	)
-	if canonical.payer_type == ACCOUNT_RECIPIENT:
-		row.receipt_recipient = None
+		apply_row(row, canonical, receipt, row_side="credit", header_side="debit")
 
 
 def _raise_issues(receipt: CanonicalReceipt) -> None:

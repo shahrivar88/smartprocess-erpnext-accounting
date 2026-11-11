@@ -36,14 +36,14 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 		self.assertEqual(len(set(prefixes.values())), len(prefixes))
 		for operation_type, prefix in prefixes.items():
 			with self.subTest(operation_type=operation_type):
-				if operation_type in ("Transfer", "Currency Conversion"):
+				if operation_type == "Currency Conversion":
 					doc = self.insert_blocked_operation(operation_type)
 					self.assertTrue(doc.name.startswith(prefix))
 					self.assertEqual(doc.docstatus, 0)
 					self.assertFalse(self.active_gl(doc))
 					continue
-				if operation_type == "Receipt":
-					doc = self._submit_base_receipt()
+				if operation_type in ("Receipt", "Transfer"):
+					doc = self._submit_base_flow_operation(operation_type)
 				else:
 					doc = self._submit_base_payment()
 				rows = self.active_gl(doc)
@@ -115,11 +115,11 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 			sum((Decimal(str(row.credit)) for row in rows), Decimal("0")),
 		)
 
-	def _submit_base_receipt(self):
+	def _submit_base_flow_operation(self, operation_type):
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
-				"operation_type": "Receipt",
+				"operation_type": operation_type,
 				"company": COMPANY,
 				"posting_date": frappe.utils.nowdate(),
 				"general_reference": frappe.generate_hash(length=10),
@@ -130,7 +130,7 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 				"receipt_payer_type": "Customer",
 				"receipt_payer": CUSTOMER_BASE_PARTY,
 				# Server-side defaults inject the JSON default «بانک» into any
-				# Receipt missing this field, which would reject the party
+				# flow document missing this field, which would reject the party
 				# receiver; mirror the production fallback (payer_type).
 				"receipt_receiver_kind": "Customer",
 				"operational_pairs": [

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Transfer روی `SmartProcess Accounting Document` فعال شد و در این نسخه دقیقاً مثل Receipt رفتار می‌کند: فرم، فیلدها، اعتبارسنجی، محاسبه، ثبت GL و Payment Ledger Entry، تسویه، لغو، اصلاح و گزارش.
+- موتور Transfer مستقل است: `transfer_contract.py`، `transfer_builder.py`، `transfer_api.py`، `transfer_posting.py` و `transfer.py`. زیرساخت مشترک — `pair_sides.py`، `posting_units.py` و مسیر Payment Entry — بین سه عملیات مشترک است.
+- نوع ذخیره‌شده `Transfer`، سری نام‌گذاری `SP-TRF-` و پیش‌نمایش `transfer_api.preview_transfer` مخصوص Transfer است؛ رفتار و دادهٔ Receipt تغییر نمی‌کند.
+- شرط‌های نمایش فیلدهای سربرگ در DocType JSON حالا `Transfer` را هم نام می‌برند. تا sync متادیتا، این تغییر فقط در کد است.
+- `test_transfer.py` اضافه شد: نوع و سری مستقل، برابری GL/PLE با Receipt، لغو، اصلاح و بی‌اثر بودن Transfer روی Receipt.
+
 ## 0.5.0
 
 - Journal Entry خودکار Common Party نرخ هر دو ردیف هم‌ارز را از منبع تنظیمات می‌گیرد. پیش‌فرض نرخ فاکتور مبدأ است.

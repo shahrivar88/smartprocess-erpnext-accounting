@@ -37,7 +37,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 
 SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
 # Operation types that post one date-grouped posting unit per row date.
-FLOW_OPERATIONS = ("Receipt", "Payment")
+FLOW_OPERATIONS = ("Receipt", "Payment", "Transfer")
 
 
 @dataclass(frozen=True)
@@ -129,16 +129,45 @@ def post_document(doc) -> None:
 		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.engine import (
 			post_via_payment_entry,
 		)
-		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
-			submit_receipt,
-		)
 
 		if post_via_payment_entry(doc):
 			return
-		submit_receipt(doc)
+		_submit_by_units(doc)
 		return
 	lines = validate_document(doc)
 	post_lines(doc, lines)
+
+
+def _submit_by_units(doc) -> None:
+	"""Each flow operation type owns its posting entry point."""
+	if doc.operation_type == "Transfer":
+		from smartprocess_erpnext_accounting.smartprocess_accounting.transfer_posting import (
+			submit_transfer,
+		)
+
+		submit_transfer(doc)
+		return
+	from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
+		submit_receipt,
+	)
+
+	submit_receipt(doc)
+
+
+def _cancel_by_units(doc) -> None:
+	"""Each flow operation type owns its cancellation entry point."""
+	if doc.operation_type == "Transfer":
+		from smartprocess_erpnext_accounting.smartprocess_accounting.transfer_posting import (
+			cancel_transfer,
+		)
+
+		cancel_transfer(doc)
+		return
+	from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
+		cancel_receipt,
+	)
+
+	cancel_receipt(doc)
 
 
 def post_lines(doc, lines: list[PostingLine]) -> None:
@@ -159,19 +188,15 @@ def cancel_document(doc) -> None:
 		frappe.throw(_("Only a cancelled SmartProcess Accounting Document can reverse its ledger."))
 	assert_native_posting_contract()
 	if posted_by_units(doc):
-		from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
-			cancel_receipt,
-		)
-
-		cancel_receipt(doc)
+		_cancel_by_units(doc)
 		return
 	cancel_voucher(doc)
 
 
 def posted_by_units(doc) -> bool:
-	"""A Payment submitted before Payment V1 posted its GL on the document itself
-	and keeps that reversal; Receipt always posts by posting unit."""
-	if doc.operation_type == "Receipt":
+	"""Receipt and Transfer always post by posting unit. A Payment submitted before
+	Payment V1 posted its GL on the document itself and keeps that reversal."""
+	if doc.operation_type in ("Receipt", "Transfer"):
 		return True
 	if doc.operation_type not in FLOW_OPERATIONS:
 		return False

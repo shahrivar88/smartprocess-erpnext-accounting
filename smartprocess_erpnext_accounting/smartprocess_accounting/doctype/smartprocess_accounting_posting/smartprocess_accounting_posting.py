@@ -4,7 +4,7 @@ import frappe
 from frappe import _
 from erpnext.controllers.accounts_controller import AccountsController
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_posting import (
+from smartprocess_erpnext_accounting.smartprocess_accounting.posting_units import (
 	cancel_posting_unit,
 	post_posting_unit,
 	validate_posting_unit,

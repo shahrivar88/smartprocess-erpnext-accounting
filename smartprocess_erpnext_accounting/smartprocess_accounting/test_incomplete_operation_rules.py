@@ -1,7 +1,8 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Transfer / Currency Conversion must be blocked before posting."""
+"""Currency Conversion must be blocked before posting. Receipt, Payment and
+Transfer each post through their own entry point."""
 
 from __future__ import annotations
 
@@ -44,17 +45,17 @@ class TestIncompleteOperationRules(unittest.TestCase):
 		)
 		self.assertEqual(set(options.split("\n")), set(KNOWN_OPERATIONS))
 		self.assertEqual(set(SERIES_FIELDS), set(KNOWN_OPERATIONS))
-		self.assertEqual(FLOW_OPERATIONS, ("Receipt", "Payment"))
+		self.assertEqual(FLOW_OPERATIONS, ("Receipt", "Payment", "Transfer"))
 		self.assertTrue(INCOMPLETE_OPERATIONS.isdisjoint(FLOW_OPERATIONS))
 
-	def test_transfer_and_conversion_are_blocked(self):
-		for operation in ("Transfer", "Currency Conversion"):
-			self.assertTrue(should_block_incomplete_submit(operation))
-			reason = submit_block_reason(operation)
-			self.assertIn("هنوز فعال نشده", reason)
-			self.assertIn(operation, reason)
-		self.assertIsNone(submit_block_reason("Receipt"))
-		self.assertIsNone(submit_block_reason("Payment"))
+	def test_only_conversion_is_blocked(self):
+		self.assertTrue(should_block_incomplete_submit("Currency Conversion"))
+		reason = submit_block_reason("Currency Conversion")
+		self.assertIn("هنوز فعال نشده", reason)
+		self.assertIn("Currency Conversion", reason)
+		for operation in ("Receipt", "Payment", "Transfer"):
+			self.assertFalse(should_block_incomplete_submit(operation))
+			self.assertIsNone(submit_block_reason(operation))
 
 	def test_unknown_and_empty_types_are_blocked(self):
 		for operation in (None, "", "Journal", "Unknown"):
@@ -65,29 +66,29 @@ class TestIncompleteOperationRules(unittest.TestCase):
 	def test_assert_blocks_before_any_gl_helper_would_run(self):
 		post = MagicMock()
 		with self.assertRaises(IncompleteOperationBlocked):
-			assert_operation_ready_to_post("Transfer")
+			assert_operation_ready_to_post("Currency Conversion")
 			post()
 		post.assert_not_called()
-		assert_operation_ready_to_post("Receipt")
+		for operation in ("Receipt", "Payment", "Transfer"):
+			assert_operation_ready_to_post(operation)
 
-	def test_before_submit_rejects_transfer_before_posting(self):
-		import frappe
-
+	def test_before_submit_posts_transfer(self):
 		doc = SmartProcessAccountingDocument({"doctype": "SmartProcess Accounting Document"})
 		doc.operation_type = "Transfer"
 		posted = MagicMock()
+		enabled = MagicMock()
 		with patch(
 			"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_document.smartprocess_accounting_document.post_document",
 			posted,
 		):
 			with patch(
 				"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_document.smartprocess_accounting_document.require_posting_enabled",
-				posted,
+				enabled,
 			):
-				with self.assertRaises(frappe.ValidationError) as ctx:
+				with patch.object(doc, "_validate_accounting"):
 					doc.before_submit()
-		self.assertIn("Transfer", str(ctx.exception))
-		posted.assert_not_called()
+		enabled.assert_called_once()
+		posted.assert_called_once_with(doc)
 
 	def test_before_submit_rejects_currency_conversion_before_posting(self):
 		import frappe
@@ -103,11 +104,22 @@ class TestIncompleteOperationRules(unittest.TestCase):
 				doc.before_submit()
 		posted.assert_not_called()
 
-	def test_on_submit_also_rejects_incomplete_types(self):
+	def test_on_submit_never_posts_a_flow_operation_twice(self):
+		doc = SmartProcessAccountingDocument({"doctype": "SmartProcess Accounting Document"})
+		doc.operation_type = "Transfer"
+		posted = MagicMock()
+		with patch(
+			"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_document.smartprocess_accounting_document.post_document",
+			posted,
+		):
+			doc.on_submit()
+		posted.assert_not_called()
+
+	def test_on_submit_also_rejects_incomplete_conversion(self):
 		import frappe
 
 		doc = SmartProcessAccountingDocument({"doctype": "SmartProcess Accounting Document"})
-		doc.operation_type = "Transfer"
+		doc.operation_type = "Currency Conversion"
 		posted = MagicMock()
 		with patch(
 			"smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_accounting_document.smartprocess_accounting_document.post_document",
@@ -117,8 +129,12 @@ class TestIncompleteOperationRules(unittest.TestCase):
 				doc.on_submit()
 		posted.assert_not_called()
 
-	def test_receipt_and_payment_still_reach_posting_hooks(self):
-		for operation, method in (("Receipt", "before_submit"), ("Payment", "before_submit")):
+	def test_receipt_payment_and_transfer_reach_posting_hooks(self):
+		for operation, method in (
+			("Receipt", "before_submit"),
+			("Payment", "before_submit"),
+			("Transfer", "before_submit"),
+		):
 			doc = SmartProcessAccountingDocument({"doctype": "SmartProcess Accounting Document"})
 			doc.operation_type = operation
 			posted = MagicMock()
@@ -141,7 +157,7 @@ class TestIncompleteOperationRules(unittest.TestCase):
 	def test_post_document_rejects_incomplete_before_gl(self):
 		import frappe
 
-		doc = MagicMock(operation_type="Transfer", docstatus=1)
+		doc = MagicMock(operation_type="Currency Conversion", docstatus=1)
 		with patch(
 			"smartprocess_erpnext_accounting.smartprocess_accounting.posting.require_posting_enabled"
 		) as enabled:

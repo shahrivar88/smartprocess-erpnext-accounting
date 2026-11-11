@@ -2,8 +2,8 @@
 const spReceiptConfig = {
 	OPERATION: "Receipt",
 	PAYMENT: "Payment",
-	// Receipt rows are the credited payers; Payment rows are the debited recipients.
-	ROW_SIDES: { Receipt: "credit", Payment: "debit" },
+	// Receipt and Transfer rows are the credited payers; Payment rows are the debited recipients.
+	ROW_SIDES: { Receipt: "credit", Transfer: "credit", Payment: "debit" },
 	CHILD_DOCTYPE: "SmartProcess Accounting Pair",
 	TABLE: "operational_pairs",
 	ACCOUNT_PAYER: "Account",
@@ -55,9 +55,9 @@ const spReceiptConfig = {
 		return Boolean(this.ROW_SIDES[doc?.operation_type]);
 	},
 
-	// Schema still stores Transfer / Currency Conversion for history.
-	// New documents only offer the live Receipt and Payment operations.
-	ACTIVE_OPERATIONS: ["Receipt", "Payment"],
+	// Schema still stores Currency Conversion for history.
+	// New documents only offer the live Receipt, Transfer and Payment operations.
+	ACTIVE_OPERATIONS: ["Receipt", "Transfer", "Payment"],
 
 	operationTypeOptions(doc) {
 		const current = doc?.operation_type || "";

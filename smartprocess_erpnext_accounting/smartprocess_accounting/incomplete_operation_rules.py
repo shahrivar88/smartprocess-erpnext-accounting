@@ -1,19 +1,19 @@
 # Copyright (c) 2026, Smart Process and contributors
 # For license information, please see license.txt
 
-"""Server rules that stop incomplete Transfer / Currency Conversion from posting.
+"""Server rules that stop the incomplete Currency Conversion from posting.
 
 Metadata Select options are Receipt, Payment, Transfer, Currency Conversion.
-Receipt and Payment stay on their dedicated posting path. Transfer and
-Currency Conversion must throw before post_document.
+Receipt, Payment and Transfer each stay on their own posting path. Currency
+Conversion must throw before post_document.
 
 Unknown or empty operation_type must not fall through to generic posting.
 """
 
 from __future__ import annotations
 
-INCOMPLETE_OPERATIONS = frozenset({"Transfer", "Currency Conversion"})
-SUPPORTED_OPERATIONS = frozenset({"Receipt", "Payment"})
+INCOMPLETE_OPERATIONS = frozenset({"Currency Conversion"})
+SUPPORTED_OPERATIONS = frozenset({"Receipt", "Payment", "Transfer"})
 KNOWN_OPERATIONS = SUPPORTED_OPERATIONS | INCOMPLETE_OPERATIONS
 
 

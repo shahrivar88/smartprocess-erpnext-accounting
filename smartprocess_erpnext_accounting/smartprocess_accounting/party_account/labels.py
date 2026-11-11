@@ -18,6 +18,7 @@ DOCSTATUS_LABELS = {
 
 OPERATION_LABELS = {
 	"Receipt": "رسید",
+	"Transfer": "انتقال",
 	"Payment": "پرداخت",
 }
 

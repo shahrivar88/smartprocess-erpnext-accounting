@@ -197,7 +197,7 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 		return frappe.get_doc(
 			{
 				"doctype": "SmartProcess Accounting Document",
-				"operation_type": "Transfer",
+				"operation_type": "Currency Conversion",
 				"company": COMPANY,
 				"general_reference": frappe.generate_hash(length=10),
 				"operational_pairs": [self._pair(100, 10, 10)],

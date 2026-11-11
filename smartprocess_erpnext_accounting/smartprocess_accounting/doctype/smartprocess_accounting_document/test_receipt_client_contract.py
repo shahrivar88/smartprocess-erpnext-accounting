@@ -76,9 +76,32 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(meta.get_field("receipt_payer_exchange_rate").label, "نرخ ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_receiver_kind").default, "بانک")
 		self.assertEqual(meta.get_field("receipt_credit_currency").label, "ارز پرداخت‌کننده")
-		self.assertEqual(
-			meta.get_field("company_currency").depends_on, "eval:!['Receipt', 'Payment'].includes(doc.operation_type)"
+		# The shipped JSON is the contract; the site copy is a migration artifact.
+		company_currency = next(
+			field for field in definition["fields"] if field["fieldname"] == "company_currency"
 		)
+		self.assertEqual(
+			company_currency["depends_on"],
+			"eval:!['Receipt', 'Transfer', 'Payment'].includes(doc.operation_type)",
+		)
+
+	def test_transfer_header_shares_the_receipt_visibility_rules(self):
+		"""Transfer must render the Receipt header, so every flow condition names it."""
+		definition = json.loads((FORM_DIR / "smartprocess_accounting_document.json").read_text(encoding="utf-8"))
+		flow_conditions = [
+			(fieldname, attribute, value)
+			for field in definition["fields"]
+			for fieldname, attribute, value in (
+				(field.get("fieldname"), "depends_on", field.get("depends_on")),
+				(field.get("fieldname"), "mandatory_depends_on", field.get("mandatory_depends_on")),
+				(field.get("fieldname"), "read_only_depends_on", field.get("read_only_depends_on")),
+			)
+			if value and "'Receipt'" in value and "doc.operation_type" in value
+		]
+		self.assertTrue(flow_conditions)
+		for fieldname, attribute, value in flow_conditions:
+			with self.subTest(field=fieldname, attribute=attribute):
+				self.assertIn("'Transfer'", value)
 
 	def test_app_never_rewrites_the_site_receipt_layout(self):
 		"""The user arranges the Receipt in Customize Form; the app must not reorder or rewrite it."""

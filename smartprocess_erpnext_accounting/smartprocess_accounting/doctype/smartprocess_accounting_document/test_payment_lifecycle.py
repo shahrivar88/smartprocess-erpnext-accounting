@@ -218,12 +218,12 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 
 		bank = self.company_bank_account(self.base)
 		other = self.generic_account(self.base)
-		# Draft Transfer is allowed; Submit stays blocked. Rebuild the pre-V1
-		# Payment shape: GL on the document voucher, no posting unit.
+		# Draft Currency Conversion is allowed; Submit stays blocked. Rebuild the
+		# pre-V1 Payment shape: GL on the document voucher, no posting unit.
 		doc = frappe.get_doc(
 			{
 				"doctype": DOCTYPE,
-				"operation_type": "Transfer",
+				"operation_type": "Currency Conversion",
 				"company": self.company,
 				"posting_date": nowdate(),
 				"general_reference": frappe.generate_hash(length=10),

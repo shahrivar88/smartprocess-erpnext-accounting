@@ -184,7 +184,7 @@ function startCorrection(frm, correctionReason) {
 	});
 }
 
-// Generic Transfer / Conversion pair calculation. Receipt and Payment rows never
+// Generic Conversion pair calculation. Receipt, Payment and Transfer rows never
 // use it: their amounts come from the server preview.
 const spAccountingPair = {
 	async refresh_account(frm, cdt, cdn, side) {

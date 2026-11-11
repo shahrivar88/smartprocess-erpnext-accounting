@@ -75,14 +75,14 @@ class TestLegacyContract(unittest.TestCase):
 			self.assertNotIn("make_gl", source)
 			self.assertNotIn("make_sl", source)
 
-	def test_transfer_and_document_conversion_remain_generic_posting(self):
+	def test_transfer_is_flow_and_document_conversion_stays_blocked(self):
 		options = next(
 			field["options"]
 			for field in json.loads(DOCUMENT_JSON.read_text(encoding="utf-8"))["fields"]
 			if field["fieldname"] == "operation_type"
 		)
 		self.assertEqual(options.split("\n"), ["Receipt", "Payment", "Transfer", "Currency Conversion"])
-		self.assertEqual(FLOW_OPERATIONS, ("Receipt", "Payment"))
+		self.assertEqual(FLOW_OPERATIONS, ("Receipt", "Payment", "Transfer"))
 		self.assertEqual(set(SERIES_FIELDS), {"Receipt", "Payment", "Transfer", "Currency Conversion"})
 
 	def test_generic_posting_still_exists_for_supported_operations(self):

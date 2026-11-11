@@ -16,6 +16,21 @@ const spFlowText = {
 			"نوع عملیات از {0} به {1} تغییر می‌کند. عنوان‌ها، ستون‌ها و ردیف‌ها برای عملیات جدید بازسازی می‌شوند و مقادیر سمت قبلی به سمت درست منتقل می‌شوند. ادامه می‌دهید؟",
 		preview: "receipt_api.preview_receipt",
 	},
+	// Transfer starts as the Receipt wording so it can change on its own later.
+	Transfer: {
+		sections: { pairs_section: "پرداخت‌کنندگان", operational_pairs: "ردیف‌های انتقال" },
+		header: {},
+		rows: { receipt_recipient_type: "نوع پرداخت‌کننده", receipt_recipient: "پرداخت‌کننده", account: "معین پرداخت‌کننده" },
+		summaryTitle: "مجموع واریزی به دریافت‌کننده",
+		headerCurrency: "ارز دریافت‌کننده",
+		headerAmount: "مبلغ دریافت‌کننده",
+		incomplete: "انتقال کامل نیست",
+		currencyChange:
+			"ارز پرداخت‌کننده از {0} به {1} تغییر می‌کند. پرداخت‌کننده، معین و نرخ ارز {2} ردیفِ پرشده با ارز قبلی پاک می‌شود؛ نوع پرداخت‌کننده، مبلغ و تاریخ ردیف‌ها می‌ماند. ادامه می‌دهید؟",
+		operationChange:
+			"نوع عملیات از {0} به {1} تغییر می‌کند. عنوان‌ها، ستون‌ها و ردیف‌ها برای عملیات جدید بازسازی می‌شوند و مقادیر سمت قبلی به سمت درست منتقل می‌شوند. ادامه می‌دهید؟",
+		preview: "transfer_api.preview_transfer",
+	},
 	Payment: {
 		sections: { pairs_section: "دریافت‌کنندگان", operational_pairs: "ردیف‌های پرداخت" },
 		header: {

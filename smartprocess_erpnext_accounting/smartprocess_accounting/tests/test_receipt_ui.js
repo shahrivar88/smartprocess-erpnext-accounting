@@ -931,17 +931,26 @@ test("33 Shareholder stays out of new documents until both settings flags are on
 	globalThis.frappe.boot = previous;
 });
 
-test("32 new documents only offer Receipt and Payment", () => {
-	assert.equal(spReceiptConfig.operationTypeOptions({}), "Receipt\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Receipt" }), "Receipt\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Payment" }), "Receipt\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Transfer" }), "Receipt\nPayment\nTransfer");
+test("32 new documents offer Receipt, Transfer and Payment", () => {
+	assert.equal(spReceiptConfig.operationTypeOptions({}), "Receipt\nTransfer\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Receipt" }), "Receipt\nTransfer\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Payment" }), "Receipt\nTransfer\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Transfer" }), "Receipt\nTransfer\nPayment");
 	assert.equal(
 		spReceiptConfig.operationTypeOptions({ operation_type: "Currency Conversion" }),
-		"Receipt\nPayment\nCurrency Conversion",
+		"Receipt\nTransfer\nPayment\nCurrency Conversion",
 	);
 	assert.equal(docField("operation_type").options, "Receipt\nPayment\nTransfer\nCurrency Conversion");
 	assert.ok(clientSource.includes("applyOperationTypeOptions"));
+});
+
+test("34 Transfer renders the Receipt grid", () => {
+	assert.equal(spReceiptConfig.isFlow({ operation_type: "Transfer" }), true);
+	assert.equal(spReceiptConfig.rowSide({ operation_type: "Transfer" }), "credit");
+	assert.equal(spReceiptConfig.rowField({ operation_type: "Transfer" }, "amount"), "credit_amount");
+	const transferGrid = spReceiptForm.receiptGridProperties({ operation_type: "Transfer" });
+	const receiptGrid = spReceiptForm.receiptGridProperties({ operation_type: "Receipt" });
+	assert.deepEqual(transferGrid, receiptGrid);
 });
 
 test("modules stay small and are included by the form", () => {
