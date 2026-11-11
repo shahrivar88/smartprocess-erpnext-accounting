@@ -9,6 +9,7 @@ import frappe
 from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import CorrectionService
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import BANK_RECEIVER
 from .v2_test_support import (
 	BASE,
 	BASE_BANK,
@@ -167,11 +168,10 @@ class TestV2Correction(V2IntegrationTestCase):
 					"posting_date": nowdate(),
 					"general_reference": frappe.generate_hash(length=10),
 					"receipt_payer_currency": BASE,
-					"receipt_receiver_kind": "Customer",
 					"receipt_payer_account": BASE_BANK,
 					"receipt_payer_exchange_rate": 1,
-					"receipt_payer_type": "Customer",
-					"receipt_payer": CUSTOMER_BASE,
+					"receipt_receiver_kind": BANK_RECEIVER,
+					"receipt_bank_account": self._bank_account(),
 					"receipt_credit_currency": BASE,
 					"operational_pairs": [
 						{
@@ -179,12 +179,7 @@ class TestV2Correction(V2IntegrationTestCase):
 							"receipt_recipient": CUSTOMER_BASE,
 							"receipt_currency": BASE,
 							"receipt_posting_date": nowdate(),
-							"debit_account": BASE_BANK,
-							"debit_amount": 100,
-							"debit_exchange_rate": 1,
 							"credit_account": RECEIVABLE_BASE,
-							"credit_party_type": "Customer",
-							"credit_party": CUSTOMER_BASE,
 							"credit_amount": 100,
 							"credit_exchange_rate": 1,
 						}
@@ -193,6 +188,31 @@ class TestV2Correction(V2IntegrationTestCase):
 			)
 			.insert()
 			.submit()
+		)
+
+	def _bank_account(self):
+		existing = frappe.db.get_value(
+			"Bank Account",
+			{"account": BASE_BANK, "company": COMPANY, "is_company_account": 1},
+			"name",
+		)
+		if existing:
+			return existing
+		if not frappe.db.exists("Bank", "Proof Bank"):
+			frappe.get_doc({"doctype": "Bank", "bank_name": "Proof Bank"}).insert()
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Bank Account",
+					"account_name": "Proof Bank Base",
+					"bank": "Proof Bank",
+					"account": BASE_BANK,
+					"company": COMPANY,
+					"is_company_account": 1,
+				}
+			)
+			.insert()
+			.name
 		)
 
 	def _assert_unchanged_source(self, doc):
