@@ -6,9 +6,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 import frappe
+from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import CorrectionService
-from .v2_test_support import V2IntegrationTestCase
+from .v2_test_support import (
+	BASE,
+	BASE_BANK,
+	COMPANY,
+	CUSTOMER_BASE,
+	RECEIVABLE_BASE,
+	V2IntegrationTestCase,
+)
 
 
 CONTROLLER_PATH = (
@@ -123,6 +131,69 @@ class TestV2Correction(V2IntegrationTestCase):
 			accounts_settings.reload()
 			accounts_settings.enable_immutable_ledger = original
 			accounts_settings.save()
+
+	def test_correction_drops_the_cancelled_settlement_payment_entry(self):
+		settings = frappe.get_single("SmartProcess Accounting Settings")
+		original = settings.enable_payment_entry_settlement
+		settings.enable_payment_entry_settlement = 1
+		settings.save()
+		try:
+			doc = self._submit_settled_receipt()
+			payment_entry = doc.settlement_payment_entry
+			self.assertTrue(payment_entry)
+
+			result = doc.start_correction("Correct the settled receipt")
+
+			source = frappe.get_doc(doc.doctype, doc.name)
+			replacement = frappe.get_doc(result["doctype"], result["name"])
+			self.assertEqual(source.docstatus, 2)
+			self.assertEqual(source.settlement_payment_entry, payment_entry)
+			self.assertEqual(frappe.db.get_value("Payment Entry", payment_entry, "docstatus"), 2)
+			self.assertEqual(replacement.docstatus, 0)
+			self.assertEqual(replacement.amended_from, source.name)
+			self.assertFalse(replacement.settlement_payment_entry)
+		finally:
+			settings.reload()
+			settings.enable_payment_entry_settlement = original
+			settings.save()
+
+	def _submit_settled_receipt(self):
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "SmartProcess Accounting Document",
+					"operation_type": "Receipt",
+					"company": COMPANY,
+					"posting_date": nowdate(),
+					"general_reference": frappe.generate_hash(length=10),
+					"receipt_payer_currency": BASE,
+					"receipt_receiver_kind": "Customer",
+					"receipt_payer_account": BASE_BANK,
+					"receipt_payer_exchange_rate": 1,
+					"receipt_payer_type": "Customer",
+					"receipt_payer": CUSTOMER_BASE,
+					"receipt_credit_currency": BASE,
+					"operational_pairs": [
+						{
+							"receipt_recipient_type": "Customer",
+							"receipt_recipient": CUSTOMER_BASE,
+							"receipt_currency": BASE,
+							"receipt_posting_date": nowdate(),
+							"debit_account": BASE_BANK,
+							"debit_amount": 100,
+							"debit_exchange_rate": 1,
+							"credit_account": RECEIVABLE_BASE,
+							"credit_party_type": "Customer",
+							"credit_party": CUSTOMER_BASE,
+							"credit_amount": 100,
+							"credit_exchange_rate": 1,
+						}
+					],
+				}
+			)
+			.insert()
+			.submit()
+		)
 
 	def _assert_unchanged_source(self, doc):
 		source = frappe.get_doc(doc.doctype, doc.name)

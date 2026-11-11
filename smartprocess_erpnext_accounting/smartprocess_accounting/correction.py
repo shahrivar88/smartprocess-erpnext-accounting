@@ -10,6 +10,7 @@ from frappe.utils import cint
 
 
 VOUCHER_DOCTYPE = "SmartProcess Accounting Document"
+SETTLEMENT_LINK_FIELD = "settlement_payment_entry"
 MAX_REASON_LENGTH = 2000
 
 
@@ -82,6 +83,11 @@ class CorrectionService:
 		replacement.docstatus = 0
 		replacement.amended_from = source.name
 		replacement.correction_reason = None
+		# The settlement Payment Entry is cancelled together with the source, so
+		# the copy would point at a cancelled document and Frappe would refuse
+		# the insert. The replacement creates its own settlement when submitted.
+		if frappe.get_meta(replacement.doctype).has_field(SETTLEMENT_LINK_FIELD):
+			replacement.set(SETTLEMENT_LINK_FIELD, None)
 		for child in replacement.get_all_children():
 			child.docstatus = 0
 		return replacement
