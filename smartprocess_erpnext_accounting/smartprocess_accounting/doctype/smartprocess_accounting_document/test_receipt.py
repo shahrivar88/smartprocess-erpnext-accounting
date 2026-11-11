@@ -566,7 +566,12 @@ class TestReceiptUX(V2IntegrationTestCase):
 	def test_list_bulk_cancel_path_cancels_receipt_and_posting_units(self):
 		doc = self.multi_date_receipt().insert()
 		doc.submit()
-		failed = submit_cancel_or_update_docs("SmartProcess Accounting Document", [doc.name], "cancel")
+		# The framework's bulk action commits after every document
+		# (frappe/desk/doctype/bulk_update/bulk_update.py). Without this guard the
+		# commit lands the whole open test transaction on the site, including the
+		# documents created by every earlier test in this class.
+		with patch.object(frappe.db, "commit"):
+			failed = submit_cancel_or_update_docs("SmartProcess Accounting Document", [doc.name], "cancel")
 		self.assertEqual(failed, [])
 		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 2)
 		units = self.posting_units(doc, include_cancelled=True)

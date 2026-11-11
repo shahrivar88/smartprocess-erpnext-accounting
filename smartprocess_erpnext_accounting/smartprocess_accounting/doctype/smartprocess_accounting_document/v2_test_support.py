@@ -5,6 +5,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.fixture_guard import (
+	AUTHORIZATION_VARIABLE,
 	assert_accounting_fixtures_authorized,
 )
 
@@ -38,6 +39,11 @@ RECEIVABLE_B = "MC Receivable B - SPV2"
 PAYABLE_BASE = "MC Payable Base - SPV2"
 PAYABLE_A = "MC Payable A - SPV2"
 
+
+class FixtureNotReady(RuntimeError):
+	pass
+
+
 SINGLE_CURRENCY_PARTIES = (
 	("Customer", CUSTOMER_BASE, RECEIVABLE_BASE),
 	("Customer", CUSTOMER_A, RECEIVABLE_A),
@@ -47,27 +53,61 @@ SINGLE_CURRENCY_PARTIES = (
 )
 
 
-def _attach_company_to_open_fiscal_year(company: str) -> None:
-	today = nowdate()
-	year_name = frappe.db.get_value(
+def _fiscal_years_covering(today: str) -> list[str]:
+	return frappe.get_all(
 		"Fiscal Year",
-		{"year_start_date": ["<=", today], "year_end_date": [">=", today], "disabled": 0},
-		"name",
+		filters={
+			"year_start_date": ["<=", today],
+			"year_end_date": [">=", today],
+			"disabled": 0,
+		},
+		pluck="name",
+		order_by="year_start_date asc, name asc",
 	)
-	if not year_name:
-		year = frappe.get_doc(
-			{
-				"doctype": "Fiscal Year",
-				"year": f"SP-V2-{today[:4]}",
-				"year_start_date": f"{today[:4]}-01-01",
-				"year_end_date": f"{today[:4]}-12-31",
-			}
-		).insert()
-		year_name = year.name
-	year = frappe.get_doc("Fiscal Year", year_name)
-	if company not in {row.company for row in year.companies}:
+
+
+def _attach_company_to_open_fiscal_year(company: str) -> None:
+	"""Attach the Company to a Fiscal Year that covers today.
+
+	A site can hold several overlapping years — ERPNext's monthly
+	``auto_create_fiscal_year`` adds a calendar year beside the standard one — so
+	selecting a covering year by name is not deterministic. Attaching the company
+	to a year that overlaps a year already listing it fails ``validate_overlap``,
+	so every candidate is tried and the first one that saves wins.
+	"""
+	today = nowdate()
+	covering = _fiscal_years_covering(today)
+	if not covering:
+		covering = [
+			frappe.get_doc(
+				{
+					"doctype": "Fiscal Year",
+					"year": f"SP-V2-{today[:4]}",
+					"year_start_date": f"{today[:4]}-01-01",
+					"year_end_date": f"{today[:4]}-12-31",
+				}
+			).insert().name
+		]
+	for name in covering:
+		year = frappe.get_doc("Fiscal Year", name)
+		if company in {row.company for row in year.companies}:
+			return
+	frappe.db.savepoint("sp_attach_company_to_fiscal_year")
+	refusals = []
+	for name in covering:
+		year = frappe.get_doc("Fiscal Year", name)
 		year.append("companies", {"company": company})
-		year.save()
+		try:
+			year.save()
+		except frappe.ValidationError as error:
+			frappe.db.rollback(save_point="sp_attach_company_to_fiscal_year")
+			refusals.append(f"{name}: {error}")
+			continue
+		return
+	raise FixtureNotReady(
+		f"Fixtures cannot attach {company} to a Fiscal Year covering {today}; "
+		f"every covering year refused it. " + " | ".join(refusals)
+	)
 
 
 def _ensure_currency(code: str) -> None:
@@ -138,11 +178,15 @@ def _ensure_company(name: str, abbr: str, currency: str) -> None:
 	_attach_company_to_open_fiscal_year(name)
 
 
+FIXTURE_MISSING_TEMPLATE = (
+	"Isolated proof fixture is incomplete: {missing}. "
+	"Set {variable}=1 and run ensure_v2_proof_fixtures() on an authorized test site."
+)
+
+
 def ensure_v2_proof_fixtures() -> None:
-	"""Create the isolated proof Company and parties on an authorized lab site."""
+	"""Create the isolated proof Company and parties on an authorized test site."""
 	assert_accounting_fixtures_authorized()
-	if frappe.local.site != "lab.localhost":
-		return
 	frappe.flags.in_import = True
 	try:
 		for code in (BASE, FOREIGN_A, FOREIGN_B):
@@ -185,7 +229,7 @@ def ensure_v2_proof_fixtures() -> None:
 					"default_currency": base_company,
 					"accounts": [{"company": OTHER_COMPANY, "account": other_receivable}],
 				}
-			).insert()
+			).insert(set_name=OTHER_CUSTOMER)
 		if not frappe.db.exists("Customer", LEGACY_CUSTOMER):
 			frappe.get_doc(
 				{
@@ -195,7 +239,7 @@ def ensure_v2_proof_fixtures() -> None:
 					"default_currency": BASE,
 					"accounts": [{"company": COMPANY, "account": RECEIVABLE_BASE}],
 				}
-			).insert()
+			).insert(set_name=LEGACY_CUSTOMER)
 	finally:
 		frappe.flags.in_import = False
 	frappe.db.commit()
@@ -211,7 +255,6 @@ def ensure_single_currency_parties() -> None:
 				continue
 			payload = {
 				"doctype": party_type,
-				"name": party,
 				"default_currency": frappe.get_cached_value("Account", account, "account_currency"),
 				"accounts": [{"company": COMPANY, "account": account}],
 			}
@@ -221,12 +264,13 @@ def ensure_single_currency_parties() -> None:
 			else:
 				payload["supplier_name"] = party
 				payload["supplier_type"] = "Company"
-			frappe.get_doc(payload).insert()
+			# Customer and Supplier name themselves from their naming series, so the
+			# name has to travel through insert(set_name=...).
+			frappe.get_doc(payload).insert(set_name=party)
 		if not frappe.db.exists("Employee", EMPLOYEE_A):
 			frappe.get_doc(
 				{
 					"doctype": "Employee",
-					"name": EMPLOYEE_A,
 					"first_name": EMPLOYEE_A,
 					"employee_name": EMPLOYEE_A,
 					"company": COMPANY,
@@ -235,7 +279,7 @@ def ensure_single_currency_parties() -> None:
 					"date_of_joining": "2020-01-01",
 					"status": "Active",
 				}
-			).insert()
+			).insert(set_name=EMPLOYEE_A)
 	finally:
 		frappe.flags.in_import = False
 	frappe.db.commit()
@@ -495,9 +539,20 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 			("Account", OTHER_DEBIT_ACCOUNT),
 			("Account", OTHER_CREDIT_ACCOUNT),
 		)
-		for doctype, name in required:
-			if not frappe.db.exists(doctype, name):
-				self.skipTest(f"Isolated proof fixture is missing {doctype} {name}")
-		for party_type, party, _account in SINGLE_CURRENCY_PARTIES:
-			if not frappe.db.exists(party_type, party):
-				self.skipTest(f"Isolated proof fixture is missing {party_type} {party}")
+		missing = [
+			f"{doctype} {name}"
+			for doctype, name in required
+			if not frappe.db.exists(doctype, name)
+		]
+		missing += [
+			f"{party_type} {party}"
+			for party_type, party, _account in SINGLE_CURRENCY_PARTIES
+			if not frappe.db.exists(party_type, party)
+		]
+		if missing:
+			raise FixtureNotReady(
+				FIXTURE_MISSING_TEMPLATE.format(
+					missing=", ".join(missing),
+					variable=AUTHORIZATION_VARIABLE,
+				)
+			)

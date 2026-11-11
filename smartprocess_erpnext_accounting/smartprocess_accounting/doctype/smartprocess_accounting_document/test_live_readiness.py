@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import frappe
 
+from .smartprocess_accounting_document import SERIES_DEFAULTS, SERIES_FIELDS
 from .v2_test_support import (
 	BASE,
 	BASE_BANK,
@@ -16,17 +17,24 @@ from .v2_test_support import (
 )
 
 
-SERIES_PREFIXES = {
-	"Receipt": "SP-REC-",
-	"Payment": "SP-PAY-",
-	"Transfer": "SP-TRF-",
-	"Currency Conversion": "SP-FX-",
-}
+def configured_prefixes() -> dict[str, str]:
+	"""The literal prefix of each operation type's effective series.
+
+	The series is site configuration, so the expectation has to come from the
+	Settings document and not from a hardcoded default.
+	"""
+	settings = frappe.get_single("SmartProcess Accounting Settings")
+	return {
+		operation_type: (settings.get(fieldname) or SERIES_DEFAULTS[operation_type]).split(".")[0]
+		for operation_type, fieldname in SERIES_FIELDS.items()
+	}
 
 
 class TestV2LiveReadiness(V2IntegrationTestCase):
 	def test_all_operation_types_post_and_cancel_natively(self):
-		for operation_type, prefix in SERIES_PREFIXES.items():
+		prefixes = configured_prefixes()
+		self.assertEqual(len(set(prefixes.values())), len(prefixes))
+		for operation_type, prefix in prefixes.items():
 			with self.subTest(operation_type=operation_type):
 				if operation_type in ("Transfer", "Currency Conversion"):
 					doc = self.insert_blocked_operation(operation_type)

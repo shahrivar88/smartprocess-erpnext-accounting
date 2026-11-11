@@ -25,6 +25,20 @@ CONTROLLER_PATH = (
 	"smartprocess_accounting_document.smartprocess_accounting_document.cancel_document"
 )
 
+_PREVIOUS_LANG = None
+
+
+def setUpModule():
+	"""Pin message assertions to the source strings, independent of the site language."""
+	global _PREVIOUS_LANG
+	_PREVIOUS_LANG = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+
+
+def tearDownModule():
+	if _PREVIOUS_LANG is not None:
+		frappe.local.lang = _PREVIOUS_LANG
+
 
 class TestV2Correction(V2IntegrationTestCase):
 	def test_client_allows_correction_action_after_manual_cancel(self):
