@@ -17,10 +17,11 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import Rece
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import NON_GENERIC_ACCOUNT_TYPES
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
 
-from .v2_test_support import AccountingFixtureTestCase
+from .v2_test_support import AccountingFixtureTestCase, pin_accounting_settings
 
 DOCTYPE = "SmartProcess Accounting Document"
 POSTING = "SmartProcess Accounting Posting"
+SETTINGS = "SmartProcess Accounting Settings"
 
 
 class TestReceiptLifecycle(AccountingFixtureTestCase):
@@ -32,11 +33,15 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		if not frappe.get_single_value("SmartProcess Accounting Settings", "enable_v2_posting"):
+		if not frappe.get_single_value(SETTINGS, "enable_v2_posting"):
 			self.skipTest("V2 posting is disabled on this site.")
+		# This suite asserts the Posting-unit path. It must not inherit the site's
+		# settlement switch; the pin is rolled back with the test.
+		pin_accounting_settings(enable_payment_entry_settlement=0)
 
 	def tearDown(self):
 		frappe.db.rollback()
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 	def test_base_receiver_base_payer_posts_native_gl_and_cancels(self):
 		bank = self.company_bank_account(self.base)

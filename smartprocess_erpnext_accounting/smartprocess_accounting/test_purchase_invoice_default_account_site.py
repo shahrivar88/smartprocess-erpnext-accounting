@@ -23,6 +23,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartproces
 from smartprocess_erpnext_accounting.smartprocess_accounting.test_default_accounts_site import (
 	forget_cached_currencies,
 	no_commit,
+	pin_party_account_currency_flag,
 	temporary_company,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.test_receivable_account_currency_flow import (
@@ -73,10 +74,12 @@ class TestPurchaseInvoiceDefaultAccountOnSite(AccountingFixtureTestCase):
 		commit_blocker = no_commit()
 		commit_blocker.start()
 		self.addCleanup(commit_blocker.stop)
+		pin_party_account_currency_flag(0)
 
 	def tearDown(self):
 		frappe.db.rollback(save_point="sp_pida")
 		frappe.clear_document_cache(da.SETTINGS, da.SETTINGS)
+		frappe.clear_document_cache("Accounts Settings", "Accounts Settings")
 		for account in (self.erpnext_default, self.central, self.central_foreign, self.party_account, self.party_foreign):
 			forget_cached_currencies(account)
 

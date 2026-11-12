@@ -299,6 +299,23 @@ def party_has_active_ledger_currency(party_type: str, party: str, currency: str)
 	)
 
 
+SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
+
+
+def pin_accounting_settings(**values) -> None:
+	"""Set accounting settings for one test inside its transaction.
+
+	The write is rolled back with the test, so the site keeps its own configuration; a
+	test that proves one posting path states that path instead of inheriting the site's."""
+	settings = frappe.get_single(SETTINGS_DOCTYPE)
+	changed = [field for field, value in values.items() if settings.get(field) != value]
+	for field in changed:
+		settings.set(field, values[field])
+	if changed:
+		settings.save()
+	frappe.clear_document_cache(SETTINGS_DOCTYPE, SETTINGS_DOCTYPE)
+
+
 class AccountingFixtureTestCase(FrappeTestCase):
 	"""Base for tests that write accounting records; blocked unless explicitly authorized."""
 
@@ -317,12 +334,12 @@ class V2IntegrationTestCase(AccountingFixtureTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self._require_fixture()
-		settings = frappe.get_single("SmartProcess Accounting Settings")
-		settings.enable_v2_posting = 1
-		settings.save()
+		# These fixtures prove the Posting-unit path; the site value is restored by the rollback.
+		pin_accounting_settings(enable_v2_posting=1, enable_payment_entry_settlement=0)
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
+		frappe.clear_document_cache(SETTINGS_DOCTYPE, SETTINGS_DOCTYPE)
 		super().tearDown()
 
 	def document(self, pairs, *, operation_type="Currency Conversion", company=COMPANY):

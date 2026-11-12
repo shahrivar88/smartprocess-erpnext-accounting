@@ -23,6 +23,7 @@ from .access import (
 	assert_report_access,
 	party_name_field,
 )
+from .args import key
 from .gl_period import Period, balance_columns, balance_values
 from .labels import balance_nature
 from .ledger_filter import LedgerFilter
@@ -113,7 +114,8 @@ class AccountLedger:
 		self.currency = frappe.get_cached_value("Account", account, "account_currency") if by_account else currency or frappe.get_cached_value("Account", account, "account_currency")
 		self.scope = GLScope(company, party_type, party=party, account=account, currency=self.currency)
 		self.filters = LedgerFilter(search, side)
-		self.sort = sort_by if sort_by in LEDGER_SORT else None
+		sort = key(sort_by)
+		self.sort = sort if sort in LEDGER_SORT else None
 		self.descending = self.sort is not None and sort_order == "desc"
 		self.company_currency = frappe.get_cached_value("Company", company, "default_currency")
 		self.context = {

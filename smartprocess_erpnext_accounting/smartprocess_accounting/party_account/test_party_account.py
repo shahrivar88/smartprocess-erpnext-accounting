@@ -434,6 +434,34 @@ class TestLedgerFilter(unittest.TestCase):
 		sql, _params = self.condition(search="CAM", readable=False)
 		self.assertNotIn("invoice_item", sql)
 
+	def test_item_search_applies_the_invoice_user_permissions(self):
+		"""A role permission is not a document permission: the item search must keep the
+		invoice's own User Permissions, exactly as GLScope does for its doctypes."""
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import (
+			LedgerFilter,
+		)
+
+		guard = "`tabSales Invoice`.`territory` = 'North'"
+		with (
+			patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=True),
+			patch(f"{PA}.ledger_filter.build_match_conditions", side_effect=lambda doctype: guard if doctype == "Sales Invoice" else ""),
+		):
+			sql, _params = LedgerFilter("CAM").condition("gle")
+		self.assertIn(f"where `tabSales Invoice`.name = gle.voucher_no and ({guard})", sql)
+
+	def test_no_empty_condition_when_the_invoice_has_no_user_permissions(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import (
+			LedgerFilter,
+		)
+
+		with (
+			patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=True),
+			patch(f"{PA}.ledger_filter.build_match_conditions", return_value=""),
+		):
+			sql, _params = LedgerFilter("CAM").condition("gle")
+		self.assertIn("where `tabSales Invoice`.name = gle.voucher_no and (invoice_item.item_name", sql)
+		self.assertNotIn(" and ()", sql)
+
 
 class TestInvoiceDialogDetails(unittest.TestCase):
 	def test_header_financials_and_items_with_code_and_unit(self):
@@ -1156,6 +1184,182 @@ class TestFiscalYearPeriodRange(unittest.TestCase):
 			with self.assertRaises(RuntimeError):
 				get_current_fiscal_year_to_date("Co", as_of_date="2026-09-26")
 		self.assertIn("سال مالی", throw.call_args.args[0])
+
+
+class TestHostileArguments(unittest.TestCase):
+	"""A whitelisted endpoint may receive any JSON type for any argument. A list or a
+	dict where a text filter or a sort key belongs must fall back to the neutral choice —
+	an empty search, no sort — and never reach `.strip()` or an allowlist lookup."""
+
+	NON_STRINGS = (None, 0, 1, 1.5, True, [], ["closing"], {}, {"by": "closing"})
+
+	def test_the_boundary_helpers_neutralise_every_non_string(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.args import key, text
+
+		for value in self.NON_STRINGS:
+			with self.subTest(value=value):
+				self.assertEqual(text(value), "")
+				self.assertIsNone(key(value))
+		self.assertEqual(text("  CAM  "), "CAM", "a real string is still stripped")
+		self.assertEqual(key("closing"), "closing")
+
+	def test_ledger_filter_ignores_a_list_or_dict_search_and_side(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+
+		for search, side in ((["CAM"], ["debit"]), ({"q": "CAM"}, {"side": "debit"})):
+			with self.subTest(search=search, side=side):
+				filters = LedgerFilter(search, side)
+				self.assertEqual(filters.search, "")
+				self.assertIsNone(filters.side)
+				self.assertFalse(filters)
+				with patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=True):
+					self.assertEqual(filters.condition("gle"), ("1 = 1", {}))
+
+	def test_overview_order_falls_back_for_a_list_or_dict_sort(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import TIE_BREAK, overview_order
+
+		for sort_by, sort_order in ((["closing"], ["desc"]), ({"by": "closing"}, {"order": "desc"})):
+			with self.subTest(sort_by=sort_by):
+				self.assertEqual(overview_order(sort_by, sort_order), f"order by {TIE_BREAK}")
+
+	def test_account_ledger_accepts_a_list_sort_without_hashing_it(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import ledger
+
+		def make(**kwargs):
+			with (
+				patch.object(ledger, "assert_report_access"),
+				patch.object(ledger, "GLScope"),
+				patch.object(ledger, "party_display_name", return_value="C1"),
+				patch.object(ledger.frappe, "get_cached_value", return_value="IRR"),
+			):
+				return ledger.AccountLedger("Co", "Customer", "C1", None, None, "2026-12-31", currency="USD", **kwargs)
+
+		for sort_by in ([], ["date"], {}, {"by": "date"}):
+			with self.subTest(sort_by=sort_by):
+				built = make(sort_by=sort_by, sort_order={"x": 1})
+				self.assertIsNone(built.sort)
+				self.assertFalse(built.descending)
+
+
+class TestHostileArgumentsOnSite(unittest.TestCase):
+	"""Read-only: the whitelisted endpoints answer a list where a string belongs."""
+
+	def customer_gl_row(self):
+		rows = frappe.get_all(
+			"GL Entry",
+			filters={"is_cancelled": 0, "party_type": "Customer"},
+			fields=["company", "party", "account"],
+			limit=1,
+		)
+		if not rows:
+			self.skipTest("no Customer GL rows on this site")
+		return rows[0]
+
+	def test_account_ledger_endpoint_survives_list_and_dict_filters(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger import get_account_ledger
+
+		row = self.customer_gl_row()
+		for sort_by, search, side in (
+			(["date"], ["CAM"], ["debit"]),
+			({"by": "date"}, {"q": "CAM"}, {"side": "debit"}),
+		):
+			with self.subTest(sort_by=sort_by):
+				page = get_account_ledger(
+					company=row.company,
+					party_type="Customer",
+					party=row.party,
+					account=row.account,
+					sort_by=sort_by,
+					sort_order={"x": 1},
+					search=search,
+					side=side,
+					page_length=2,
+				)
+				self.assertIn("rows", page)
+				self.assertFalse(page["filtered"])
+				self.assertFalse(page["sorted"])
+
+	def test_balance_overview_endpoint_survives_list_and_dict_filters(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import get_balance_overview
+
+		row = self.customer_gl_row()
+		for party_type in ("Customer", None):
+			with self.subTest(party_type=party_type):
+				payload = get_balance_overview(
+					company=row.company,
+					party_type=party_type,
+					party=["CAM"],
+					sort_by=["closing"],
+					sort_order=["desc"],
+					page_length=1,
+				)
+				self.assertIn("rows", payload)
+		payload = get_balance_overview(
+			company=row.company,
+			party_type="Customer",
+			party={"q": "CAM"},
+			sort_by={"by": "closing"},
+			page_length=1,
+		)
+		self.assertIn("rows", payload)
+
+	def test_export_endpoints_survive_list_and_dict_filters(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import excel_export
+
+		row = self.customer_gl_row()
+		with patch.object(excel_export, "send_file") as send:
+			excel_export.export_balance_overview(file_type="xlsx", company=row.company, party_type="Customer", party=["CAM"], sort_by=["closing"])
+			excel_export.export_balance_overview(file_type="xlsx", company=row.company, party_type=None, party={"q": "CAM"}, sort_by={"by": "closing"})
+			excel_export.export_account_ledger(file_type="xlsx", company=row.company, party_type="Customer", party=row.party, account=row.account, search=["CAM"], side=["debit"], sort_by=["date"])
+		self.assertEqual(send.call_count, 3, "every export reached its file, none raised on the argument type")
+
+
+class TestInvoiceItemSearchGuardOnSite(unittest.TestCase):
+	"""Read-only, at the database: the guard inside the item branch decides whether an
+	invoice's item text can be matched at all. A probe row stands in for a GL line, so the
+	proof needs no posting and no fixture."""
+
+	def invoice_item_text(self):
+		"""Text from one invoice item that no other branch of the search can match."""
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.labels import (
+			OPERATION_LABELS,
+			VOUCHER_LABELS,
+		)
+
+		def in_a_label(text):
+			text = text.lower()
+			labels = [label for label, _return in VOUCHER_LABELS.values()] + list(OPERATION_LABELS.values())
+			return any(text in label.lower() for label in labels) or any(text in doctype.lower() for doctype in VOUCHER_LABELS)
+
+		for invoice in frappe.get_all("Sales Invoice", pluck="name", order_by="creation desc", limit=20):
+			items = frappe.get_all("Sales Invoice Item", filters={"parenttype": "Sales Invoice", "parent": invoice}, pluck="item_name", limit=1)
+			if not items or not items[0] or in_a_label(items[0]):
+				continue
+			return invoice, items[0]
+		self.skipTest("no invoice item text that only the item branch can match")
+
+	def probe_count(self, invoice, search, guard):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.ledger_filter import LedgerFilter
+
+		with (
+			patch(f"{PA}.ledger_filter.frappe.has_permission", return_value=True),
+			patch(f"{PA}.ledger_filter.build_match_conditions", side_effect=lambda doctype: guard if doctype == "Sales Invoice" else ""),
+		):
+			condition, params = LedgerFilter(search).condition("gle")
+		probe = "select %(voucher_no)s as voucher_no, '' as remarks, %(voucher_type)s as voucher_type"
+		return frappe.db.sql(
+			f"select count(*) from ({probe}) gle where {condition}",
+			{"voucher_no": invoice, "voucher_type": "Sales Invoice", **params},
+		)[0][0]
+
+	def test_an_item_match_disappears_when_its_invoice_is_restricted(self):
+		invoice, search = self.invoice_item_text()
+		self.assertEqual(self.probe_count(invoice, search, ""), 1, "the item branch matches the vouchers item text")
+		self.assertEqual(
+			self.probe_count(invoice, search, "`tabSales Invoice`.`name` = '__outside__'"),
+			0,
+			"an invoice outside the user permissions hides its item text",
+		)
 
 
 if __name__ == "__main__":

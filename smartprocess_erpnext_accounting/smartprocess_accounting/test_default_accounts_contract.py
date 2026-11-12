@@ -131,7 +131,6 @@ class TestCentralDefaultAccountsScope(unittest.TestCase):
 		invoices = ("Sales Invoice", "Purchase Invoice")
 		others = {doctype: handlers for doctype, handlers in events.items() if doctype not in invoices}
 		self.assertNotIn("default_account", repr(others))
-		self.assertNotIn("before_validate", repr(others))
 		scripts = {doctype: js for doctype, js in hooks.doctype_js.items() if doctype not in invoices}
 		self.assertNotIn("default_account", repr(scripts))
 

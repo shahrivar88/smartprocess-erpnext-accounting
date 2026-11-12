@@ -8,8 +8,10 @@ their chronological running balance. It searches the document number, the vouche
 (posting) number, the Persian document label, remarks, and invoice item names."""
 
 import frappe
+from frappe.desk.reportview import build_match_conditions
 
 from .access import escape_like
+from .args import text
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, OPERATION_LABELS, VOUCHER_LABELS
 
 SIDES = ("debit", "credit")
@@ -18,7 +20,7 @@ INVOICE_TYPES = ("Sales Invoice", "Purchase Invoice")
 
 class LedgerFilter:
 	def __init__(self, search=None, side=None):
-		self.search = (search or "").strip()
+		self.search = text(search)
 		self.side = side if side in SIDES else None
 
 	def __bool__(self):
@@ -79,11 +81,21 @@ class LedgerFilter:
 			)
 		if frappe.has_permission(doctype, "read"):
 			options.append(
-				f"({voucher} and exists (select 1 from `tab{doctype} Item` invoice_item"
-				f" where invoice_item.parenttype = {frappe.db.escape(doctype)} and invoice_item.parent = {alias}.voucher_no"
+				f"({voucher} and exists (select 1 from `tab{doctype}`"
+				f" join `tab{doctype} Item` invoice_item"
+				f" on invoice_item.parenttype = {frappe.db.escape(doctype)} and invoice_item.parent = `tab{doctype}`.name"
+				f" where `tab{doctype}`.name = {alias}.voucher_no{invoice_permission(doctype)}"
 				f" and (invoice_item.item_name {like} or invoice_item.item_code {like})))"
 			)
 		return options
+
+
+def invoice_permission(doctype):
+	"""The invoice's own User Permissions, the conditions `GLScope` already puts on the
+	ledger's doctypes: the item search must never read an invoice the caller has been
+	restricted from, even when a role grants it read access."""
+	match = build_match_conditions(doctype)
+	return f" and ({match})" if match else ""
 
 
 def quoted(values):

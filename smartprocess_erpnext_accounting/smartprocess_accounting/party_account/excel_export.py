@@ -8,6 +8,7 @@ import frappe
 from frappe import _
 
 from .access import GLScope, assert_report_access, party_type_label
+from .args import text
 from .excel_bytes import build_xlsx_bytes
 from .gl_period import Period
 from .labels import ACCOUNT_LEDGER_CHOICES, ALL_LEDGERS_LABEL
@@ -42,7 +43,7 @@ def export_balance_overview(
 		headers, rows = overview_table(rows, combined_totals(rows), company_currency, mixed=True)
 		kind = ALL_LEDGERS_LABEL
 	else:
-		scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
+		scope = GLScope(company, party_type, account=account, currency=currency, search=text(party), account_type=account_type)
 		rows = overview_rows(scope, period, hide_zero, limit=MAX_EXPORT_LINES + 1, sort_by=sort_by, sort_order=sort_order)
 		entity_label = "حساب" if scope.by_account else "طرف حساب"
 		headers, rows = overview_table(rows, overview_totals(scope, period, hide_zero), company_currency, entity_label)

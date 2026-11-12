@@ -25,6 +25,7 @@ from .access import (
 	party_type_label,
 	readable_party_types,
 )
+from .args import key, text
 from .gl_period import Period, balance_columns, balance_values, hide_zero_having
 from .labels import ACCOUNT_LEDGER_CHOICES, ALL_LEDGERS_LABEL
 from .period_ranges import get_current_fiscal_year_to_date
@@ -118,7 +119,7 @@ def get_balance_overview(
 		rows = sort_overview_rows(combined_rows(company, period, hide_zero, party, account, currency), sort_by, sort_order)
 		start = (page - 1) * page_length
 		return overview_payload(rows[start : start + page_length], combined_totals(rows), period, company, False, True, page, page_length, len(rows) > start + page_length)
-	scope = GLScope(company, party_type, account=account, currency=currency, search=(party or "").strip(), account_type=account_type)
+	scope = GLScope(company, party_type, account=account, currency=currency, search=text(party), account_type=account_type)
 	rows = overview_rows(scope, period, hide_zero, limit=page_length + 1, offset=(page - 1) * page_length, sort_by=sort_by, sort_order=sort_order)
 	return overview_payload(rows[:page_length], overview_totals(scope, period, hide_zero), period, company, scope.by_account, False, page, page_length, len(rows) > page_length)
 
@@ -139,7 +140,7 @@ def overview_payload(rows, totals, period, company, by_account, mixed, page, pag
 
 def overview_order(sort_by=None, sort_order=None):
 	"""ORDER BY from the allowlist; unknown keys keep the default name order."""
-	column = OVERVIEW_SORT.get(sort_by)
+	column = OVERVIEW_SORT.get(key(sort_by))
 	if not column:
 		return f"order by {TIE_BREAK}"
 	direction = "desc" if sort_order == "desc" else "asc"
@@ -197,7 +198,7 @@ def grouped_sql(scope, period, hide_zero):
 
 def combined_rows(company, period, hide_zero, party=None, account=None, currency=None):
 	"""Every readable party type plus accounts that are not the same GL line as a party row."""
-	search = (party or "").strip()
+	search = text(party)
 	rows = []
 	for name in readable_party_types():
 		scope = GLScope(company, name, account=account, currency=currency, search=search)

@@ -16,7 +16,9 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract im
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import make_receipt_conversion
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
 
-from ..smartprocess_accounting_document.v2_test_support import AccountingFixtureTestCase
+from ..smartprocess_accounting_document.v2_test_support import AccountingFixtureTestCase, pin_accounting_settings
+
+SETTINGS = "SmartProcess Accounting Settings"
 
 def ensure_lab_conversion_masters(company: str, base: str) -> None:
 	"""Idempotent lab masters so ConversionFixtures can run without Transfer submit."""
@@ -165,8 +167,11 @@ class ConversionFixtures(AccountingFixtureTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		if not frappe.get_single_value("SmartProcess Accounting Settings", "enable_v2_posting"):
+		if not frappe.get_single_value(SETTINGS, "enable_v2_posting"):
 			self.skipTest("V2 posting is disabled on this site.")
+		# These suites assert the Posting-unit path. They must not inherit the site's
+		# settlement switch; the pin is rolled back with the test.
+		pin_accounting_settings(enable_payment_entry_settlement=0)
 		self.target = self.foreign_currency()
 		self.bank = self.company_bank_account(self.base)
 		self.customer, self.receivable = self.customer_with_account(self.base)
@@ -176,6 +181,7 @@ class ConversionFixtures(AccountingFixtureTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
 		frappe.db.rollback()
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 	def submitted_receipt(self, payer=None, extra=(), posting_date=None):
 		customer, account, amount, rate = payer or (self.customer, self.receivable, str(HUNDRED_M), None)

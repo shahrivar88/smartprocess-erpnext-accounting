@@ -53,6 +53,15 @@ def no_commit():
 	return patch.object(frappe.db, "commit", side_effect=AssertionError("unexpected commit"))
 
 
+ACCOUNT_CURRENCY_FLAG = "allow_multi_currency_invoices_against_single_party_account"
+
+
+def pin_party_account_currency_flag(value=0):
+	"""ERPNext's party-account currency rule for one test; the rollback restores the site value."""
+	frappe.db.set_single_value("Accounts Settings", ACCOUNT_CURRENCY_FLAG, value)
+	frappe.clear_document_cache("Accounts Settings", "Accounts Settings")
+
+
 def temporary_company(country, currency):
 	"""Inserts a Company that the test rolls back; a commit during its creation fails the test."""
 	assert_accounting_fixtures_authorized()
