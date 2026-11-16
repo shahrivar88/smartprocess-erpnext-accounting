@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import contextmanager
 from decimal import Decimal
 
 import frappe
@@ -15,6 +16,23 @@ from .v2_test_support import (
 	OTHER_COMPANY,
 	V2IntegrationTestCase,
 )
+
+
+@contextmanager
+def source_strings():
+	"""Assert on the untranslated message for this block only.
+
+	The message is a gettext source string, so its text follows the site
+	language. Pinning here keeps the assertion correct on a translated site
+	without touching site configuration or any other test.
+	"""
+	previous = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+	try:
+		yield
+	finally:
+		if previous is not None:
+			frappe.local.lang = previous
 
 
 def configured_prefixes() -> dict[str, str]:
@@ -106,8 +124,9 @@ class TestV2LiveReadiness(V2IntegrationTestCase):
 		invalid = self.document(
 			[self.pair(BASE_BANK, 100, 1, BASE_CLEARING, 99, 1)]
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "balance exactly"):
-			invalid.insert()
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "balance exactly"):
+				invalid.insert()
 
 	def _totals(self, rows):
 		return (

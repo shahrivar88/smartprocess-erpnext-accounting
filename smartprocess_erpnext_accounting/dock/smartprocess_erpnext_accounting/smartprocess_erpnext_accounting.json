@@ -1,0 +1,19 @@
+{
+ "app": "smartprocess_erpnext_accounting",
+ "doctype": "Dock",
+ "items": [
+  {
+   "added": 0,
+   "hidden": 0,
+   "icon": "calculator-soft",
+   "link_to": "SmartProcess Accounting",
+   "link_type": "Sidebar",
+   "title": "حسابداری هوشمند"
+  }
+ ],
+ "mount_on": "erpnext",
+ "modified": "2026-11-17 12:00:00.000000",
+ "name": "smartprocess_erpnext_accounting",
+ "standard": 1,
+ "user": ""
+}

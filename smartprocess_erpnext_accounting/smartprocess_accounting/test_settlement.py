@@ -419,7 +419,7 @@ class TestOffsetAndHistory(unittest.TestCase):
 	def test_navigation_includes_workbench(self):
 		from smartprocess_erpnext_accounting.navigation import SIDEBAR_ITEMS
 
-		self.assertIn(("تطبیق و تسویه", "Page", "settlement-workbench", "list"), SIDEBAR_ITEMS)
+		self.assertIn(("تطبیق و تسویه", "Page", "settlement-workbench", "scale"), SIDEBAR_ITEMS)
 
 	def test_reconcile_filters_reject_company_account_or_currency_mismatch(self):
 		from smartprocess_erpnext_accounting.smartprocess_accounting.settlement.reconciliation import _assert_filters

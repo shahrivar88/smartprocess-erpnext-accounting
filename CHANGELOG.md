@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
+- ناوبری روی Dock و Sidebar استاندارد Frappe v16 سوار شد: `dock/smartprocess_erpnext_accounting/` با آیکن `calculator-soft` روی ریل ERPNext و `smartprocess_accounting/sidebar/` با بخش‌های عملیات، حساب طرف‌ها، تسویه، واسطه‌های مالی، گزارش‌ها و تنظیمات.
+- نام نمایشی ماژول از «رسید هوشمند» به «حسابداری هوشمند» تغییر کرد (`hooks.py`، `config/docs.py`، Workspace، `translations/fa.csv` و README)؛ نام ماژول، اپ و DocTypeها بدون تغییر است.
+- Workspace با آیکن `calculator-duotone` و میان‌بر «همه عملیات» بازچینش شد.
+- `install.py` دیگر Sidebar سایت را بازنویسی نمی‌کند؛ ترتیب و محتوا همراه خود اپ و به‌صورت JSON استاندارد منتشر می‌شود.
+- تست‌های ناوبری و کالا برای JSON منتشرشده، سری نام‌گذاری کالا و زبان سایت اصلاح شدند.
 - Transfer روی `SmartProcess Accounting Document` فعال شد و در این نسخه دقیقاً مثل Receipt رفتار می‌کند: فرم، فیلدها، اعتبارسنجی، محاسبه، ثبت GL و Payment Ledger Entry، تسویه، لغو، اصلاح و گزارش.
 - موتور Transfer مستقل است: `transfer_contract.py`، `transfer_builder.py`، `transfer_api.py`، `transfer_posting.py` و `transfer.py`. زیرساخت مشترک — `pair_sides.py`، `posting_units.py` و مسیر Payment Entry — بین سه عملیات مشترک است.
 - نوع ذخیره‌شده `Transfer`، سری نام‌گذاری `SP-TRF-` و پیش‌نمایش `transfer_api.preview_transfer` مخصوص Transfer است؛ رفتار و دادهٔ Receipt تغییر نمی‌کند.

@@ -5,15 +5,12 @@ from smartprocess_erpnext_accounting.navigation import (
 	MODULE_LABEL,
 	OLD_MODULE_LABELS,
 	WORKSPACE,
-	ordered_sidebar_items,
-	sidebar_signature,
 )
 
 
 def after_migrate():
 	_ensure_standard_module()
 	_ensure_workspace()
-	_ensure_workspace_sidebar()
 	_ensure_workspace_settings_link()
 	_ensure_desktop_icon_label()
 	_ensure_doctype_app()
@@ -127,22 +124,6 @@ def _ensure_workspace_settings_link():
 			label,
 			update_modified=False,
 		)
-
-
-def _ensure_workspace_sidebar():
-	# The module's right-hand sidebar is built from the Workspace Sidebar doc
-	# (frappe/desk/doctype/workspace_sidebar), not from the Workspace links table.
-	# Frappe's get_can_read_items() permission-filters each item by the linked
-	# doctype, so the Settings item follows the Settings doctype's own permission.
-	if not frappe.db.exists("Workspace Sidebar", WORKSPACE):
-		return
-	doc = frappe.get_doc("Workspace Sidebar", WORKSPACE)
-	before = sidebar_signature(doc.items)
-	doc.set("items", ordered_sidebar_items(doc.items))
-	for idx, row in enumerate(doc.items, start=1):
-		row.idx = idx
-	if sidebar_signature(doc.items) != before:
-		doc.save()
 
 
 def _ensure_desktop_icon_label():

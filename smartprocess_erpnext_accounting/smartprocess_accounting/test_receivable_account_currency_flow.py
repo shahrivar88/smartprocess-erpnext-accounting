@@ -238,18 +238,29 @@ def _customer_group():
 
 
 def _item():
-	name = "_SP RAC Item"
-	if not frappe.db.exists("Item", name):
-		frappe.get_doc(
-			{
-				"doctype": "Item",
-				"item_code": name,
-				"item_name": name,
-				"item_group": frappe.db.get_value("Item Group", {"is_group": 0}, "name") or _root("Item Group"),
-				"stock_uom": "Nos",
-				"is_stock_item": 0,
-			}
-		).insert()
+	"""Return the stored `name` of the fixture Item.
+
+	`Stock Settings.item_naming_by` can force a naming series, so the document's
+	name is not always the item_code. The callers pass this value as `item_code`
+	in invoice rows, which ERPNext resolves by `name`.
+	"""
+	item_code = "_SP RAC Item"
+	name = frappe.db.get_value("Item", {"item_code": item_code}, "name")
+	if not name:
+		name = (
+			frappe.get_doc(
+				{
+					"doctype": "Item",
+					"item_code": item_code,
+					"item_name": item_code,
+					"item_group": frappe.db.get_value("Item Group", {"is_group": 0}, "name") or _root("Item Group"),
+					"stock_uom": "Nos",
+					"is_stock_item": 0,
+				}
+			)
+			.insert()
+			.name
+		)
 	return name
 
 

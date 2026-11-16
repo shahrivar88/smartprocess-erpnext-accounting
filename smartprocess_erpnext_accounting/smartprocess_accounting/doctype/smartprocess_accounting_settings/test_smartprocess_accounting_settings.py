@@ -85,7 +85,19 @@ TABS = {
 	],
 	"پیشرفته": ["enable_templates", DEPRECATED],
 }
-SIDEBAR_LABELS = ["خانه", "رسید هوشمند", "تبدیل ارز", "گردش حساب", "تطبیق و تسویه", "واسطه مالی", "تنظیمات حسابداری هوشمند"]
+SIDEBAR_LABELS = [
+	"خانه",
+	"همه عملیات",
+	"دریافت",
+	"پرداخت",
+	"انتقال",
+	"تبدیل ارز",
+	"گردش حساب",
+	"تطبیق و تسویه",
+	"واسطه مالی",
+	"اعتبارهای نیازمند بررسی",
+	"تنظیمات حسابداری هوشمند",
+]
 
 
 class TestSmartProcessAccountingSettings(unittest.TestCase):
@@ -278,8 +290,8 @@ class TestSettingsValuesSurviveMigrate(unittest.TestCase):
 	def test_after_migrate_helpers_keep_stored_values(self):
 		before = frappe.db.get_singles_dict(SETTINGS, cast=False)
 		install._ensure_number_separator_defaults()
-		install._ensure_workspace_sidebar()
-		install._ensure_workspace_sidebar()
+		install._ensure_workspace()
+		install._ensure_workspace()
 		after = frappe.db.get_singles_dict(SETTINGS, cast=False)
 		self.assertEqual({key: after[key] for key in before}, before)
 		layout_fields = {df.fieldname for df in frappe.get_meta(SETTINGS).fields if df.fieldtype in LAYOUT_TYPES}
@@ -287,34 +299,55 @@ class TestSettingsValuesSurviveMigrate(unittest.TestCase):
 
 
 class TestModuleNavigation(unittest.TestCase):
-	def row(self, label, link_to, link_type="DocType", **extra):
-		return frappe._dict(label=label, link_to=link_to, link_type=link_type, type="Link", **extra)
+	"""The Sidebar and Dock ship as standard JSON; the site copy follows them."""
 
-	def test_order_dedupe_and_retired_links(self):
-		rows = [
-			self.row("تنظیمات", "SmartProcess Accounting Settings"),
-			self.row("Foreign", "Some Report", "Report"),
-			self.row("old", "SmartProcess Currency Conversion"),
-			self.row("Home", navigation.WORKSPACE, "Workspace"),
-			self.row("دوباره", "SmartProcess Accounting Settings"),
-			self.row("old receipt", "SmartProcess Accounting Document"),
-			self.row("old pca", "SmartProcess Party Currency Account"),
-		]
-		ordered = navigation.ordered_sidebar_items(rows)
-		self.assertEqual([row.label for row in ordered], [*SIDEBAR_LABELS[:-1], "Foreign", SIDEBAR_LABELS[-1]])
-		self.assertIs(ordered[-1], rows[0], "the first existing row is kept, not recreated")
-		self.assertEqual(ordered[3].icon, "list")
+	def test_sidebar_links_are_the_expected_persian_hierarchy(self):
+		self.assertEqual([item[0] for item in navigation.SIDEBAR_ITEMS], SIDEBAR_LABELS)
+		self.assertTrue({item[2] for item in navigation.SIDEBAR_ITEMS}.isdisjoint(navigation.RETIRED_DOCTYPES))
+		self.assertEqual(navigation.SIDEBAR_ITEMS[-1][2], "SmartProcess Accounting Settings")
 
-	def test_ordering_is_idempotent(self):
-		once = navigation.ordered_sidebar_items([self.row("x", "SmartProcess Receipt Conversion")])
-		self.assertEqual(navigation.sidebar_signature(navigation.ordered_sidebar_items(once)), navigation.sidebar_signature(once))
+	def test_every_sidebar_link_points_at_an_installed_target(self):
+		for _label, link_type, link_to, _icon in navigation.SIDEBAR_ITEMS:
+			if link_type == "Workspace":
+				self.assertEqual(link_to, navigation.WORKSPACE)
+				continue
+			self.assertTrue(frappe.db.exists(link_type, link_to), f"{link_type} {link_to} does not exist")
 
-	def test_site_sidebar_matches_the_exact_order(self):
-		if not frappe.db.exists("Workspace Sidebar", navigation.WORKSPACE):
-			self.skipTest("no module sidebar on this site")
-		items = frappe.get_all("Workspace Sidebar Item", filters={"parent": navigation.WORKSPACE, "parenttype": "Workspace Sidebar"}, fields=["label", "link_to"], order_by="idx asc")
-		self.assertEqual([item.label for item in items], SIDEBAR_LABELS)
-		self.assertEqual(len({item.link_to for item in items}), len(items))
+	def test_every_sidebar_row_has_an_icon(self):
+		for row in navigation.sidebar_rows():
+			self.assertTrue(row["icon"], f"«{row['label']}» has no icon")
+
+	def test_every_section_owns_the_rows_below_it(self):
+		rows = navigation.sidebar_rows()
+		for idx, row in enumerate(rows):
+			if row["type"] != "Section Break":
+				continue
+			self.assertEqual(row["child"], 0, f"«{row['label']}» must be top level")
+			self.assertEqual(rows[idx + 1]["child"], 1, f"«{row['label']}» is empty")
+
+	def test_dock_puts_the_sidebar_on_the_erpnext_rail(self):
+		dock = navigation.dock()
+		self.assertEqual(dock["mount_on"], "erpnext")
+		self.assertEqual(dock["name"], "smartprocess_erpnext_accounting")
+		item, = dock["items"]
+		self.assertEqual((item["link_type"], item["link_to"]), ("Sidebar", navigation.WORKSPACE))
+		self.assertEqual(item["icon"], "calculator-soft")
+		self.assertEqual(item["title"], navigation.MODULE_LABEL)
+
+	def test_site_sidebar_matches_the_shipped_file(self):
+		if not frappe.db.exists("Sidebar", navigation.WORKSPACE):
+			self.skipTest("run bench migrate to import the sidebar")
+		meta = frappe.db.get_value("Sidebar", navigation.WORKSPACE, ["standard", "app", "title"], as_dict=True)
+		self.assertEqual(meta.standard, 1)
+		self.assertEqual(meta.app, "smartprocess_erpnext_accounting")
+		self.assertEqual(meta.title, navigation.WORKSPACE, "the stored title stays ASCII so fa.csv can translate it")
+		items = frappe.get_all(
+			"Sidebar Item",
+			filters={"parent": navigation.WORKSPACE, "parenttype": "Sidebar"},
+			fields=["label"],
+			order_by="idx asc",
+		)
+		self.assertEqual([item.label for item in items], [row["label"] for row in navigation.sidebar_rows()])
 		self.assertEqual(frappe.db.get_value("Workspace", navigation.WORKSPACE, "label"), navigation.MODULE_LABEL)
 
 

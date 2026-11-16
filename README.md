@@ -1,6 +1,6 @@
 # SmartProcess_ERPNext_Accounting
 
-اپ Frappe/ERPNext برای رسید، پرداخت، انتقال، تبدیل ارز و گردش حساب روی GL استاندارد. نسخه: **0.5.0**.
+اپ Frappe/ERPNext برای رسید، پرداخت، انتقال، تبدیل ارز و گردش حساب روی GL استاندارد. نسخه: **0.6.0**.
 
 نیاز: Frappe `>=16,<17`، ERPNext `>=16,<17`، Python `>=3.10`.
 
@@ -47,8 +47,9 @@ bench --site <site> clear-website-cache
 
 ## ورود
 
-1. Desk → «رسید هوشمند».
-2. سند `SmartProcess Accounting Document` با نوع Receipt، Payment یا Transfer.
+1. Desk → ریل اپلیکیشن‌ها → «حسابداری هوشمند» (آیکن `calculator-soft`)، یا Workspace با همین نام.
+2. نوار کناری «حسابداری هوشمند»: خانه، عملیات (همه عملیات، دریافت، پرداخت، انتقال، تبدیل ارز)، حساب طرف‌ها (گردش حساب)، تسویه (تطبیق و تسویه)، واسطه‌های مالی، گزارش‌ها، تنظیمات.
+3. سند `SmartProcess Accounting Document` با نوع Receipt، Payment یا Transfer.
 
 ## تهاتر Common Party
 

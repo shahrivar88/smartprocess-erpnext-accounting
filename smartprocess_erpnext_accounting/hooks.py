@@ -12,7 +12,7 @@ required_apps = ["frappe", "erpnext"]
 add_to_apps_screen = [
 	{
 		"name": app_name,
-		"title": "رسید هوشمند",
+		"title": "حسابداری هوشمند",
 		"route": app_home,
 	}
 ]
