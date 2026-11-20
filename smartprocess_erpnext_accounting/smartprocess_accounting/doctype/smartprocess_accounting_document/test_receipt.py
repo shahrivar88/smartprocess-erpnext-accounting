@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import contextmanager
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -33,6 +34,22 @@ from .v2_test_support import (
 	SUPPLIER_BASE as SUPPLIER_BASE_PARTY,
 	V2IntegrationTestCase,
 )
+
+
+@contextmanager
+def source_strings():
+	"""Assert on the untranslated message for this block only.
+
+	The accounting controls come from ERPNext, so their text follows the site
+	language. Pinning here keeps the assertion correct on a translated site
+	without touching site configuration or any other test.
+	"""
+	previous = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+	try:
+		yield
+	finally:
+		frappe.local.lang = previous
 
 
 CUSTOMER_BASE = "MC Receivable Base - SPV2"
@@ -442,8 +459,9 @@ class TestReceiptUX(V2IntegrationTestCase):
 				payer_currency=BASE,
 				payer_account=CUSTOMER_BASE,
 			).insert()
-			with self.assertRaisesRegex(frappe.ValidationError, "closed"):
-				doc.submit()
+			with source_strings():
+				with self.assertRaisesRegex(frappe.ValidationError, "closed"):
+					doc.submit()
 			self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 0)
 			self.assertFalse(self.posting_units(doc, include_cancelled=True))
 		finally:
@@ -460,8 +478,9 @@ class TestReceiptUX(V2IntegrationTestCase):
 		company.save()
 		try:
 			doc = self.multi_date_receipt().insert()
-			with self.assertRaisesRegex(frappe.ValidationError, "not authorized"):
-				doc.submit()
+			with source_strings():
+				with self.assertRaisesRegex(frappe.ValidationError, "not authorized"):
+					doc.submit()
 			self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 0)
 			self.assertFalse(self.posting_units(doc, include_cancelled=True))
 		finally:
@@ -486,8 +505,9 @@ class TestReceiptUX(V2IntegrationTestCase):
 			payer_currency=BASE,
 			payer_account=CUSTOMER_BASE,
 		).insert()
-		with self.assertRaisesRegex(frappe.ValidationError, "Fiscal Year"):
-			doc.submit()
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "Fiscal Year"):
+				doc.submit()
 		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 0)
 		self.assertFalse(self.posting_units(doc, include_cancelled=True))
 
@@ -582,10 +602,11 @@ class TestReceiptUX(V2IntegrationTestCase):
 		doc = self.receipt([self.receipt_row(FOREIGN_A_ACCOUNT, FOREIGN_A, 10, 10)]).insert()
 		doc.submit()
 		unit_name = self.posting_units(doc)[0].name
-		with self.assertRaisesRegex(
-			frappe.ValidationError, "Posting units can only be cancelled from their source Receipt"
-		):
-			frappe.get_doc("SmartProcess Accounting Posting", unit_name).cancel()
+		with source_strings():
+			with self.assertRaisesRegex(
+				frappe.ValidationError, "Posting units can only be cancelled from their source Receipt"
+			):
+				frappe.get_doc("SmartProcess Accounting Posting", unit_name).cancel()
 		self.assertEqual(frappe.db.get_value(doc.doctype, doc.name, "docstatus"), 1)
 		self.assertEqual(frappe.db.get_value("SmartProcess Accounting Posting", unit_name, "docstatus"), 1)
 

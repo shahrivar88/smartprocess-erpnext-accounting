@@ -103,10 +103,16 @@ def _assert_filters(filters: dict) -> None:
 	for field in ("company", "party_type", "party", "account"):
 		if not filters.get(field):
 			frappe.throw(_("شرکت، نوع طرف‌حساب، طرف‌حساب و حساب لازم است."))
+	# The Company and Account checks apply User Permissions; the party check alone
+	# would let a company-restricted user reach another Company's ledger.
+	if not frappe.has_permission("Company", "read", doc=filters["company"]):
+		frappe.throw(_("اجازه دسترسی به این شرکت را ندارید."), frappe.PermissionError)
 	if filters["party_type"] not in ("Customer", "Supplier"):
 		frappe.throw(_("تطبیق استاندارد فقط برای مشتری و تأمین‌کننده است."))
 	if not frappe.has_permission(filters["party_type"], "read", doc=filters["party"]):
 		frappe.throw(_("اجازه خواندن این طرف‌حساب را ندارید."), frappe.PermissionError)
+	if not frappe.has_permission("Account", "read", doc=filters["account"]):
+		frappe.throw(_("اجازه خواندن این حساب را ندارید."), frappe.PermissionError)
 	account = frappe.get_cached_value(
 		"Account",
 		filters["account"],

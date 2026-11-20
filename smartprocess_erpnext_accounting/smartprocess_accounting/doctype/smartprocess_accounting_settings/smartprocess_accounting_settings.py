@@ -246,7 +246,7 @@ def cross_app_impacts():
 
 def _common_party_impact_status():
 	if not frappe.get_meta(SETTINGS).has_field("common_party_rate_source"):
-		return "پیش‌فرض کد: نرخ فاکتور مبدأ"
+		return "پیش‌فرض کد: رفتار استاندارد"
 	policy = load_common_party_policy()
 	labels = {
 		SOURCE_INVOICE: "فعال — نرخ فاکتور مبدأ",

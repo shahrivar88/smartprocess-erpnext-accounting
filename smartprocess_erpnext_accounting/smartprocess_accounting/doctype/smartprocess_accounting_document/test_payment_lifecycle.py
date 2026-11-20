@@ -9,6 +9,7 @@ data is created, and every test rolls back its transaction.
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import contextmanager
 from decimal import Decimal
 
 import frappe
@@ -18,6 +19,17 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.docum
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment import PaymentValidationError
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment_api import preview_payment
 from smartprocess_erpnext_accounting.smartprocess_accounting.posting import validate_document
+
+
+@contextmanager
+def source_strings():
+	"""Assert on the untranslated message for this block only; the site may be in Persian."""
+	previous = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+	try:
+		yield
+	finally:
+		frappe.local.lang = previous
 
 from . import test_receipt_lifecycle
 from .v2_test_support import AccountingFixtureTestCase
@@ -63,8 +75,9 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		])
 		party = {(row.party_type, row.party) for row in self.gl(postings) if row.account == receivable}
 		self.assertEqual(party, {("Customer", customer)})
-		with self.assertRaisesRegex(frappe.ValidationError, "source Receipt"):
-			frappe.get_doc(POSTING, postings[0]).cancel()
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "source Receipt"):
+				frappe.get_doc(POSTING, postings[0]).cancel()
 		self.cancel_and_assert_reversed(doc, postings)
 
 	def test_foreign_payer_foreign_recipient_conserves_the_currency_amount(self):
@@ -89,8 +102,9 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		doc.insert()
 		row = doc.operational_pairs[0]
 		row.credit_amount, row.credit_exchange_rate = "3", "1000"
-		with self.assertRaisesRegex(frappe.ValidationError, "same currency"):
-			validate_document(doc)
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "same currency"):
+				validate_document(doc)
 
 	def test_base_payer_foreign_recipient(self):
 		currency = self.foreign_currency()

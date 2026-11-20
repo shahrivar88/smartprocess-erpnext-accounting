@@ -1,5 +1,6 @@
 import functools
 import unittest
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -27,6 +28,17 @@ BASE_BANK = "Proof Bank Base - SPV2"
 BASE_RECEIVABLE = "MC Receivable Base - SPV2"
 FOREIGN_RECEIVABLE = "MC Receivable A - SPV2"
 FOREIGN_B_RECEIVABLE = "MC Receivable B - SPV2"
+
+
+@contextmanager
+def source_strings():
+	"""Assert on the untranslated message for this block only; the site may be in Persian."""
+	previous = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+	try:
+		yield
+	finally:
+		frappe.local.lang = previous
 
 
 def proof_fixture(test):
@@ -91,8 +103,9 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 	def test_empty_pair_is_rejected_on_explicit_validation(self):
 		doc = self._document()
 		doc.set("operational_pairs", [{}])
-		with self.assertRaisesRegex(frappe.ValidationError, "Both Debit and Credit"):
-			doc.validate()
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "Both Debit and Credit"):
+				doc.validate()
 
 	@proof_fixture
 	def test_multiple_pairs_and_rates(self):
@@ -189,8 +202,9 @@ class TestSmartProcessAccountingDocument(AccountingFixtureTestCase):
 	def test_unsupported_erpnext_version_fails_closed(self):
 		posting.assert_native_posting_contract.cache_clear()
 		with patch("erpnext.__version__", "17.0.0"):
-			with self.assertRaisesRegex(frappe.ValidationError, "ERPNext 16 only"):
-				posting.assert_native_posting_contract()
+			with source_strings():
+				with self.assertRaisesRegex(frappe.ValidationError, "ERPNext 16 only"):
+					posting.assert_native_posting_contract()
 		posting.assert_native_posting_contract.cache_clear()
 
 	def _document(self):

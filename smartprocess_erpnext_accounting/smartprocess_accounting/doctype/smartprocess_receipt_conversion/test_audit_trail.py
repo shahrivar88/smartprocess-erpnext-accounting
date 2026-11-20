@@ -13,6 +13,20 @@ from .conversion_test_support import HUNDRED_M, POSTING, RECEIPT, ConversionFixt
 
 AUDIT_MESSAGE = "permanent accounting audit record"
 
+_PREVIOUS_LANG = None
+
+
+def setUpModule():
+	"""Pin message assertions to source strings; the site language may be Persian."""
+	global _PREVIOUS_LANG
+	_PREVIOUS_LANG = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+
+
+def tearDownModule():
+	if _PREVIOUS_LANG is not None:
+		frappe.local.lang = _PREVIOUS_LANG
+
 
 class TestFinancialAuditTrail(ConversionFixtures):
 	def test_draft_documents_can_be_deleted(self):

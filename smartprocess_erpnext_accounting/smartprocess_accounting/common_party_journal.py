@@ -101,7 +101,9 @@ def load_common_party_policy() -> "CommonPartyPolicy":
 	if not meta or not meta.has_field("common_party_rate_source"):
 		return CommonPartyPolicy()
 	stored = frappe.db.get_singles_dict(SETTINGS, cast=False)
-	source = stored.get("common_party_rate_source") or SOURCE_INVOICE
+	# Opt-in only: an unset source keeps ERPNext's own rates, so installing the app
+	# never changes a standard Common Party Journal Entry by itself.
+	source = stored.get("common_party_rate_source") or SOURCE_STANDARD
 	shared = stored.get("common_party_use_shared_rate")
 	fail = stored.get("common_party_fail_on_missing_rate")
 	return CommonPartyPolicy(
@@ -209,8 +211,8 @@ def lookup_account_to_company_rate(account_currency, company_currency, posting_d
 
 
 class CommonPartyPolicy:
-	def __init__(self, source=SOURCE_INVOICE, use_shared_rate=True, fail_on_missing_rate=True):
-		self.source = source or SOURCE_INVOICE
+	def __init__(self, source=SOURCE_STANDARD, use_shared_rate=True, fail_on_missing_rate=True):
+		self.source = source or SOURCE_STANDARD
 		self.use_shared_rate = use_shared_rate
 		self.fail_on_missing_rate = fail_on_missing_rate
 

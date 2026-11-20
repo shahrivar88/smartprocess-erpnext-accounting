@@ -27,6 +27,15 @@ company_data_to_be_ignored = [
 	"SmartProcess Currency Conversion",
 ]
 
+# A standard Accounting Period closes only the voucher types listed in its own
+# Closed Document table, and that table is built from this hook. Without these
+# entries a closed period never reaches the app's General Ledger vouchers.
+period_closing_doctypes = [
+	"SmartProcess Accounting Document",
+	"SmartProcess Accounting Posting",
+	"SmartProcess Receipt Conversion",
+]
+
 extend_doctype_class = {
 	"Transaction Deletion Record": [
 		"smartprocess_erpnext_accounting.smartprocess_accounting.company_deletion_guard.SmartProcessTransactionDeletionGuard",

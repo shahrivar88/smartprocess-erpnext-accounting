@@ -20,6 +20,26 @@ const spSettlementWorkbench = {
 		return Boolean(filters.company && filters.party_type && filters.party && filters.account);
 	},
 
+	allocationDisplayRows(rows) {
+		return (rows || [])
+			.filter((row) => Number(row.allocated_amount || 0))
+			.map((row) => ({
+				payment: row.reference_name || "",
+				invoice: row.invoice_number || "",
+				amount: Number(row.allocated_amount || 0),
+				currency: row.currency || "",
+			}));
+	},
+
+	allocationTotals(rows) {
+		const display = this.allocationDisplayRows(rows);
+		const by_currency = {};
+		for (const row of display) {
+			by_currency[row.currency] = (by_currency[row.currency] || 0) + row.amount;
+		}
+		return { count: display.length, by_currency };
+	},
+
 	allocationRows(invoices, payments) {
 		const rows = [];
 		const openInvoices = invoices.map((row) => ({ ...row }));

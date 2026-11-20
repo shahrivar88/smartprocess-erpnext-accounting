@@ -125,21 +125,68 @@ class SettlementWorkbench {
 			return;
 		}
 		const filters = spSettlementWorkbench.filtersOf(this.page);
+		if (!spSettlementWorkbench.filtersReady(filters)) {
+			frappe.msgprint(__("شرکت، طرف‌حساب و حساب را کامل کنید."));
+			return;
+		}
 		if (!this.allocation.length) {
 			this.allocation = spSettlementWorkbench.allocationRows(this.entries.invoices, this.entries.payments);
 		}
-		this.busy = true;
-		try {
-			this.entries = await frappe.xcall(spSettlementWorkbench.method("reconcile_entries"), {
-				filters,
-				allocations: this.allocation,
-			});
-			this.allocation = [];
-			this.render();
-			frappe.show_alert({ message: __("تخصیص ثبت شد."), indicator: "green" });
-		} finally {
-			this.busy = false;
+		if (!this.allocation.length) {
+			frappe.msgprint(__("تخصیصی برای ثبت وجود ندارد."));
+			return;
 		}
+		const rows = this.allocation;
+		const dialog = new frappe.ui.Dialog({
+			title: __("تأیید ثبت تخصیص"),
+			size: "large",
+			fields: [{ fieldtype: "HTML", fieldname: "summary", options: this.allocationHtml(rows) }],
+			primary_action_label: __("ثبت تخصیص"),
+			primary_action: async () => {
+				if (this.busy) {
+					return;
+				}
+				this.busy = true;
+				try {
+					this.entries = await frappe.xcall(spSettlementWorkbench.method("reconcile_entries"), {
+						filters,
+						allocations: rows,
+					});
+					this.allocation = [];
+					this.render();
+					dialog.hide();
+					frappe.show_alert({ message: __("تخصیص ثبت شد."), indicator: "green" });
+				} finally {
+					this.busy = false;
+				}
+			},
+		});
+		dialog.show();
+	}
+
+	allocationHtml(rows) {
+		const display = spSettlementWorkbench.allocationDisplayRows(rows);
+		const totals = spSettlementWorkbench.allocationTotals(rows);
+		const head = [__("دریافت/پرداخت"), __("فاکتور"), __("مبلغ تخصیص"), __("ارز")]
+			.map((title) => `<th>${frappe.utils.escape_html(String(title))}</th>`)
+			.join("");
+		const body = display
+			.map(
+				(row) =>
+					`<tr><td>${frappe.utils.escape_html(row.payment)}</td>` +
+					`<td>${frappe.utils.escape_html(row.invoice)}</td>` +
+					`<td>${frappe.utils.escape_html(String(row.amount))}</td>` +
+					`<td>${frappe.utils.escape_html(row.currency)}</td></tr>`,
+			)
+			.join("");
+		const total = Object.entries(totals.by_currency)
+			.map(([currency, amount]) => `${frappe.utils.escape_html(String(amount))} ${frappe.utils.escape_html(currency)}`)
+			.join(" · ");
+		return (
+			`<p>${frappe.utils.escape_html(__("{0} ردیف تخصیص ثبت می‌شود.", [String(totals.count)]))}</p>` +
+			`<table class="table table-bordered"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` +
+			`<p><b>${frappe.utils.escape_html(__("جمع"))}:</b> ${total}</p>`
+		);
 	}
 
 	offset() {
@@ -205,6 +252,7 @@ class SettlementWorkbench {
 						frappe.msgprint(__("تخصیص فعالی برای این سند نیست."));
 						return;
 					}
+					dialog.hide();
 					const selections = links.map((row) => ({
 						company: filters.company,
 						voucher_type: values.doctype === "Payment Entry" || values.doctype === "Journal Entry" ? values.doctype : row.reference_doctype,
@@ -212,6 +260,46 @@ class SettlementWorkbench {
 						against_voucher_type: values.doctype === "Payment Entry" || values.doctype === "Journal Entry" ? row.reference_doctype : values.doctype,
 						against_voucher_no: values.doctype === "Payment Entry" || values.doctype === "Journal Entry" ? row.reference_name : values.name,
 					}));
+					this.confirmUnreconcile(values, links, selections);
+				} finally {
+					this.busy = false;
+				}
+			},
+		});
+		dialog.show();
+	}
+
+	confirmUnreconcile(values, links, selections) {
+		const head = [__("سند"), __("در برابر"), __("مبلغ")]
+			.map((title) => `<th>${frappe.utils.escape_html(String(title))}</th>`)
+			.join("");
+		const body = links
+			.map(
+				(row) =>
+					`<tr><td>${frappe.utils.escape_html(row.reference_doctype || "")} ${frappe.utils.escape_html(row.reference_name || "")}</td>` +
+					`<td>${frappe.utils.escape_html(values.doctype)} ${frappe.utils.escape_html(values.name)}</td>` +
+					`<td>${frappe.utils.escape_html(String(row.allocated_amount ?? row.amount ?? ""))}</td></tr>`,
+			)
+			.join("");
+		const dialog = new frappe.ui.Dialog({
+			title: __("تأیید لغو تطبیق"),
+			size: "large",
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "summary",
+					options:
+						`<p>${frappe.utils.escape_html(__("{0} تخصیص لغو می‌شود.", [String(links.length)]))}</p>` +
+						`<table class="table table-bordered"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`,
+				},
+			],
+			primary_action_label: __("لغو تطبیق"),
+			primary_action: async () => {
+				if (this.busy) {
+					return;
+				}
+				this.busy = true;
+				try {
 					await frappe.xcall(spSettlementWorkbench.method("unreconcile_entries"), { selections });
 					dialog.hide();
 					frappe.show_alert({ message: __("لغو تطبیق انجام شد."), indicator: "green" });

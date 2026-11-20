@@ -26,11 +26,13 @@ def _payload(value):
 
 @frappe.whitelist(methods=["POST"])
 def load_entries(filters):
+	_assert_settlement_read()
 	return load_open_entries(_payload(filters))
 
 
 @frappe.whitelist(methods=["POST"])
 def preview_allocations(filters):
+	_assert_settlement_read()
 	return suggest_fifo(_payload(filters))
 
 
@@ -69,9 +71,14 @@ def submit_journal_offset(payload):
 
 @frappe.whitelist(methods=["POST"])
 def require_settlement_access():
+	_assert_settlement_read()
+	return {"ok": 1}
+
+
+def _assert_settlement_read() -> None:
+	"""The UI gate, enforced on every read endpoint as well."""
 	if not (frappe.has_permission("Payment Entry", "read") or frappe.has_permission("Journal Entry", "read")):
 		frappe.throw(_("اجازه مشاهده تطبیق و تسویه را ندارید."), frappe.PermissionError)
-	return {"ok": 1}
 
 
 def _assert_payment_write(message):

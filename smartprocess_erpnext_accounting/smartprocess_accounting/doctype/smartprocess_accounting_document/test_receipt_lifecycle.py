@@ -6,6 +6,7 @@ No master data is created, and every test rolls back its transaction.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -18,6 +19,17 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract im
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
 
 from .v2_test_support import AccountingFixtureTestCase, pin_accounting_settings
+
+
+@contextmanager
+def source_strings():
+	"""Assert on the untranslated message for this block only; the site may be in Persian."""
+	previous = getattr(frappe.local, "lang", None)
+	frappe.local.lang = "en"
+	try:
+		yield
+	finally:
+		frappe.local.lang = previous
 
 DOCTYPE = "SmartProcess Accounting Document"
 POSTING = "SmartProcess Accounting Posting"
@@ -66,8 +78,9 @@ class TestReceiptLifecycle(AccountingFixtureTestCase):
 		entries = self.gl_rows(postings)
 		self.assertEqual({(row.party_type, row.party) for row in entries if row.account == receivable}, {("Customer", customer)})
 
-		with self.assertRaisesRegex(frappe.ValidationError, "source Receipt"):
-			frappe.get_doc(POSTING, postings[0]).cancel()
+		with source_strings():
+			with self.assertRaisesRegex(frappe.ValidationError, "source Receipt"):
+				frappe.get_doc(POSTING, postings[0]).cancel()
 		self.cancel_and_assert_reversed(doc, postings)
 
 	def test_foreign_receiver_foreign_payer_conserves_the_currency_amount(self):

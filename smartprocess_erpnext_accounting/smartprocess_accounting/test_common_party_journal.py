@@ -20,9 +20,13 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journa
 	align_common_party_rates,
 	apply_rate_plan,
 	is_common_party_journal,
+	load_common_party_policy,
 	plan_common_party_rates,
 )
 from smartprocess_erpnext_accounting.smartprocess_accounting.test_hooks_source import load_production_hooks
+
+# The enabled path is opt-in, so every enabled-path test names the policy it exercises.
+INVOICE_POLICY = CommonPartyPolicy(source=SOURCE_INVOICE)
 
 
 def invoice(**values):
@@ -187,7 +191,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 
 	def test_same_currency_uses_invoice_rate_on_both_rows(self):
 		doc = common_party_je(broken_usd_pair())
-		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR")
+		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR", policy=INVOICE_POLICY)
 		self.assertIsNone(plan.error)
 		apply_rate_plan(doc, plan)
 		self.assertEqual([flt(item.exchange_rate) for item in doc.accounts], [1_500_000, 1_500_000])
@@ -203,13 +207,14 @@ class TestCommonPartyJournal(unittest.TestCase):
 			invoice(currency="IRR", conversion_rate=1, outstanding_amount=5000),
 			["IRR", "IRR"],
 			"IRR",
+			policy=INVOICE_POLICY,
 		)
 		self.assertIsNone(plan.error)
 		self.assertEqual([item.exchange_rate for item in plan.rows], [1, 1])
 		self.assertEqual([item.account_amount for item in plan.rows], [5000, 5000])
 
 	def test_mixed_accounts_use_correct_conversion_not_forced_same_rate(self):
-		plan = plan_common_party_rates(invoice(), ["IRR", "USD"], "IRR")
+		plan = plan_common_party_rates(invoice(), ["IRR", "USD"], "IRR", policy=INVOICE_POLICY)
 		self.assertIsNone(plan.error)
 		self.assertEqual(plan.rows[0].exchange_rate, 1)
 		self.assertEqual(plan.rows[0].account_amount, 12_300_000_000)
@@ -221,6 +226,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 			invoice(),
 			["EUR", "USD"],
 			"IRR",
+			policy=INVOICE_POLICY,
 			lookup_rate=lambda *_args: 0,
 		)
 		self.assertIn("EUR", plan.error)
@@ -231,6 +237,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 			invoice(),
 			["EUR", "USD"],
 			"IRR",
+			policy=INVOICE_POLICY,
 			lookup_rate=lambda *_args: 60_000,
 		)
 		self.assertIsNone(plan.error)
@@ -240,13 +247,16 @@ class TestCommonPartyJournal(unittest.TestCase):
 		self.assertEqual(plan.rows[1].account_amount, 8200)
 
 	def test_invalid_invoice_rate_is_an_error(self):
-		plan = plan_common_party_rates(invoice(conversion_rate=0), ["USD", "USD"], "IRR")
+		plan = plan_common_party_rates(invoice(conversion_rate=0), ["USD", "USD"], "IRR", policy=INVOICE_POLICY)
 		self.assertIn("نامعتبر", plan.error)
-		self.assertIn("نامعتبر", plan_common_party_rates(invoice(conversion_rate=1), ["USD", "USD"], "IRR").error)
+		self.assertIn(
+			"نامعتبر",
+			plan_common_party_rates(invoice(conversion_rate=1), ["USD", "USD"], "IRR", policy=INVOICE_POLICY).error,
+		)
 
 	def test_rates_survive_journal_entry_set_exchange_rate(self):
 		doc = common_party_je(broken_usd_pair())
-		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR")
+		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR", policy=INVOICE_POLICY)
 		apply_rate_plan(doc, plan)
 		doc.flags.ignore_exchange_rate = True
 		simulate_je_set_exchange_rate(doc)
@@ -267,7 +277,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 				row(account_currency="USD", exchange_rate=0, credit_in_account_currency=8200),
 			]
 		)
-		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR")
+		plan = plan_common_party_rates(invoice(), ["USD", "USD"], "IRR", policy=INVOICE_POLICY)
 		apply_rate_plan(doc, plan)
 		self.assertEqual([flt(item.exchange_rate) for item in doc.accounts], [1_500_000, 1_500_000])
 		self.assertEqual(company_totals(doc.accounts), (12_300_000_000, 12_300_000_000))
@@ -280,7 +290,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 		), patch(
 			"smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journal._fill_account_currencies",
 		):
-			align_common_party_rates(doc, policy=CommonPartyPolicy())
+			align_common_party_rates(doc, policy=INVOICE_POLICY)
 		self.assertTrue(doc.flags.ignore_exchange_rate)
 		self.assertEqual([flt(item.exchange_rate) for item in doc.accounts], [1_500_000, 1_500_000])
 		self.assertIn(SOURCE_INVOICE, doc.user_remark)
@@ -312,16 +322,53 @@ class TestCommonPartyJournal(unittest.TestCase):
 			is_system_generated=1,
 			remark="SmartProcess offset: SI-050006 / BI-260155",
 		)
-		align_common_party_rates(other, policy=CommonPartyPolicy())
+		align_common_party_rates(other, policy=INVOICE_POLICY)
 		self.assertFalse(other.flags.get("ignore_exchange_rate"))
 		self.assertEqual([flt(item.exchange_rate) for item in other.accounts], [75, 80])
 
-	def test_settings_invoice_rate_is_the_default_policy(self):
+	def test_unset_source_defaults_to_standard_policy(self):
 		policy = CommonPartyPolicy()
-		self.assertEqual(policy.source, SOURCE_INVOICE)
-		self.assertTrue(policy.use_shared_rate)
-		self.assertTrue(policy.fail_on_missing_rate)
-		self.assertTrue(policy.should_align)
+		self.assertEqual(policy.source, SOURCE_STANDARD)
+		self.assertFalse(policy.should_align)
+
+	def test_fresh_install_resolves_to_standard_until_explicitly_configured(self):
+		with patch.object(frappe.db, "exists", return_value=False):
+			self.assertEqual(load_common_party_policy().source, SOURCE_STANDARD)
+		with patch.object(frappe.db, "get_singles_dict", return_value={}):
+			self.assertEqual(load_common_party_policy().source, SOURCE_STANDARD)
+		with patch.object(
+			frappe.db, "get_singles_dict", return_value={"common_party_rate_source": ""}
+		):
+			self.assertEqual(load_common_party_policy().source, SOURCE_STANDARD)
+
+	def test_explicit_user_configuration_is_preserved(self):
+		with patch.object(
+			frappe.db, "get_singles_dict", return_value={"common_party_rate_source": SOURCE_INVOICE}
+		):
+			self.assertEqual(load_common_party_policy().source, SOURCE_INVOICE)
+		with patch.object(
+			frappe.db, "get_singles_dict", return_value={"common_party_rate_source": SOURCE_EXCHANGE}
+		):
+			self.assertEqual(load_common_party_policy().source, SOURCE_EXCHANGE)
+
+	def test_unconfigured_handler_makes_no_mutation_and_raises_nothing(self):
+		doc = common_party_je(broken_usd_pair())
+		before = [(flt(item.exchange_rate), flt(item.debit_in_account_currency),
+		           flt(item.credit_in_account_currency)) for item in doc.accounts]
+		with patch.object(
+			frappe.db, "get_singles_dict", return_value={}
+		), patch(
+			"smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journal.load_referenced_invoice",
+			side_effect=AssertionError("the invoice must not be read when alignment is off"),
+		):
+			align_common_party_rates(doc)
+		self.assertEqual(
+			[(flt(item.exchange_rate), flt(item.debit_in_account_currency),
+			  flt(item.credit_in_account_currency)) for item in doc.accounts],
+			before,
+		)
+		self.assertFalse(doc.flags.get("ignore_exchange_rate"))
+		self.assertIsNone(doc.get("user_remark"))
 
 	def test_settings_standard_source_leaves_je_untouched(self):
 		doc = common_party_je(broken_usd_pair())
@@ -371,18 +418,18 @@ class TestCommonPartyJournal(unittest.TestCase):
 			invoice(),
 			["USD", "USD"],
 			"IRR",
-			policy=CommonPartyPolicy(use_shared_rate=False),
+			policy=CommonPartyPolicy(source=SOURCE_INVOICE, use_shared_rate=False),
 		)
 		self.assertTrue(plan.skip)
 
-	def test_settings_json_defaults_match_invoice_rate_policy(self):
+	def test_settings_json_defaults_match_standard_policy(self):
 		from pathlib import Path
 		import json
 
 		path = Path(__file__).resolve().parent / "doctype/smartprocess_accounting_settings/smartprocess_accounting_settings.json"
 		definition = json.loads(path.read_text(encoding="utf-8"))
 		fields = {row["fieldname"]: row for row in definition["fields"]}
-		self.assertEqual(fields["common_party_rate_source"]["default"], SOURCE_INVOICE)
+		self.assertEqual(fields["common_party_rate_source"]["default"], SOURCE_STANDARD)
 		self.assertEqual(fields["common_party_use_shared_rate"]["default"], "1")
 		self.assertEqual(fields["common_party_fail_on_missing_rate"]["default"], "1")
 		self.assertIn("common_party_rate_source", definition["field_order"])
@@ -396,7 +443,7 @@ class TestCommonPartyJournal(unittest.TestCase):
 		), patch(
 			"smartprocess_erpnext_accounting.smartprocess_accounting.common_party_journal._fill_account_currencies",
 		):
-			align_common_party_rates(doc, policy=CommonPartyPolicy())
+			align_common_party_rates(doc, policy=INVOICE_POLICY)
 		self.assertTrue(doc.flags.ignore_exchange_rate)
 		self.assertFalse(doc.flags.get("ignore_validate"))
 		self.assertFalse(doc.flags.get("ignore_permissions"))
