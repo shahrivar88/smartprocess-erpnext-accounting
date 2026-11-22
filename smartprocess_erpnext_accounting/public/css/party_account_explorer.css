@@ -67,7 +67,7 @@
 
 .sp-party-explorer .sp-kpi-value {
 	font-size: 1rem;
-	font-weight: 600;
+	font-weight: 400;
 }
 
 .sp-party-explorer .sp-kpi-nature {
@@ -77,7 +77,7 @@
 	background: var(--subtle-fg, #f0f1f2);
 	color: var(--text-muted, #6c7680);
 	font-size: 0.75rem;
-	font-weight: 500;
+	font-weight: 400;
 }
 
 .sp-party-explorer .sp-kpi-strong {
@@ -118,7 +118,7 @@
 /* ---- tables ---- */
 
 .sp-party-explorer .sp-strong {
-	font-weight: 600;
+	font-weight: 400;
 }
 
 .sp-party-explorer .sp-party-id {
@@ -241,7 +241,7 @@ body.sp-col-resizing {
 .sp-party-explorer tr.sp-opening-row td,
 .sp-party-explorer tr.sp-total-row td {
 	background: var(--subtle-fg, #f4f5f6);
-	font-weight: 600;
+	font-weight: 400;
 }
 
 .sp-party-explorer tr.sp-gl-row:not(.sp-group-last) td {
@@ -289,7 +289,7 @@ body.sp-col-resizing {
 .sp-party-explorer .sp-kpi-currency {
 	color: var(--text-muted, #6c7680);
 	font-size: 0.75rem;
-	font-weight: 500;
+	font-weight: 400;
 }
 
 .sp-party-explorer .sp-voucher-detail {
@@ -322,7 +322,7 @@ body.sp-col-resizing {
 
 .sp-party-explorer tr.sp-row-current td {
 	background: var(--yellow-highlight-color, #fff7d6) !important;
-	font-weight: 600;
+	font-weight: 400;
 }
 
 .sp-party-explorer .sp-pager {
