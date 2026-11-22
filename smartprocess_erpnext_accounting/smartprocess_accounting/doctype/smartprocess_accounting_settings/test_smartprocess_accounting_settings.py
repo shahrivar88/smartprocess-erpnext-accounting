@@ -48,6 +48,7 @@ TABS = {
 		"payment_naming_series",
 		"transfer_naming_series",
 		"currency_conversion_naming_series",
+		"intermediary_naming_series",
 	],
 	"نمایش اعداد": [
 		"enable_live_number_separator",

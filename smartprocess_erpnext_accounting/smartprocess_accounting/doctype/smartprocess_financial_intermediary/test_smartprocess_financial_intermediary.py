@@ -223,6 +223,18 @@ class TestFinancialIntermediarySite(unittest.TestCase):
 		if not self.synced:
 			self.skipTest("The Financial Intermediary schema is not synced yet.")
 
+	def test_new_intermediary_uses_the_configured_series(self):
+		self.require_schema()
+		if not frappe.db.has_column(DOCTYPE, "naming_series"):
+			self.skipTest("naming_series is not synced yet.")
+		doc = self.intermediary()
+		series = (
+			frappe.get_single_value("SmartProcess Accounting Settings", "intermediary_naming_series")
+			or "SP-FI-.YYYY.-.#####"
+		)
+		self.assertTrue(doc.name.startswith(series.split(".")[0]), doc.name)
+		self.assertEqual(doc.intermediary_name, "_SP Test Intermediary")
+
 	@classmethod
 	def receivable_accounts(cls):
 		rows = frappe.get_all(

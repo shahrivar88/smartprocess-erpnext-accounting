@@ -1,11 +1,12 @@
 {
  "actions": [],
- "autoname": "field:intermediary_name",
+ "autoname": "naming_series:",
  "creation": "2026-09-30 00:00:00.000000",
  "doctype": "DocType",
  "document_type": "Master",
  "engine": "InnoDB",
  "field_order": [
+  "naming_series",
   "identity_section", "intermediary_name", "intermediary_type", "intermediary_category", "identity_column", "legal_name", "default_company", "default_currency", "disabled",
   "registration_section", "tax_id", "registration_column", "national_id",
   "contact_section", "address_html", "contact_column", "contact_html",
@@ -15,6 +16,7 @@
   "notes_section", "notes"
  ],
  "fields": [
+  {"fieldname":"naming_series","fieldtype":"Data","hidden":1,"label":"Naming Series","no_copy":1,"set_only_once":1},
   {"fieldname":"identity_section","fieldtype":"Section Break","label":"مشخصات"},
   {"bold":1,"fieldname":"intermediary_name","fieldtype":"Data","in_global_search":1,"in_list_view":1,"label":"نام واسطه مالی","reqd":1,"unique":1},
   {"default":"Legal Entity","fieldname":"intermediary_type","fieldtype":"Select","in_standard_filter":1,"label":"نوع شخص","options":"Legal Entity\nNatural Person"},
@@ -44,10 +46,11 @@
   {"fieldname":"notes","fieldtype":"Small Text","label":"توضیحات"}
  ],
  "links": [],
- "modified": "2026-10-12 16:30:00.000000",
+ "modified": "2026-11-22 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "SmartProcess Accounting",
  "name": "SmartProcess Financial Intermediary",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {"create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"role":"Accounts Manager","share":1,"write":1},
@@ -57,6 +60,7 @@
  ],
  "search_fields": "legal_name,intermediary_category,tax_id,national_id",
  "show_name_in_global_search": 1,
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

@@ -15,6 +15,7 @@ def after_migrate():
 	_ensure_desktop_icon_label()
 	_ensure_doctype_app()
 	_ensure_financial_intermediary_party_type()
+	_ensure_party_link_titles()
 	_ensure_number_separator_defaults()
 	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
 		ensure_custom_fields,
@@ -30,6 +31,45 @@ def reload_number_display_settings():
 	frappe.reload_doc("smartprocess_accounting", "doctype", "smartprocess_accounting_settings", force=True)
 	_ensure_number_separator_defaults()
 	frappe.clear_cache()
+
+
+PARTY_LINK_TITLE_DOCTYPES = (
+	"Customer",
+	"Supplier",
+	"Employee",
+	"SmartProcess Financial Intermediary",
+)
+
+
+def _ensure_party_link_titles():
+	"""Show each party's title in its Link fields, without overriding an admin choice.
+
+	Runs on migrate for every site, is idempotent, and never touches Item or any
+	other DocType. A site that already owns a Property Setter for this property is
+	left exactly as configured.
+	"""
+	for doctype in PARTY_LINK_TITLE_DOCTYPES:
+		if not frappe.db.exists("DocType", doctype):
+			continue
+		if frappe.db.exists(
+			"Property Setter", {"doc_type": doctype, "property": "show_title_field_in_link"}
+		):
+			continue
+		meta = frappe.get_meta(doctype)
+		if not meta.title_field or not meta.get_field(meta.title_field):
+			continue
+		if meta.show_title_field_in_link:
+			continue
+		frappe.make_property_setter(
+			{
+				"doctype_or_field": "DocType",
+				"doctype": doctype,
+				"property": "show_title_field_in_link",
+				"value": "1",
+				"property_type": "Check",
+			},
+			is_system_generated=False,
+		)
 
 
 def _ensure_number_separator_defaults():
