@@ -448,3 +448,8 @@ body[data-route="party-account-explorer"] .main-section {
 		max-width: none;
 	}
 }
+
+/* Data cells of this app's query report stay at normal weight; only its header row is bold. */
+body[data-route*="Unallocatable"] .dt-cell:not(.dt-cell--header) .dt-cell__content {
+	font-weight: 400;
+}
