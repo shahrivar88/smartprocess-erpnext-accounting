@@ -36,6 +36,16 @@ const SP_RECEIPT_ROW_LABELS = {
 	deposit_identifier: "شناسه واریز",
 	depositor_name: "نام واریزکننده",
 	bank_name: "نام بانک / بانک مبدأ",
+	// The row's own payment details. They describe the transfer but are never read by
+	// posting, settlement or the ledger; the line's accounting text stays `..._description`.
+	receipt_date: "تاریخ رسید",
+	source_account_no: "حساب مبدأ (شماره حساب یا شبا)",
+	target_account_no: "حساب مقصد (شماره حساب یا شبا)",
+	source_account_holder: "نام صاحب حساب مبدأ",
+	target_account_holder: "نام صاحب حساب مقصد",
+	source_bank: "بانک مبدأ",
+	target_bank: "بانک مقصد",
+	details_note: "شرح",
 };
 const spReceiptOwnedGrids = new WeakSet();
 

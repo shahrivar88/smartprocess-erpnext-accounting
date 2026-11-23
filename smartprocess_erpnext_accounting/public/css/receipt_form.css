@@ -152,3 +152,24 @@
 	left: auto;
 	right: 0;
 }
+
+/* The row's «جزئیات بیشتر»: the short fields in two columns, then the note across the full
+ * width. Frappe gives every column in a section the same share, so the note's own column is
+ * forced wide and wraps to its own line; the two before it stay half each, which is the
+ * layout the rest of the row form uses. Below the small breakpoint the framework stacks
+ * every column, and these rules stay out of the way. */
+@media (min-width: 576px) {
+	.form-section[data-fieldname="details_section"] .form-column {
+		flex: 0 0 50%;
+		max-width: 50%;
+	}
+
+	.form-section[data-fieldname="details_section"] .form-column[data-fieldname="details_note_column"] {
+		flex: 0 0 100%;
+		max-width: 100%;
+	}
+}
+
+.form-section[data-fieldname="details_section"] [data-fieldname="details_note"] textarea {
+	min-height: 6rem;
+}
