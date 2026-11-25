@@ -154,8 +154,12 @@ const spReceiptRowQueries = {
 	openPayerTypes(frm, control) {
 		const options = spReceiptForm.state(frm).payerTypeOptions || [];
 		const input = (control.$input?.val?.() || "").trim();
-		const stored = (control.get_value?.() || "").trim();
-		const selected = Boolean(stored && input === stored);
+		// Frappe shows the translated label in the input ("مشتری"), and a grid
+		// control can report that label from get_value() too. Either form is the
+		// current selection, not a search that hides every other option.
+		const selected = Boolean(
+			input && options.some((entry) => input === entry.value || input === entry.label),
+		);
 		const typed = input.toLowerCase();
 		const items = options
 			.filter((entry) => !typed || selected || entry.value.toLowerCase().includes(typed) || entry.label.toLowerCase().includes(typed))

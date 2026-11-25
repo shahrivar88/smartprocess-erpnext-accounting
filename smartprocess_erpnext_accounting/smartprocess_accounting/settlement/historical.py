@@ -96,7 +96,8 @@ def _party_credits(source_name: str) -> list[dict]:
 		"Payment Ledger Entry",
 		filters={
 			"voucher_no": ["in", vouchers],
-			"against_voucher_no": ["in", vouchers],
+			# The voucher already scopes the credit; also demanding an
+			# against_voucher hid credits posted without a pair reference.
 			"delinked": 0,
 			"party": ["!=", ""],
 		},

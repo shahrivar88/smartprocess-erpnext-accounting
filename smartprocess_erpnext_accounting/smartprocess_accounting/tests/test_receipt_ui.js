@@ -235,7 +235,9 @@ test("6 one header Payer Currency; the row Currency is a read-only mirror outsid
 	reset();
 	const header = docField("receipt_credit_currency");
 	assert.deepEqual([header.fieldtype, header.label], ["Select", "ارز پرداخت‌کننده"]);
-	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("company_currency") + 1);
+	// The row-side currency now sits in the payers section, directly above the rows.
+	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("pairs_section") + 1);
+	assert.equal(docMeta.field_order.indexOf("operational_pairs"), docMeta.field_order.indexOf("receipt_credit_currency") + 1);
 	assert.equal(Boolean(evalDepends(docField("company_currency").depends_on, { operation_type: "Receipt" })), false);
 	const currency = pairField("receipt_currency");
 	assert.deepEqual([currency.hidden, currency.read_only, currency.in_list_view], [undefined, 1, undefined]);
@@ -841,6 +843,11 @@ test("30 the row type Link lists every configured option on click or clear", () 
 	spReceiptRowQueries.preparePayerTypeControl(frm, control, true);
 	assert.equal(control.awesomplete.minChars, 0);
 	assert.deepEqual(listed.at(-1), ["Customer", "Bank Account", "Account"]);
+	// The grid shows the translated label in the input; that is still the current
+	// selection, not a search that hides every other option.
+	control.$input.val = () => "مشتری";
+	spReceiptRowQueries.openPayerTypes(frm, control);
+	assert.deepEqual(listed.at(-1), ["Customer", "Bank Account", "Account"]);
 	control.get_value = () => "";
 	control.$input.val = () => "";
 	spReceiptRowQueries.openPayerTypes(frm, control);
@@ -893,6 +900,22 @@ test("31 Receipt→Payment→Receipt remaps account and amount to the visible ed
 	assert.deepEqual(editors({ operation_type: "Payment" }), payment);
 });
 
+test("33a Payment rows accept Customer, Supplier and Employee recipients", () => {
+	const doc = {
+		operation_type: "Payment",
+		company: "SP",
+		receipt_payer_currency: "IRR",
+		receipt_credit_currency: "IRR",
+	};
+	for (const type of ["Customer", "Supplier", "Employee"]) {
+		const query = spReceiptRowQueries.payerQuery(doc, { receipt_recipient_type: type, receipt_currency: "IRR" });
+		assert.equal(query.filters.party_type, type, type);
+		const filters = spReceiptRowQueries.payerAccountFilters(doc, { receipt_recipient_type: type });
+		assert.equal(filters.account_type, type === "Customer" ? "Receivable" : "Payable", type);
+	}
+	assert.ok(spReceiptConfig.PARTY_TYPES.includes("Employee"));
+});
+
 test("33 Shareholder stays out of new documents until both settings flags are on", () => {
 	const previous = globalThis.frappe.boot;
 	globalThis.frappe.boot = {};
@@ -931,17 +954,22 @@ test("33 Shareholder stays out of new documents until both settings flags are on
 	globalThis.frappe.boot = previous;
 });
 
-test("32 new documents offer Receipt, Transfer and Payment", () => {
-	assert.equal(spReceiptConfig.operationTypeOptions({}), "Receipt\nTransfer\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Receipt" }), "Receipt\nTransfer\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Payment" }), "Receipt\nTransfer\nPayment");
-	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Transfer" }), "Receipt\nTransfer\nPayment");
+test("32 new documents offer Transfer, Receipt and Payment in that order", () => {
+	assert.equal(spReceiptConfig.operationTypeOptions({}), "Transfer\nReceipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Receipt" }), "Transfer\nReceipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Payment" }), "Transfer\nReceipt\nPayment");
+	assert.equal(spReceiptConfig.operationTypeOptions({ operation_type: "Transfer" }), "Transfer\nReceipt\nPayment");
 	assert.equal(
 		spReceiptConfig.operationTypeOptions({ operation_type: "Currency Conversion" }),
-		"Receipt\nTransfer\nPayment\nCurrency Conversion",
+		"Transfer\nReceipt\nPayment\nCurrency Conversion",
 	);
-	assert.equal(docField("operation_type").options, "Receipt\nPayment\nTransfer\nCurrency Conversion");
+	assert.equal(docField("operation_type").options, "Transfer\nReceipt\nPayment\nCurrency Conversion");
+	assert.ok(
+		!docField("operation_type").in_standard_filter,
+		"the curated list filter is supplied by the list script, not the raw Select options",
+	);
 	assert.ok(clientSource.includes("applyOperationTypeOptions"));
+	assert.ok(spReceiptConfig.PARTY_TYPES.includes("Employee"), "Employee stays a supported party type");
 });
 
 test("34 Transfer renders the Receipt grid", () => {

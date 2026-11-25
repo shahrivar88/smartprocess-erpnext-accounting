@@ -81,7 +81,9 @@ class TestLegacyContract(unittest.TestCase):
 			for field in json.loads(DOCUMENT_JSON.read_text(encoding="utf-8"))["fields"]
 			if field["fieldname"] == "operation_type"
 		)
-		self.assertEqual(options.split("\n"), ["Receipt", "Payment", "Transfer", "Currency Conversion"])
+		# The form's selectable order is Transfer, Receipt, Payment; the stored
+		# historical value stays last so old documents keep their data.
+		self.assertEqual(options.split("\n"), ["Transfer", "Receipt", "Payment", "Currency Conversion"])
 		self.assertEqual(FLOW_OPERATIONS, ("Receipt", "Payment", "Transfer"))
 		self.assertEqual(set(SERIES_FIELDS), {"Receipt", "Payment", "Transfer", "Currency Conversion"})
 

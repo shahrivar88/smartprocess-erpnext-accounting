@@ -681,7 +681,9 @@ test("Balance mode fields are Persian, separate from the Receipt grid and hide R
 	assert.deepEqual(spBalanceForm.CUSTOM_FIELDS, ["conversion_amount", "target_rate", "target_amount"]);
 	assert.deepEqual(spBalanceForm.OFF_BALANCE_SIDE_LABELS, { Debit: "مقصد بدهکار", Credit: "مقصد بستانکار" });
 	assert.equal(spBalanceForm.MESSAGES.destinationNature, "ماهیت حساب مقصد");
-	assert.deepEqual(conversionMeta.field_order.slice(1, 6), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
+	assert.equal(conversionMeta.field_order[0], "naming_series");
+	assert.equal(field(conversionMeta, "naming_series").hidden, 1);
+	assert.deepEqual(conversionMeta.field_order.slice(2, 7), ["source_receipt", "company", "column_break_header", "posting_date", "target_currency"]);
 });
 
 test("Balance layout hides the empty native destination section and keeps the six table fields visible", () => {

@@ -1,0 +1,548 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8
+"
+
+msgid "Party Account Explorer"
+msgstr "گردش حساب"
+
+msgid "گردش و مانده طرف حساب"
+msgstr "گردش حساب"
+
+msgid "party-account-explorer"
+msgstr "گردش حساب"
+
+msgid "مانده اول دوره"
+msgstr "مانده اول دوره"
+
+msgid "گردش بدهکار"
+msgstr "گردش بدهکار"
+
+msgid "گردش بستانکار"
+msgstr "گردش بستانکار"
+
+msgid "مانده پایان دوره"
+msgstr "مانده پایان دوره"
+
+msgid "مخفی کردن مانده صفر"
+msgstr "مخفی کردن مانده صفر"
+
+msgid "مخفی کردن حساب‌های بدون مانده و گردش"
+msgstr "مخفی کردن حساب‌های بدون مانده و گردش"
+
+msgid "همه انواع"
+msgstr "همه انواع"
+
+msgid "جستجوی طرف حساب"
+msgstr "جستجوی طرف حساب"
+
+msgid "بازگشت به مانده‌ها"
+msgstr "بازگشت به مانده‌ها"
+
+msgid "برای باز کردن سند، روی شماره سند کلیک کنید."
+msgstr "برای باز کردن سند، روی شماره سند کلیک کنید."
+
+msgid "نرخ تبدیل ارز را به‌صورت دستی وارد کنید."
+msgstr "نرخ تبدیل ارز را به‌صورت دستی وارد کنید."
+
+msgid "شرح قلم"
+msgstr "شرح قلم"
+
+msgid "عنوان قلم"
+msgstr "عنوان قلم"
+
+msgid "مقدار"
+msgstr "مقدار"
+
+msgid "فی"
+msgstr "فی"
+
+msgid "بد"
+msgstr "بد"
+
+msgid "بس"
+msgstr "بس"
+
+msgid "مانده در خط"
+msgstr "مانده در خط"
+
+msgid "عنوان"
+msgstr "عنوان"
+
+msgid "خروجی اکسل"
+msgstr "خروجی اکسل"
+
+msgid "برای باز کردن سند روی ستون عنوان کلیک کنید."
+msgstr "برای باز کردن سند روی ستون عنوان کلیک کنید."
+
+msgid "SmartProcess Currency Conversion"
+msgstr "تبدیل"
+
+msgid "SmartProcess Conversion Row"
+msgstr "ردیف تبدیل"
+
+msgid "SmartProcess Accounting"
+msgstr "حسابداری هوشمند"
+
+msgid "SmartProcess_ERPNext_Accounting"
+msgstr "حسابداری هوشمند"
+
+msgid "Debit"
+msgstr "بدهکار"
+
+msgid "Credit"
+msgstr "بستانکار"
+
+msgid "SmartProcess Accounting Document"
+msgstr "رسید هوشمند"
+
+msgid "SmartProcess Accounting Pair"
+msgstr "جفت عملیاتی حسابداری"
+
+msgid "SmartProcess Party Currency Account"
+msgstr "حساب ارزی طرف حساب"
+
+msgid "SmartProcess Financial Intermediary"
+msgstr "واسطه مالی"
+
+msgid "SmartProcess Accounting Settings"
+msgstr "تنظیمات حسابداری هوشمند"
+
+msgid "Naming Series"
+msgstr "سری شماره‌گذاری"
+
+msgid "Operation Type"
+msgstr "نوع"
+
+msgid "Receipt"
+msgstr "دریافت"
+
+msgid "Payment"
+msgstr "پرداخت"
+
+msgid "Transfer"
+msgstr "انتقال"
+
+msgid "Currency Conversion"
+msgstr "تبدیل ارز"
+
+msgid "Company"
+msgstr "شرکت"
+
+msgid "Posting Date"
+msgstr "تاریخ ثبت"
+
+msgid "General Description"
+msgstr "شرح"
+
+msgid "General Reference"
+msgstr "مرجع"
+
+msgid "Company Currency"
+msgstr "ارز پایه"
+
+msgid "Operational Pairs"
+msgstr "ردیف‌های عملیاتی"
+
+msgid "Account Category"
+msgstr "نوع حساب"
+
+msgid "Account"
+msgstr "حساب معین"
+
+msgid "Suggested Account"
+msgstr "حساب پیشنهادی"
+
+msgid "Party Type"
+msgstr "نوع طرف حساب"
+
+msgid "Party"
+msgstr "طرف حساب"
+
+msgid "Account Currency"
+msgstr "ارز حساب"
+
+msgid "Amount"
+msgstr "مبلغ"
+
+msgid "Exchange Rate"
+msgstr "نرخ تبدیل"
+
+msgid "Company Currency Amount"
+msgstr "مبلغ ارز پایه"
+
+msgid "Rate Meaning"
+msgstr "معنای نرخ"
+
+msgid "Line Description"
+msgstr "شرح ردیف"
+
+msgid "More Details"
+msgstr "جزئیات بیشتر"
+
+msgid "Tracking Number"
+msgstr "شماره پیگیری"
+
+msgid "Transfer Reference"
+msgstr "مرجع انتقال"
+
+msgid "Cheque Number"
+msgstr "شماره چک"
+
+msgid "Cheque Date"
+msgstr "تاریخ چک"
+
+msgid "Bank Reference"
+msgstr "مرجع بانک"
+
+msgid "Deposit Identifier"
+msgstr "شناسه واریز"
+
+msgid "Intermediary Name"
+msgstr "نام واسطه مالی"
+
+msgid "Disabled"
+msgstr "غیرفعال"
+
+msgid "Default Company"
+msgstr "شرکت پیش‌فرض"
+
+msgid "Notes"
+msgstr "یادداشت‌ها"
+
+msgid "Currency"
+msgstr "ارز"
+
+msgid "Feature Gates"
+msgstr "فعال‌سازی قابلیت‌ها"
+
+msgid "Enable Multi-Currency Party Compatibility"
+msgstr "فعال‌سازی سازگاری چندارزی طرف حساب"
+
+msgid "Enable Counterpart Proposal"
+msgstr "فعال‌سازی پیشنهاد حساب مقابل"
+
+msgid "Enable Templates"
+msgstr "فعال‌سازی الگوها"
+
+msgid "Enable Manual Invoice Rate Feature"
+msgstr "فعال‌سازی نرخ دستی فاکتور"
+
+msgid "Display and Calculation"
+msgstr "نمایش و محاسبه"
+
+msgid "Monetary Display Precision"
+msgstr "دقت نمایش مبلغ"
+
+msgid "Exchange Rate Display Precision"
+msgstr "دقت نمایش نرخ تبدیل"
+
+msgid "Base Currency Rounding Tolerance"
+msgstr "تلرانس گرد کردن ارز پایه"
+
+msgid "Receipt Naming Series"
+msgstr "سری شماره‌گذاری دریافت"
+
+msgid "Payment Naming Series"
+msgstr "سری شماره‌گذاری پرداخت"
+
+msgid "Transfer Naming Series"
+msgstr "سری شماره‌گذاری انتقال"
+
+msgid "Currency Conversion Naming Series"
+msgstr "سری شماره‌گذاری تبدیل ارز"
+
+msgid "Hide Insignificant Trailing Zeros"
+msgstr "عدم نمایش صفرهای اعشاری غیرضروری"
+
+msgid "Bank"
+msgstr "بانک"
+
+msgid "Cash"
+msgstr "صندوق"
+
+msgid "Receivable"
+msgstr "دریافتنی"
+
+msgid "Payable"
+msgstr "پرداختنی"
+
+msgid "Expense"
+msgstr "هزینه"
+
+msgid "Income"
+msgstr "درآمد"
+
+msgid "Financial Intermediary"
+msgstr "واسطه مالی"
+
+msgid "Other"
+msgstr "سایر"
+
+msgid "Accounting posting is not enabled in V2 Prototype 0.1."
+msgstr "ثبت حسابداری در پیش‌نمونه ۰٫۱ نسخه ۲ فعال نیست."
+
+msgid "Conservative default: standard ERPNext behavior remains unchanged."
+msgstr "پیش‌فرض محافظه‌کارانه است و رفتار استاندارد ERPNext بدون تغییر باقی می‌ماند."
+
+msgid "SmartProcess Accounting Posting"
+msgstr "ثبت حسابداری"
+
+msgid "SmartProcess Receipt Conversion"
+msgstr "تبدیل ارز"
+
+msgid "SmartProcess Receipt Conversion Leg"
+msgstr "ردیف تبدیل ارز"
+
+msgid "Receipt"
+msgstr "از رسید"
+
+msgid "Balance"
+msgstr "از مانده حساب"
+
+msgid "At least one leg needs a Conversion Amount greater than zero."
+msgstr "حداقل یک ردیف باید «مبلغ این تبدیل» بزرگ‌تر از صفر داشته باشد."
+
+msgid "Company must match the source Receipt Company {0}."
+msgstr "شرکت باید همان شرکت رسید مبدا ({0}) باشد."
+
+msgid "Target Currency is required."
+msgstr "ارز مقصد الزامی است."
+
+msgid "Target Currency {0} is not enabled."
+msgstr "ارز مقصد {0} فعال نیست."
+
+msgid "Target Currency must differ from the Company currency {0}."
+msgstr "ارز مقصد باید با ارز پایه شرکت ({0}) متفاوت باشد."
+
+msgid "Posting Date is required."
+msgstr "تاریخ ثبت الزامی است."
+
+msgid "At least one Conversion Leg is required."
+msgstr "حداقل یک ردیف تبدیل لازم است."
+
+msgid "This Receipt row side already appears in another leg."
+msgstr "این سمت از ردیف رسید در ردیف دیگری هم آمده است."
+
+msgid "Source ledger Company does not match the Conversion Company."
+msgstr "شرکت دفتر مبدا با شرکت سند تبدیل یکی نیست."
+
+msgid "Only Company-currency ({0}) Receipt sides can be converted."
+msgstr "فقط سمت‌هایی از رسید که به ارز پایه شرکت ({0}) هستند قابل تبدیل‌اند."
+
+msgid "Posting Date cannot be before the source posting date {0}."
+msgstr "تاریخ تبدیل نمی‌تواند قبل از تاریخ ثبت مبدا ({0}) باشد."
+
+msgid "Converted amount exceeds the source amount. The ledger needs review."
+msgstr "مبلغ تبدیل‌شده از مبلغ مبدا بیشتر است. دفتر کل باید بررسی شود."
+
+msgid "Conversion Amount {0} exceeds the remaining amount {1}."
+msgstr "«مبلغ این تبدیل» ({0}) از مانده قابل تبدیل ({1}) بیشتر است."
+
+msgid "Leg {0}"
+msgstr "ردیف {0}"
+
+msgid "Leg {0}: {1}"
+msgstr "ردیف {0}: {1}"
+
+msgid "Target Rate must be greater than zero."
+msgstr "نرخ باید بزرگ‌تر از صفر باشد."
+
+msgid "Conversion Amount is too small: the Target Amount rounds to zero."
+msgstr "«مبلغ این تبدیل» خیلی کم است و مبلغ ارز مقصد به صفر گرد می‌شود."
+
+msgid "No exchange rate can reproduce the exact Company-currency amount."
+msgstr "هیچ نرخی نمی‌تواند دقیقاً همین مبلغ ارز پایه را بسازد."
+
+msgid "Target Account is required."
+msgstr "حساب مقصد الزامی است."
+
+msgid "Target Account currency {0} must be the Target Currency {1}."
+msgstr "ارز حساب مقصد ({0}) باید همان ارز مقصد ({1}) باشد."
+
+msgid "Conversion Amount cannot be negative."
+msgstr "«مبلغ این تبدیل» نمی‌تواند منفی باشد."
+
+msgid "Conversion Amount has more decimals than the Company currency allows."
+msgstr "تعداد اعشار «مبلغ این تبدیل» بیشتر از حد مجاز ارز پایه است."
+
+msgid "Receipt {0} has submitted Receipt Conversion {1}. Cancel every linked Conversion first."
+msgstr "رسید {0} تبدیل ارز ثبت‌شده {1} دارد. ابتدا همه تبدیل‌های مرتبط را لغو کنید."
+
+msgid "Receipt is locked by Conversion"
+msgstr "رسید به‌دلیل تبدیل ارز قفل است"
+
+msgid "Cancelled {0} {1} is a permanent accounting audit record and cannot be deleted."
+msgstr "{0} {1} لغوشده سابقه دائمی حسابرسی است و حذف نمی‌شود."
+
+msgid "Source Receipt {0} must be submitted."
+msgstr "رسید مبدا {0} باید ثبت نهایی شده باشد."
+
+msgid "You do not have permission to read Receipt {0}."
+msgstr "اجازه مشاهده رسید {0} را ندارید."
+
+msgid "Source Receipt is required."
+msgstr "رسید مبدا الزامی است."
+
+msgid "{0} is not a Receipt."
+msgstr "{0} رسید نیست."
+
+msgid "Receipt {0} has no Company-currency ({1}) side to convert."
+msgstr "رسید {0} سمتی به ارز پایه شرکت ({1}) برای تبدیل ندارد."
+
+msgid "Common Exchange Rate"
+msgstr "نرخ ارز مشترک"
+
+msgid "Common Exchange Rate must be greater than zero."
+msgstr "نرخ ارز مشترک باید بزرگ‌تر از صفر باشد."
+
+msgid "Source Side must be Receiver or Payer."
+msgstr "سمت مبدا باید دریافت‌کننده یا پرداخت‌کننده باشد."
+
+msgid "Source Pair {0} does not belong to Receipt {1}."
+msgstr "ردیف {0} متعلق به رسید {1} نیست."
+
+msgid "Source posting {0} is not an active posting of Receipt {1}."
+msgstr "سند ثبت {0} سند فعال رسید {1} نیست."
+
+msgid "Receipt Conversion of {0} · Row {1} · {2}"
+msgstr "تبدیل ارز رسید {0} · ردیف {1} · {2}"
+
+msgid "Balance Conversion of {0} {1} · {2} · Source {3} Row {4} · {5}"
+msgstr "تبدیل ارز از مانده {0} {1} · {2} · سند مبدا {3} ردیف {4} · {5}"
+
+msgid "Company is required."
+msgstr "شرکت الزامی است."
+
+msgid "Source Party Type, Party and Account are required."
+msgstr "نوع طرف حساب، طرف حساب و حساب مبدا الزامی است."
+
+msgid "Conversion Amount must be greater than zero."
+msgstr "«مبلغ تبدیل» باید بزرگ‌تر از صفر باشد."
+
+msgid "Conversion Amount {0} exceeds the maximum convertible amount {1}."
+msgstr "«مبلغ تبدیل» ({0}) از «حداکثر قابل تبدیل» ({1}) بیشتر است."
+
+msgid "The allocation of {0} to {1} is too small: its Target Amount rounds to zero. Change the amount."
+msgstr "سهم {0} از سند ثبت {1} خیلی کم است و مبلغ ارز مقصد آن به صفر گرد می‌شود. «مبلغ تبدیل» را تغییر دهید."
+
+msgid "No exchange rate can reproduce the exact Company-currency amount for {0}."
+msgstr "هیچ نرخی نمی‌تواند دقیقاً مبلغ ارز پایه سند ثبت {0} را بسازد."
+
+msgid "Conversion Amount is no longer available in the eligible sources."
+msgstr "«مبلغ تبدیل» دیگر در منابع قابل تبدیل موجود نیست؛ فرم را تازه کنید."
+
+msgid "Source Party"
+msgstr "طرف مبدا"
+
+msgid "Target Party"
+msgstr "طرف مقصد"
+
+msgid "Balance Conversion supports only today's posting date for now."
+msgstr "تبدیل از مانده حساب فعلاً فقط با تاریخ امروز ممکن است."
+
+msgid "Source Account must be in the Company currency {0}."
+msgstr "حساب مبدا باید به ارز پایه شرکت ({0}) باشد."
+
+msgid "Payment Ledger does not match General Ledger for this Party and Account. The ledger needs review."
+msgstr "دفتر پرداخت (Payment Ledger) با دفتر کل این طرف حساب و حساب یکی نیست. دفتر باید بررسی شود."
+
+msgid "The Party has ledger entries after {0}. Balance Conversion cannot run yet."
+msgstr "این طرف حساب بعد از {0} سند ثبت‌شده دارد؛ فعلاً تبدیل از مانده ممکن نیست."
+
+msgid "Receipt row {0} {1}: converted amount {2} is outside the source amount {3}. The ledger needs review."
+msgstr "ردیف {0} رسید ({1}): مبلغ تبدیل‌شده {2} خارج از مبلغ مبدا {3} است. دفتر باید بررسی شود."
+
+msgid "SmartProcess First"
+msgstr "اولویت با SmartProcess"
+
+msgid "ERPNext First"
+msgstr "اولویت با ERPNext"
+
+msgid "Account selection priority {0} is not valid."
+msgstr "اولویت انتخاب حساب «{0}» معتبر نیست."
+
+msgid "Default accounts row {0} is incomplete. Set Company, Currency, Account Purpose and Account."
+msgstr "ردیف {0} حساب‌های پیش‌فرض ناقص است. شرکت، ارز، کاربرد حساب و حساب را تکمیل کنید."
+
+msgid "Default accounts row {0}: Account Purpose {1} is not valid."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: کاربرد حساب «{1}» معتبر نیست."
+
+msgid "Default accounts row {0} repeats row {1}. Only one Account is allowed for Company {2}, Currency {3} and Account Purpose {4}."
+msgstr "ردیف {0} حساب‌های پیش‌فرض تکرار ردیف {1} است. برای شرکت «{2}»، ارز {3} و کاربرد «{4}» فقط یک حساب مجاز است."
+
+msgid "Default accounts row {0}: Account {1} does not exist."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: حساب «{1}» وجود ندارد."
+
+msgid "Default accounts row {0}: Account {1} belongs to Company {2}, not to Company {3}."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: حساب «{1}» متعلق به شرکت «{2}» است، نه شرکت «{3}»."
+
+msgid "Default accounts row {0}: Account {1} is disabled."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: حساب «{1}» غیرفعال است."
+
+msgid "Default accounts row {0}: Account {1} is a group account. Select a ledger account."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: حساب «{1}» گروهی است. یک حساب معین (غیرگروهی) انتخاب کنید."
+
+msgid "Default accounts row {0}: Account {1} must have Account Type {2}, but it has {3}."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: نوع حساب «{1}» باید {2} باشد، اما {3} است."
+
+msgid "Default accounts row {0}: Account {1} currency is {2}, but the row currency is {3}."
+msgstr "ردیف {0} حساب‌های پیش‌فرض: ارز حساب «{1}» {2} است، اما ارز ردیف {3} است."
+
+msgid "no Account Type"
+msgstr "بدون نوع حساب"
+
+msgid "Receivable"
+msgstr "فاکتور فروش"
+
+msgid "Payable"
+msgstr "فاکتور خرید"
+
+msgid "The account of related return invoices is taken from the original invoice."
+msgstr "حساب فاکتورهای برگشتی مرتبط، از فاکتور اصلی گرفته می‌شود."
+
+msgid "Please set {0} to {1}, the same account that was used in the original invoice {2}."
+msgstr "فیلد {0} را برابر {1} قرار دهید؛ این همان حسابی است که در فاکتور اصلی {2} استفاده شده است."
+
+msgid "Legal Entity"
+msgstr "شخص حقوقی"
+
+msgid "Natural Person"
+msgstr "شخص حقیقی"
+
+msgid "Exchange Office"
+msgstr "صرافی"
+
+msgid "Money Transfer Agent"
+msgstr "حواله‌دار"
+
+msgid "Brokerage Firm"
+msgstr "کارگزاری"
+
+msgid "Payment Agent"
+msgstr "عامل پرداخت"
+
+msgid "Other Intermediary"
+msgstr "سایر واسطه‌ها"
+
+msgid "Shareholder"
+msgstr "سهامدار"
+
+msgid "Shareholder Current"
+msgstr "جاری سهامداران"
+
+msgid "Shareholder Current"
+msgstr "جاری سهامداران"
+
+msgid "نوع طرف حساب سهامدار در سند جدید مجاز نیست. این گزینه را در تنظیمات حسابداری هوشمند روشن کنید."
+msgstr "نوع طرف حساب سهامدار در سند جدید مجاز نیست. این گزینه را در تنظیمات حسابداری هوشمند روشن کنید."
+
+msgid "سهامدار «{0}» گردش حسابداری با ارز {1} دارد. تغییر ارز پیش‌فرض به {2} با سیاست یک ارز برای هر طرف حساب سازگار نیست."
+msgstr "سهامدار «{0}» گردش حسابداری با ارز {1} دارد. تغییر ارز پیش‌فرض به {2} با سیاست یک ارز برای هر طرف حساب سازگار نیست."
+
+msgid "سهامدار «{0}» متعلق به شرکت {1} است، نه شرکت {2}."
+msgstr "سهامدار «{0}» متعلق به شرکت {1} است، نه شرکت {2}."
+
+msgid "ارز {0} غیرفعال است."
+msgstr "ارز {0} غیرفعال است."
+

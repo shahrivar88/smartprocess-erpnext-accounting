@@ -18,23 +18,26 @@ PAIR = "SmartProcess Accounting Pair"
 FORM_DIR = Path(__file__).parent
 FORM_SCRIPT = FORM_DIR / "smartprocess_accounting_document.js"
 CSS = FORM_DIR.parents[2] / "public" / "css" / "receipt_form.css"
-# The header order the site's manual layout (custom Section/Column Breaks) was built on.
+# The site's manual layout, shipped in the DocType JSON since 0.7.2.
 HEADER_ORDER = (
 	"naming_series",
 	"operation_type",
-	"company",
-	"posting_date",
-	"receipt_payer_currency",
 	"receipt_receiver_kind",
-	"receipt_bank_account",
-	"receipt_payer",
-	"receipt_payer_exchange_rate",
 	"receipt_payer_account",
 	"header_column",
+	"company",
 	"receipt_payer_type",
+	"receipt_bank_account",
+	"receipt_payer",
+	"receipt_payer_currency",
+	"receipt_payer_exchange_rate",
+	"header_column_2",
 	"company_currency",
-	"receipt_credit_currency",
+	"posting_date",
 	"general_description",
+	"pairs_section",
+	"receipt_credit_currency",
+	"operational_pairs",
 )
 APP = "smartprocess_erpnext_accounting"
 APP_DIR = FORM_DIR.parents[2]
@@ -47,6 +50,11 @@ LAYOUT_WRITERS = re.compile(
 LAYOUT_WRITER_ALLOWLIST = {
 	# Applied once; deletes only a stale field_order setter that lists a field removed from the DocType.
 	"patches/v0_1/remove_abandoned_conversion_metadata.py",
+	# Applied once; removes the absorbed field_order setter and its Column Break. It never writes layout.
+	"patches/v0_2/absorb_receipt_header_layout.py",
+	# Sets only the party Link display title (show_title_field_in_link) on the four
+	# party DocTypes; the later assertions below prove it never names Receipt or Pair.
+	"install.py",
 	# Custom Field on Shareholder only. It never writes Receipt or Pair layout.
 	"smartprocess_accounting/shareholder_accounting.py",
 }
@@ -71,6 +79,10 @@ class TestReceiptClientContract(unittest.TestCase):
 	def test_header_keeps_the_layout_order(self):
 		definition = json.loads((FORM_DIR / "smartprocess_accounting_document.json").read_text(encoding="utf-8"))
 		self.assertEqual(tuple(definition["field_order"][: len(HEADER_ORDER)]), HEADER_ORDER)
+		# The row-side currency lives in its own section, directly above the rows.
+		order = definition["field_order"]
+		self.assertEqual(order[order.index("pairs_section") + 1], "receipt_credit_currency")
+		self.assertEqual(order[order.index("receipt_credit_currency") + 1], "operational_pairs")
 		meta = frappe.get_meta(DOCTYPE)
 		self.assertEqual(meta.get_field("receipt_payer_currency").label, "ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_payer_exchange_rate").label, "نرخ ارز دریافت‌کننده")

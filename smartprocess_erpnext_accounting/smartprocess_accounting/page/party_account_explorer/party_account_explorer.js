@@ -475,8 +475,8 @@ class PartyAccountExplorer {
 				: __("برای دیدن ریزگردش، روی ردیف طرف حساب کلیک کنید. هر ردیف جمع حساب‌های هم‌ارز طرف حساب است؛ ستون‌های ساده به ارز پایه و ستون‌های ارزی به ارز حساب از دفتر کل خوانده می‌شوند.");
 		this.$overview.html(`
 			<div class="sp-ledger-meta"><span>${__("دوره")}: ${period}</span></div>
-			<div class="sp-table-wrap">
-				<table class="table sp-table sp-overview-table">
+			<div class="sp-table-wrap table-responsive">
+				<table class="table table-bordered sp-table sp-overview-table">
 					${pae_ledger_view.colgroup(columns, this.prefs, "overview")}
 					<thead><tr>${pae_ledger_view.head(columns, this.overview_sort)}</tr></thead>
 					<tbody>${rows || `<tr><td colspan="${columns.length}" class="text-muted text-center">${__("ردیفی یافت نشد.")}</td></tr>`}</tbody>
@@ -591,7 +591,7 @@ class PartyAccountExplorer {
 		this.$ledger.html(`
 			${pae_ledger_view.header(context, summary)}
 			${pae_ledger_view.toolbar(this.filters)}
-			<div class="sp-table-wrap sp-ledger-wrap"></div>
+			<div class="sp-table-wrap table-responsive sp-ledger-wrap"></div>
 			${this.pager_html(this.page_index > 0, this.ledger.has_more, this.page_index + 1)}
 			<p class="text-muted small">${__("هر فاکتور با اقلام و تعدیلاتش در چند ردیف آمده است؛ جمع آن‌ها در هر دو ارز دقیقاً برابر ردیف دفتر کل همان فاکتور است.")}
 				${__("ستون «نرخ ارز» نرخ ذخیره‌شده در همان ردیف دفتر کل است (ارز پایه به ازای یک واحد ارز حساب)؛ اگر نرخ قابل اتکایی ثبت نشده باشد «—» نمایش داده می‌شود.")}
@@ -650,7 +650,7 @@ class PartyAccountExplorer {
 			})
 		);
 		const $wrap = this.$ledger.find(".sp-ledger-wrap");
-		$wrap.html(`<table class="table sp-table sp-ledger-table">
+		$wrap.html(`<table class="table table-bordered sp-table sp-ledger-table">
 			${pae_ledger_view.colgroup(columns, this.prefs, "ledger")}
 			<thead><tr>${pae_ledger_view.head(columns, this.ledger_sort)}</tr></thead>
 			<tbody>${rows.join("")}</tbody>

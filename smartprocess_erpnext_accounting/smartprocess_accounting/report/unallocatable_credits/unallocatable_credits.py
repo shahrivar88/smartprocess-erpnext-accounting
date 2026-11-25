@@ -19,5 +19,14 @@ COLUMNS = [
 ]
 
 
+EMPTY_MESSAGE = (
+	"اعتباری نیازمند بررسی نیست؛ یا دریافت و پرداخت ثبت‌شده‌ای وجود ندارد، "
+	"یا همهٔ آن‌ها سند تسویه استاندارد دارند."
+)
+
+
 def execute(filters=None):
-	return COLUMNS, list_unallocatable_credits(filters or {})
+	rows = list_unallocatable_credits(filters or {})
+	if not rows:
+		return COLUMNS, [], EMPTY_MESSAGE
+	return COLUMNS, rows

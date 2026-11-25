@@ -43,7 +43,7 @@ extend_doctype_class = {
 }
 
 app_include_css = [
-	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.12.0",
+	"/assets/smartprocess_erpnext_accounting/css/party_account_explorer.css?v=0.12.1",
 	"/assets/smartprocess_erpnext_accounting/css/receipt_form.css?v=0.9.4",
 ]
 

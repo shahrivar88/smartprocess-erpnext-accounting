@@ -39,6 +39,11 @@ RECEIPT_ROW_TYPE_DEFAULTS = [
 	{"value": "Account", "label": "سایر حساب‌ها"},
 ]
 
+# Accounting party types a row must always be able to use. A stored Settings
+# list that omits one (a partial or older value) must not make the party type
+# unavailable; the configured order and labels still win for the ones it lists.
+REQUIRED_ROW_PARTY_TYPES = ("Customer", "Supplier", "Employee")
+
 
 def _receipt_row_type_options() -> list[dict]:
 	"""Configured order/labels of the Receipt row Payer Type dropdown.
@@ -46,7 +51,8 @@ def _receipt_row_type_options() -> list[dict]:
 	Reads the JSON list from SmartProcess Accounting Settings and keeps only the
 	values the Receipt validation accepts (the same set as the server-side row
 	validation), so the dropdown can never offer an invalid type. Malformed or
-	missing configuration falls back to the built-in default order.
+	missing configuration falls back to the built-in default order, and a stored
+	list that omits Customer, Supplier or Employee gains them back.
 	"""
 	valid = (*ALLOWED_PARTY_TYPES, ACCOUNT_RECIPIENT, BANK_ACCOUNT_RECIPIENT)
 	options = [dict(entry) for entry in RECEIPT_ROW_TYPE_DEFAULTS]
@@ -70,6 +76,11 @@ def _receipt_row_type_options() -> list[dict]:
 					options = parsed
 		except Exception:
 			pass
+	defaults = {entry["value"]: entry for entry in RECEIPT_ROW_TYPE_DEFAULTS}
+	present = {entry["value"] for entry in options}
+	for value in REQUIRED_ROW_PARTY_TYPES:
+		if value not in present:
+			options.append(dict(defaults[value]))
 	from smartprocess_erpnext_accounting.smartprocess_accounting.shareholder_accounting import (
 		PARTY_TYPE,
 		in_smart_document,
@@ -88,7 +99,10 @@ def receipt_recipient_type_query(doctype, txt, searchfield, start, page_len, fil
 	"""Ordered, labeled suggestion list for the Receipt row Payer Type Link."""
 	search = (txt or "").strip().lower()
 	options = _receipt_row_type_options()
-	if search:
+	exact = any(search in (entry["value"].lower(), entry["label"].lower()) for entry in options)
+	# The open dropdown pre-fills the current option's translated label. Treat an
+	# exact label/value as "no search text" so the whole list stays available.
+	if search and not exact:
 		options = [
 			entry
 			for entry in options

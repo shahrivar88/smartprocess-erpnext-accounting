@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 from pathlib import Path
 
@@ -88,15 +89,12 @@ TABS = {
 }
 SIDEBAR_LABELS = [
 	"خانه",
-	"همه عملیات",
-	"دریافت",
-	"پرداخت",
 	"انتقال",
 	"تبدیل ارز",
 	"گردش حساب",
 	"تطبیق و تسویه",
-	"واسطه مالی",
 	"اعتبارهای نیازمند بررسی",
+	"واسطه مالی",
 	"تنظیمات حسابداری هوشمند",
 ]
 
@@ -263,10 +261,25 @@ class TestSettingsLayout(unittest.TestCase):
 			self.assertNotIn(DEPRECATED, path.read_text(encoding="utf-8"), path.name)
 
 	def test_no_property_setter_reshapes_the_settings(self):
+		# The app must never reshape the Settings form or invent core fields.
 		self.assertEqual(frappe.get_all("Property Setter", filters={"doc_type": SETTINGS}, pluck="name"), [])
 		source = (APP_DIR / "install.py").read_text(encoding="utf-8")
-		for marker in ("Property Setter", "make_property_setter", "Custom Field"):
-			self.assertNotIn(marker, source)
+		self.assertNotIn("Custom Field", source)
+		# The one deliberate Property Setter is the party Link title toggle; every
+		# other use is forbidden, and the helper itself must stay limited and idempotent.
+		self.assertEqual(source.count("make_property_setter"), 1)
+		helper = inspect.getsource(install._ensure_party_link_titles)
+		self.assertIn('"property": "show_title_field_in_link"', helper)
+		self.assertIn('"doctype_or_field": "DocType"', helper)
+		self.assertIn('"value": "1"', helper)
+		self.assertIn('"Property Setter", {"doc_type": doctype, "property": "show_title_field_in_link"}', helper)
+		self.assertIn("continue", helper)
+		self.assertEqual(
+			tuple(install.PARTY_LINK_TITLE_DOCTYPES),
+			("Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary"),
+		)
+		for doctype in (SETTINGS, "Item"):
+			self.assertNotIn(doctype, install.PARTY_LINK_TITLE_DOCTYPES)
 
 	def sections(self):
 		section = []
@@ -306,6 +319,71 @@ class TestModuleNavigation(unittest.TestCase):
 		self.assertEqual([item[0] for item in navigation.SIDEBAR_ITEMS], SIDEBAR_LABELS)
 		self.assertTrue({item[2] for item in navigation.SIDEBAR_ITEMS}.isdisjoint(navigation.RETIRED_DOCTYPES))
 		self.assertEqual(navigation.SIDEBAR_ITEMS[-1][2], "SmartProcess Accounting Settings")
+
+	def test_the_operations_section_holds_only_transfer_then_conversion(self):
+		rows = navigation.sidebar_rows()
+		start = next(index for index, row in enumerate(rows) if row["label"] == "عملیات")
+		end = next(
+			index for index, row in enumerate(rows[start + 1 :], start + 1) if row["type"] == "Section Break"
+		)
+		links = [row["label"] for row in rows[start + 1 : end] if row["type"] == "Link"]
+		self.assertEqual(links, ["انتقال", "تبدیل ارز"])
+		# The three removed entries stay reachable through the list's Type filter.
+		for retired in ("همه عملیات", "دریافت", "پرداخت"):
+			self.assertNotIn(retired, [item[0] for item in navigation.SIDEBAR_ITEMS])
+
+	def test_intermediary_uses_the_handshake_icon(self):
+		rows = {row["label"]: row for row in navigation.sidebar_rows()}
+		self.assertEqual(rows["واسطه مالی"]["icon"], "handshake")
+
+	def test_employee_stays_out_of_the_menu_but_keeps_its_capabilities(self):
+		labels = [item[0] for item in navigation.SIDEBAR_ITEMS]
+		sections = [row["label"] for row in navigation.sidebar_rows() if row["type"] == "Section Break"]
+		self.assertNotIn("گردش کار", sections)
+		self.assertFalse([label for label in labels if "کارمند" in label or "Employee" in label])
+		config = (APP_DIR / "smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_config.js").read_text(
+			encoding="utf-8"
+		)
+		self.assertIn('"Employee"', config)
+		self.assertIn('Employee: "کارمند"', config)
+
+	def test_operation_type_filter_offers_the_four_live_views(self):
+		import json
+
+		path = (
+			APP_DIR
+			/ "smartprocess_accounting/doctype/smartprocess_accounting_document/smartprocess_accounting_document.json"
+		)
+		definition = json.loads(path.read_text(encoding="utf-8"))
+		field = next(row for row in definition["fields"] if row["fieldname"] == "operation_type")
+		# Stored historical values stay valid; only the filter's view is curated.
+		self.assertEqual(field["options"], "Transfer\nReceipt\nPayment\nCurrency Conversion")
+		self.assertFalse(field.get("in_standard_filter"))
+		self.assertNotIn("default", field, "the current default is preserved")
+		script = (
+			APP_DIR
+			/ "smartprocess_accounting/doctype/smartprocess_accounting_document/smartprocess_accounting_document_list.js"
+		).read_text(encoding="utf-8")
+		self.assertIn('fieldname: "operation_type"', script)
+		for label in ("همه عملیات", "انتقال", "دریافت", "پرداخت"):
+			self.assertIn(label, script)
+		self.assertNotIn("Currency Conversion", script)
+		self.assertNotIn("تبدیل ارز", script)
+
+	def test_operation_type_label_reads_as_type(self):
+		import json
+
+		path = (
+			APP_DIR
+			/ "smartprocess_accounting/doctype/smartprocess_accounting_document/smartprocess_accounting_document.json"
+		)
+		definition = json.loads(path.read_text(encoding="utf-8"))
+		field = next(row for row in definition["fields"] if row["fieldname"] == "operation_type")
+		self.assertEqual(field["label"], "نوع")
+		csv = (APP_DIR / "translations/fa.csv").read_text(encoding="utf-8")
+		self.assertIn("Operation Type,نوع,", csv)
+		po = (APP_DIR / "locale/fa.po").read_text(encoding="utf-8")
+		self.assertIn('msgid "Operation Type"\nmsgstr "نوع"', po)
 
 	def test_every_sidebar_link_points_at_an_installed_target(self):
 		for _label, link_type, link_to, _icon in navigation.SIDEBAR_ITEMS:

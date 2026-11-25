@@ -57,7 +57,7 @@ const spReceiptConfig = {
 
 	// Schema still stores Currency Conversion for history.
 	// New documents only offer the live Receipt, Transfer and Payment operations.
-	ACTIVE_OPERATIONS: ["Receipt", "Transfer", "Payment"],
+	ACTIVE_OPERATIONS: ["Transfer", "Receipt", "Payment"],
 
 	operationTypeOptions(doc) {
 		const current = doc?.operation_type || "";

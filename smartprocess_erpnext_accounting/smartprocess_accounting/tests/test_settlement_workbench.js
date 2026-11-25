@@ -59,3 +59,16 @@ test("allocation totals group by currency and skip empty allocations", () => {
 	assert.equal(totals.count, 3);
 	assert.deepEqual(totals.by_currency, { USD: 800, IRR: 50 });
 });
+
+test("settlement tables use the standard table shell and a standard empty state", () => {
+	const fs = require("node:fs");
+	const path = require("node:path");
+	const source = fs.readFileSync(
+		path.join(__dirname, "../page/settlement_workbench/settlement_workbench.js"),
+		"utf8",
+	);
+	assert.ok(source.includes('class="table-responsive"'));
+	assert.ok(source.includes('class="table table-bordered"'));
+	assert.ok(source.includes("موردی یافت نشد"));
+	assert.ok(!source.includes("<b>"), "no stray bold markup in the settlement report");
+});

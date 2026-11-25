@@ -64,6 +64,20 @@ class TestSettlementSafety(V2IntegrationTestCase):
 		income, cost_center = frappe.db.get_value(
 			"Company", COMPANY, ["default_income_account", "cost_center"]
 		)
+		# ERPNext 16 requires item_name on the row. A non-stock item is preferred;
+		# otherwise the row is a free-text service line with no stock effect.
+		item = frappe.db.get_value(
+			"Item", {"is_stock_item": 0}, ["name", "item_name"], as_dict=True
+		) or {}
+		row = {
+			"item_name": item.get("item_name") or "SP Settlement Service",
+			"qty": 1,
+			"rate": amount,
+			"income_account": income,
+			"cost_center": cost_center,
+		}
+		if item.get("name"):
+			row["item_code"] = item["name"]
 		doc = frappe.get_doc(
 			{
 				"doctype": "Sales Invoice",
@@ -74,15 +88,7 @@ class TestSettlementSafety(V2IntegrationTestCase):
 				"debit_to": RECEIVABLE_BASE,
 				"currency": BASE,
 				"conversion_rate": 1,
-				"items": [
-					{
-						"item_code": frappe.db.get_value("Item", {"is_stock_item": 0}, "name"),
-						"qty": 1,
-						"rate": amount,
-						"income_account": income,
-						"cost_center": cost_center,
-					}
-				],
+				"items": [row],
 			}
 		).insert()
 		doc.submit()

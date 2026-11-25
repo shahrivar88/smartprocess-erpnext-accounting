@@ -15,8 +15,26 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.posting import (
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion import ReceiptConversionService
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_source import BALANCE_MODE
 
+SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
+NAMING_SERIES_FIELD = "currency_conversion_naming_series"
+DEFAULT_NAMING_SERIES = "SP-FX-.YYYY.-.#####"
+
 
 class SmartProcessReceiptConversion(AccountsController):
+	def before_naming(self):
+		self.naming_series = self._configured_series()
+
+	def _configured_series(self):
+		"""The Settings value, else the module default; existing names never change.
+
+		A blank value, or one without a counter placeholder (``#``), cannot name
+		a document reliably, so it falls back instead of failing at insert.
+		"""
+		value = (frappe.get_single_value(SETTINGS_DOCTYPE, NAMING_SERIES_FIELD) or "").strip()
+		if not value or "#" not in value:
+			return DEFAULT_NAMING_SERIES
+		return value
+
 	def validate(self):
 		if self.conversion_mode == BALANCE_MODE:
 			# Balance mode has one header rate; the common-rate option is Receipt-only.

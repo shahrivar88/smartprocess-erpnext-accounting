@@ -4,6 +4,17 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import nowdate
 
+
+def party_naming_series(party_type: str) -> str:
+	"""The Party's own naming series; ERPNext 16 requires it on Customer.
+
+	The fixtures name the Party explicitly with ``insert(set_name=...)``, but a
+	new Customer still validates its required naming series field.
+	"""
+	meta = frappe.get_meta(party_type)
+	field = meta.get_field("naming_series")
+	return (field.default if field and field.default else "") or f"{party_type[:2].upper()}-.YYYY.-"
+
 from smartprocess_erpnext_accounting.smartprocess_accounting.fixture_guard import (
 	AUTHORIZATION_VARIABLE,
 	assert_accounting_fixtures_authorized,
@@ -224,6 +235,7 @@ def ensure_v2_proof_fixtures() -> None:
 			frappe.get_doc(
 				{
 					"doctype": "Customer",
+					"naming_series": party_naming_series("Customer"),
 					"customer_name": OTHER_CUSTOMER,
 					"customer_type": "Company",
 					"default_currency": base_company,
@@ -234,6 +246,7 @@ def ensure_v2_proof_fixtures() -> None:
 			frappe.get_doc(
 				{
 					"doctype": "Customer",
+					"naming_series": party_naming_series("Customer"),
 					"customer_name": LEGACY_CUSTOMER,
 					"customer_type": "Company",
 					"default_currency": BASE,
@@ -259,9 +272,11 @@ def ensure_single_currency_parties() -> None:
 				"accounts": [{"company": COMPANY, "account": account}],
 			}
 			if party_type == "Customer":
+				payload["naming_series"] = party_naming_series("Customer")
 				payload["customer_name"] = party
 				payload["customer_type"] = "Company"
 			else:
+				payload["naming_series"] = party_naming_series("Supplier")
 				payload["supplier_name"] = party
 				payload["supplier_type"] = "Company"
 			# Customer and Supplier name themselves from their naming series, so the
@@ -271,6 +286,7 @@ def ensure_single_currency_parties() -> None:
 			frappe.get_doc(
 				{
 					"doctype": "Employee",
+					"naming_series": "HR-EMP-",
 					"first_name": EMPLOYEE_A,
 					"employee_name": EMPLOYEE_A,
 					"company": COMPANY,

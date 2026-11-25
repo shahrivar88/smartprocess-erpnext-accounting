@@ -95,6 +95,46 @@ class TestSourceConsumptionBounds(unittest.TestCase):
 			self.assertEqual(source_consumption(source).remaining, 0)
 
 
+class TestConversionNamingSeries(unittest.TestCase):
+	"""Conversion numbering is the Settings series, through standard Naming Series."""
+
+	def _before_naming(self, configured):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_receipt_conversion.smartprocess_receipt_conversion import (
+			SmartProcessReceiptConversion,
+		)
+
+		doc = object.__new__(SmartProcessReceiptConversion)
+		with patch.object(frappe, "get_single_value", return_value=configured) as read:
+			SmartProcessReceiptConversion.before_naming(doc)
+		read.assert_called_once_with("SmartProcess Accounting Settings", "currency_conversion_naming_series")
+		return doc.naming_series
+
+	def test_configured_series_is_applied(self):
+		self.assertEqual(self._before_naming("SP-CUSTOM-.YYYY.-.####"), "SP-CUSTOM-.YYYY.-.####")
+
+	def test_missing_setting_falls_back_to_the_module_default(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.doctype.smartprocess_receipt_conversion.smartprocess_receipt_conversion import (
+			DEFAULT_NAMING_SERIES,
+		)
+
+		self.assertEqual(DEFAULT_NAMING_SERIES, "SP-FX-.YYYY.-.#####")
+		for value in ("", None, "   ", "SP-FX", "SP-FX-.YYYY."):
+			with self.subTest(value=value):
+				self.assertEqual(self._before_naming(value), DEFAULT_NAMING_SERIES)
+
+	def test_jalali_year_series_is_accepted(self):
+		self.assertEqual(self._before_naming("SP-FX-.JYY.-.#####"), "SP-FX-.JYY.-.#####")
+
+	def test_doctype_uses_the_standard_naming_series_field(self):
+		meta = frappe.get_meta(CONVERSION)
+		self.assertEqual(meta.autoname, "naming_series:")
+		self.assertEqual(meta.naming_rule, 'By "Naming Series" field')
+		field = meta.get_field("naming_series")
+		self.assertEqual((field.fieldtype, field.hidden, field.set_only_once, field.no_copy), ("Data", 1, 1, 1))
+		# The field default keeps a new draft nameable even before the controller runs.
+		self.assertEqual(field.default, "SP-FX-.YYYY.-.#####")
+
+
 class TestReceiptConversion(ConversionFixtures):
 	def test_receiver_full_payer_zero_posts_only_the_receiver_pair(self):
 		receipt = self.submitted_receipt()

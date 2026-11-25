@@ -185,7 +185,7 @@ class SettlementWorkbench {
 		return (
 			`<p>${frappe.utils.escape_html(__("{0} ردیف تخصیص ثبت می‌شود.", [String(totals.count)]))}</p>` +
 			`<table class="table table-bordered"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` +
-			`<p><b>${frappe.utils.escape_html(__("جمع"))}:</b> ${total}</p>`
+			`<p>${frappe.utils.escape_html(__("جمع"))}: ${total}</p>`
 		);
 	}
 
@@ -314,32 +314,59 @@ class SettlementWorkbench {
 
 	render() {
 		const summary = this.page.main.find(".sp-settle-summary");
+		const currency = this.summaryCurrency();
 		summary.html(`
-			<p>${__("مانده فاکتورها")}: ${frappe.utils.escape_html(String(this.entries.outstanding || 0))}</p>
-			<p>${__("اعتبار آزاد")}: ${frappe.utils.escape_html(String(this.entries.unallocated || 0))}</p>
+			<p>${__("مانده فاکتورها")}: ${frappe.utils.escape_html(this.amount(this.entries.outstanding || 0, currency))}</p>
+			<p>${__("اعتبار آزاد")}: ${frappe.utils.escape_html(this.amount(this.entries.unallocated || 0, currency))}</p>
 		`);
 		this.page.main.find(".sp-settle-invoices").html(this.table(
 			[__("فاکتور"), __("مانده"), __("ارز")],
-			(this.entries.invoices || []).map((row) => [this.link(row.invoice_type, row.invoice_number), row.outstanding_amount, row.currency]),
+			(this.entries.invoices || []).map((row) => [
+				this.link(row.invoice_type, row.invoice_number),
+				this.amount(row.outstanding_amount, row.currency),
+				row.currency,
+			]),
 		));
 		this.page.main.find(".sp-settle-payments").html(this.table(
 			[__("سند"), __("مبلغ آزاد"), __("سند مادر")],
 			(this.entries.payments || []).map((row) => [
 				this.link(row.reference_type, row.reference_name),
-				row.amount,
+				this.amount(row.amount, row.currency),
 				row.source_document ? this.link("SmartProcess Accounting Document", row.source_document) : "",
 			]),
 		));
 		this.page.main.find(".sp-settle-allocation").html(this.table(
 			[__("دریافت"), __("فاکتور"), __("تخصیص")],
-			(this.allocation || []).map((row) => [row.reference_name, row.invoice_number, row.allocated_amount]),
+			(this.allocation || []).map((row) => [
+				row.reference_name,
+				row.invoice_number,
+				this.amount(row.allocated_amount, row.currency),
+			]),
 		));
+	}
+
+	summaryCurrency() {
+		const first = (this.entries.invoices || [])[0] || (this.entries.payments || [])[0];
+		return first?.currency || "";
+	}
+
+	amount(value, currency) {
+		if (value === null || value === undefined || value === "") {
+			return "";
+		}
+		return format_currency(value, currency || undefined);
 	}
 
 	table(headers, rows) {
 		const head = headers.map((title) => `<th>${frappe.utils.escape_html(String(title))}</th>`).join("");
 		const body = (rows || []).map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("");
-		return `<table class="table table-bordered"><thead><tr>${head}</tr></thead><tbody>${body || ""}</tbody></table>`;
+		const empty = `<tr><td colspan="${headers.length}" class="text-muted">${frappe.utils.escape_html(
+			__("موردی یافت نشد"),
+		)}</td></tr>`;
+		return (
+			`<div class="table-responsive"><table class="table table-bordered">` +
+			`<thead><tr>${head}</tr></thead><tbody>${body || empty}</tbody></table></div>`
+		);
 	}
 
 	link(doctype, name) {
