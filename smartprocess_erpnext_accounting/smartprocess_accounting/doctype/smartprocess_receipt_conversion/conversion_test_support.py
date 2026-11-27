@@ -13,10 +13,15 @@ import frappe
 from frappe.utils import nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract import NON_GENERIC_ACCOUNT_TYPES
-from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import make_receipt_conversion
+from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
+	make_receipt_conversion,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation import batch_party_currencies
 
-from ..smartprocess_accounting_document.v2_test_support import AccountingFixtureTestCase, pin_accounting_settings
+from ..smartprocess_accounting_document.v2_test_support import (
+	AccountingFixtureTestCase,
+	pin_accounting_settings,
+)
 
 SETTINGS = "SmartProcess Accounting Settings"
 
@@ -226,6 +231,7 @@ class ConversionFixtures(AccountingFixtureTestCase):
 			filters=filters,
 			fields=[
 				"voucher_detail_no",
+				"posting_date",
 				"account",
 				"account_currency",
 				"party_type",

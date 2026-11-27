@@ -30,6 +30,7 @@ def apply_row(row, canonical, canonical_document, *, row_side: str, header_side:
 	"""Fill both sides of one Pair from the canonical header and row."""
 	header = canonical_document.receiver
 	base_amount = decimal_text(canonical.base_amount)
+	header_base_amount = decimal_text(canonical.base_amount + canonical.fee_base)
 	row.update(
 		{
 			"receipt_currency": canonical.currency,
@@ -49,7 +50,7 @@ def apply_row(row, canonical, canonical_document, *, row_side: str, header_side:
 			f"{header_side}_account_currency": canonical_document.receiver_currency,
 			f"{header_side}_amount": decimal_text(canonical.receiver_amount),
 			f"{header_side}_exchange_rate": decimal_text(canonical.receiver_rate),
-			f"{header_side}_company_amount": base_amount,
+			f"{header_side}_company_amount": header_base_amount,
 			f"{header_side}_suggested_account": None,
 			f"{header_side}_description": row.get(f"{row_side}_description"),
 		}

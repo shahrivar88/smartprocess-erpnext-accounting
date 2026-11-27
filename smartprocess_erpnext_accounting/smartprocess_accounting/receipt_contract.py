@@ -111,6 +111,8 @@ class CanonicalRow:
 	posting_date: object
 	receiver_amount: Decimal | None = None
 	receiver_rate: Decimal | None = None
+	fee_amount: Decimal = Decimal("0")
+	fee_base: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -146,10 +148,14 @@ class CanonicalReceipt:
 		return sum((row.base_amount for row in self.rows), Decimal("0"))
 
 	@property
+	def fee_total(self) -> Decimal:
+		return sum((row.fee_base for row in self.rows), Decimal("0"))
+
+	@property
 	def receiver_effective_rate(self) -> Decimal | None:
 		if not self.receiver_amount:
 			return None
-		return average_rate(self.base_total, self.receiver_amount)
+		return average_rate(self.base_total + self.fee_total, self.receiver_amount)
 
 	def payer_totals(self) -> list[PayerTotal]:
 		"""Row totals per payer currency, in first-appearance order."""

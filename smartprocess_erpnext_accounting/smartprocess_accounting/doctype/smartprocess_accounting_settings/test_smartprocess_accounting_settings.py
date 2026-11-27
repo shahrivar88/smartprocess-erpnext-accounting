@@ -41,6 +41,7 @@ TABS = {
 	"عمومی": [
 		"enable_v2_posting",
 		"enable_payment_entry_settlement",
+		"payment_fee_account",
 		"enable_counterpart_proposal",
 		"prevent_receivable_currency_mismatch",
 		"receipt_recipient_type_options",

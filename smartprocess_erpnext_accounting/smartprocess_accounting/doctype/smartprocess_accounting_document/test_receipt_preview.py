@@ -62,7 +62,10 @@ class TestReceiptPreviewReadOnly(unittest.TestCase):
 			("5", "4", "20", "20"),
 		)
 		self.assertEqual(result["payer_totals"], [{"currency": FOREIGN, "amount": "5", "rate": "4", "base_amount": "20"}])
-		self.assertEqual(result["rows"], [{"row": 1, "currency": FOREIGN, "amount": "5", "rate": "4", "base_amount": "20"}])
+		self.assertEqual(
+			result["rows"],
+			[{"row": 1, "currency": FOREIGN, "amount": "5", "rate": "4", "base_amount": "20", "fee": "0"}],
+		)
 		self.assertEqual(frappe.local.message_log, [])
 
 	def test_incomplete_preview_returns_issues_without_leaking(self):

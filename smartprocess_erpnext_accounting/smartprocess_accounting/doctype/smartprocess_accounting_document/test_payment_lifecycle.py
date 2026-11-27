@@ -32,7 +32,7 @@ def source_strings():
 		frappe.local.lang = previous
 
 from . import test_receipt_lifecycle
-from .v2_test_support import AccountingFixtureTestCase
+from .v2_test_support import AccountingFixtureTestCase, pin_accounting_settings
 
 DOCTYPE = "SmartProcess Accounting Document"
 POSTING = "SmartProcess Accounting Posting"
@@ -353,6 +353,92 @@ class TestPaymentLifecycle(AccountingFixtureTestCase):
 		self.assertEqual((replacement.docstatus, replacement.operation_type), (0, "Payment"))
 		self.assertEqual(replacement.operational_pairs[0].debit_account, receivable)
 		self.assertEqual(set(frappe.get_all(POSTING, filters={"name": ["in", postings]}, pluck="docstatus")), {2})
+
+	def test_payment_fee_posts_one_expense_debit_and_balances_the_pair(self):
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(self.base)
+		fee_account = self.fee_account()
+		self.set_fee_account(fee_account)
+		row = self.customer_row(customer, receivable, "100")
+		row["payment_fee"] = "5"
+		doc = self.payment(self.base, self.base, self.bank_header(bank), [row])
+		doc.insert().submit()
+		postings = self.postings(doc)
+		self.assertLedger(postings, [
+			(receivable, self.base, "debit", "100", "100"),
+			(fee_account, self.base, "debit", "5", "5"),
+			(bank.account, self.base, "credit", "105", "105"),
+		])
+		ledger_parties = frappe.get_all(
+			"Payment Ledger Entry",
+			filters={"voucher_type": POSTING, "voucher_no": ["in", postings]},
+			pluck="account",
+			distinct=True,
+		)
+		self.assertEqual(set(ledger_parties), {receivable})
+		self.cancel_and_assert_reversed(doc, postings)
+
+	def test_payment_fee_posts_internally_even_when_settlement_is_enabled(self):
+		pin_accounting_settings(enable_payment_entry_settlement=1)
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(self.base)
+		fee_account = self.fee_account()
+		self.set_fee_account(fee_account)
+		row = self.customer_row(customer, receivable, "100")
+		row["payment_fee"] = "5"
+		doc = self.payment(self.base, self.base, self.bank_header(bank), [row])
+		doc.insert().submit()
+		self.assertFalse(doc.get("settlement_payment_entry"))
+		self.assertLedger(self.postings(doc), [
+			(receivable, self.base, "debit", "100", "100"),
+			(fee_account, self.base, "debit", "5", "5"),
+			(bank.account, self.base, "credit", "105", "105"),
+		])
+
+	def test_payment_fee_zero_keeps_the_existing_posting(self):
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(self.base)
+		doc = self.payment(self.base, self.base, self.bank_header(bank), [self.customer_row(customer, receivable, "100")])
+		doc.insert().submit()
+		self.assertLedger(self.postings(doc), [
+			(receivable, self.base, "debit", "100", "100"),
+			(bank.account, self.base, "credit", "100", "100"),
+		])
+
+	def test_payment_fee_rejects_negative_missing_and_non_expense_accounts(self):
+		bank = self.company_bank_account(self.base)
+		customer, receivable = self.customer_with_account(self.base)
+		row = self.customer_row(customer, receivable, "100")
+		row["payment_fee"] = "-1"
+		with self.assertRaisesRegex(PaymentValidationError, "منفی"):
+			self.payment(self.base, self.base, self.bank_header(bank), [row]).insert()
+
+		self.set_fee_account(None)
+		row = self.customer_row(customer, receivable, "100")
+		row["payment_fee"] = "5"
+		with self.assertRaisesRegex(PaymentValidationError, "معین هزینه کارمزد"):
+			self.payment(self.base, self.base, self.bank_header(bank), [row]).insert()
+
+		not_expense = self.generic_account(self.base)
+		self.set_fee_account(not_expense)
+		row = self.customer_row(customer, receivable, "100")
+		row["payment_fee"] = "5"
+		with self.assertRaisesRegex(PaymentValidationError, "هزینه"):
+			self.payment(self.base, self.base, self.bank_header(bank), [row]).insert()
+
+	def fee_account(self):
+		accounts = self.accounts(self.base, root_type="Expense")
+		if not accounts:
+			self.skipTest(f"No Expense Account in {self.base}.")
+		return accounts[0]
+
+	def set_fee_account(self, account):
+		frappe.db.set_value(
+			"SmartProcess Accounting Settings",
+			"SmartProcess Accounting Settings",
+			"payment_fee_account",
+			account,
+		)
 
 	def payment(self, payer_currency, recipient_currency, header, rows):
 		return frappe.get_doc(

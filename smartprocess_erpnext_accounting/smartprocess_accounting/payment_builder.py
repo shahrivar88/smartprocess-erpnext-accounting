@@ -9,3 +9,4 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_builder imp
 class PaymentBuilder(ReceiptBuilder):
 	ROW_SIDE = ROW_SIDE
 	TEXT = PAYMENT_TEXT
+	FEE_ENABLED = True

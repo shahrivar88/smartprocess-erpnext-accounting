@@ -266,6 +266,11 @@ const pairEvents = {
 		return spReceiptRowEvents.payerChanged(frm, cdt, cdn);
 	},
 	receipt_posting_date: receiptPreviewChanged,
+	payment_fee(frm) {
+		if (frm.doc.operation_type === spReceiptConfig.PAYMENT) {
+			receiptPreviewChanged(frm);
+		}
+	},
 };
 
 for (const side of ["debit", "credit"]) {

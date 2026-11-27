@@ -66,11 +66,14 @@ def receipt_summary(receipt: CanonicalReceipt) -> dict:
 		"receiver_currency": receipt.receiver_currency,
 		"receiver_rate": _text(receipt.receiver_rate),
 		"receiver_amount": _text(receipt.receiver_amount),
-		"receiver_base_amount": decimal_text(receipt.base_total) if receipt.receiver_amount is not None else None,
+		"receiver_base_amount": (
+			decimal_text(receipt.base_total + receipt.fee_total) if receipt.receiver_amount is not None else None
+		),
 		"receiver_effective_rate": _text(receipt.receiver_effective_rate),
 		"receiver_account": receipt.receiver.account if receipt.receiver else None,
 		"receiver_party": receipt.receiver.party if receipt.receiver else None,
-		"total_base_amount": decimal_text(receipt.base_total),
+		"total_base_amount": decimal_text(receipt.base_total + receipt.fee_total),
+		"fee_total": decimal_text(receipt.fee_total),
 		"payer_totals": [
 			{
 				"currency": total.currency,
@@ -87,6 +90,7 @@ def receipt_summary(receipt: CanonicalReceipt) -> dict:
 				"amount": decimal_text(row.amount),
 				"rate": decimal_text(row.exchange_rate),
 				"base_amount": decimal_text(row.base_amount),
+				"fee": decimal_text(row.fee_amount),
 			}
 			for row in receipt.rows
 		],

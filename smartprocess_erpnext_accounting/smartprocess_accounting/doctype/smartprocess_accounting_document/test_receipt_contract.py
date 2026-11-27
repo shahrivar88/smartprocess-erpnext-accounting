@@ -11,7 +11,10 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import frappe
 
-from smartprocess_erpnext_accounting.smartprocess_accounting.payment import build_canonical_payment, canonicalize_payment
+from smartprocess_erpnext_accounting.smartprocess_accounting.payment import (
+	build_canonical_payment,
+	canonicalize_payment,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt import (
 	ReceiptValidationError,
 	build_canonical_receipt,
@@ -452,7 +455,10 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 				"total_base_amount": "7",
 			},
 		)
-		self.assertEqual(summary["rows"][0], {"row": 1, "currency": FOREIGN, "amount": "2", "rate": "1.5", "base_amount": "3"})
+		self.assertEqual(
+			summary["rows"][0],
+			{"row": 1, "currency": FOREIGN, "amount": "2", "rate": "1.5", "base_amount": "3", "fee": "0"},
+		)
 
 	def test_summary_rows_cover_valid_rows_only(self):
 		doc = foreign_doc([foreign_row(credit_amount="2", rate="1.5"), foreign_row(2, credit_amount=0)], rate="1.5")

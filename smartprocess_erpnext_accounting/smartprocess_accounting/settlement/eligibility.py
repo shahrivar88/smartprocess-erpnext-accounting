@@ -80,6 +80,11 @@ def pair_leg(doc, accounts=None) -> SettlementLeg | SettlementSkip:
 			"multi_row",
 		)
 	row = pairs[0]
+	if to_decimal(row.get("payment_fee") or 0, _("Payment Fee")) > 0:
+		return SettlementSkip(
+			"پرداخت دارای کارمزد از مسیر ثبت داخلی SmartProcess با ردیف هزینه کارمزد ثبت می‌شود.",
+			"payment_fee",
+		)
 	if doc.operation_type in ("Receipt", "Transfer"):
 		return _leg_from_sides(
 			doc, row, party_side="credit", money_side="debit", payment_type="Receive", accounts=accounts

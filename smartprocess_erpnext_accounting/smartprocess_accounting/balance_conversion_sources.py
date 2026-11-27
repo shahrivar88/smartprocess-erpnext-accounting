@@ -100,21 +100,29 @@ def balance_conversion_sources(
 	"""
 	key = LedgerKey(company, account, party_type, party, _phase_one_date(posting_date), lock)
 	account_type, places = _validate_source(key)
-	_assert_no_later_entries(key)
 	balance = _round(_gl_balance(key), places)
 	items = _open_items(key, account_type, places)
+	current = _open_items_now(key, account_type, places)
 	if sum((item.amount for item in items), Decimal("0")) != balance:
 		frappe.throw(_("Payment Ledger does not match General Ledger for this Party and Account. The ledger needs review."))
 	postings = _posting_rows(key, [item.voucher_no for item in items if item.voucher_type == POSTING_DOCTYPE])
-	sources = [_classify(key, item, balance, postings.get(item.voucher_no)) for item in items]
+	sources = [
+		_classify(key, item, balance, postings.get(item.voucher_no), current.get((item.voucher_type, item.voucher_no), Decimal("0")))
+		for item in items
+	]
 	eligible = sum((source.convertible for source in sources), Decimal("0"))
 	return BalanceSources(balance, min(abs(balance), eligible), sources)
 
 
 def _phase_one_date(posting_date):
+	"""A conversion may be backdated, but never post into the future.
+
+	A historical conversion may only consume credit that is still open today;
+	that is enforced by ``_open_items_now`` in ``_classify``.
+	"""
 	date = getdate(posting_date or today())
-	if date != getdate(today()):
-		frappe.throw(_("Balance Conversion supports only today's posting date for now."))
+	if date > getdate(today()):
+		frappe.throw(_("Balance Conversion cannot use a future posting date."))
 	return date
 
 
@@ -126,12 +134,6 @@ def _validate_source(key: LedgerKey) -> tuple[str, int]:
 	validate_party(key.party_type, key.party, account.account_type)
 	validate_party_ledger_currency(key.party_type, key.party, key.company, company_currency)
 	return account.account_type, ReceiptLookups().company_precision(company_currency)
-
-
-def _assert_no_later_entries(key: LedgerKey) -> None:
-	filters = _gl_filters(key) | {"posting_date": [">", key.as_of]}
-	if frappe.db.exists("GL Entry", filters):
-		frappe.throw(_("The Party has ledger entries after {0}. Balance Conversion cannot run yet.").format(key.as_of))
 
 
 def _gl_balance(key: LedgerKey) -> Decimal:
@@ -181,6 +183,31 @@ def _open_items(key: LedgerKey, account_type: str, places: int) -> list[OpenItem
 	return [item for item in items if item.amount]
 
 
+def _open_items_now(key: LedgerKey, account_type: str, places: int) -> dict:
+	"""Current open amount per source, so a source settled later is never reused historically."""
+	ple = frappe.qb.DocType("Payment Ledger Entry")
+	query = (
+		frappe.qb.from_(ple)
+		.select(
+			ple.against_voucher_type,
+			ple.against_voucher_no,
+			Sum(ple.amount).as_("amount"),
+		)
+		.where(ple.delinked == 0)
+		.where(ple.company == key.company)
+		.where(ple.account == key.account)
+		.where(ple.party_type == key.party_type)
+		.where(ple.party == key.party)
+		.groupby(ple.against_voucher_type, ple.against_voucher_no)
+	)
+	rows = (query.for_update() if key.lock else query).run(as_dict=True)
+	direction = Decimal("1") if account_type == "Receivable" else Decimal("-1")
+	return {
+		(row.against_voucher_type, row.against_voucher_no): _round(Decimal(str(row.amount)) * direction, places)
+		for row in rows
+	}
+
+
 def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]:
 	"""Active Party lines of each submitted Receipt or Payment posting unit."""
 	if not postings:
@@ -214,7 +241,9 @@ def _posting_rows(key: LedgerKey, postings: list[str]) -> dict[str, PostingRows]
 	return found
 
 
-def _classify(key: LedgerKey, item: OpenItem, balance: Decimal, posting: PostingRows | None) -> BalanceSource:
+def _classify(
+	key: LedgerKey, item: OpenItem, balance: Decimal, posting: PostingRows | None, current_amount: Decimal
+) -> BalanceSource:
 	if item.voucher_type != POSTING_DOCTYPE or posting is None:
 		return _not_eligible(item, _("Only SmartProcess Receipt and Payment postings can be converted for now."))
 	if _side(item.amount) != _side(balance):
@@ -232,7 +261,12 @@ def _classify(key: LedgerKey, item: OpenItem, balance: Decimal, posting: Posting
 		return _not_eligible(item, _("Open amount is on the opposite side of its source row."))
 	source = load_source_leg(posting.receipt, row.voucher_detail_no, RECEIVER if row_side == "debit" else PAYER)
 	consumption = source_consumption(source, lock=key.lock)
-	convertible = min(abs(item.amount), consumption.remaining)
+	available = min(abs(item.amount), abs(current_amount))
+	if available <= 0:
+		return _not_eligible(
+			item, _("Source was settled after the conversion date; a historical conversion cannot consume it.")
+		)
+	convertible = min(available, consumption.remaining)
 	if convertible <= 0:
 		return BalanceSource(item, source, Decimal("0"), _("Source is already fully converted."), consumption)
 	return BalanceSource(item, source, convertible, None, consumption)

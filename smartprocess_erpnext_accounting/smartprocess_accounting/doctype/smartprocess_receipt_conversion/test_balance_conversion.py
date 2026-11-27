@@ -6,11 +6,13 @@ from decimal import ROUND_HALF_UP, Decimal
 from unittest.mock import patch
 
 import frappe
-from frappe.utils import add_days, nowdate
+from frappe.utils import add_days, getdate, nowdate
 
 from smartprocess_erpnext_accounting.smartprocess_accounting import balance_conversion
 from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_api import get_balance_summary
-from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import balance_conversion_sources
+from smartprocess_erpnext_accounting.smartprocess_accounting.balance_conversion_sources import (
+	balance_conversion_sources,
+)
 from smartprocess_erpnext_accounting.smartprocess_accounting.conversion_consumption import source_consumption
 from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_conversion_api import (
 	get_receipt_conversion_status,
@@ -229,13 +231,31 @@ class TestBalanceConversion(ConversionFixtures):
 			{"target_party_type": "Customer", "target_party": self.target_customer, "target_account": self.target_receivable},
 		)
 		self.assertEqual((summary["balance_side"], D(summary["as_of_balance"]), D(summary["max_convertible"])), ("Credit", D("90000000"), D("90000000")))
-		error = get_balance_summary(self.company, "Customer", self.party, self.receivable, add_days(nowdate(), -1), self.target)
-		self.assertIn("only today's posting date", error["error"])
+		error = get_balance_summary(self.company, "Customer", self.party, self.receivable, add_days(nowdate(), 1), self.target)
+		self.assertIn("future posting date", error["error"])
+		yesterday = add_days(nowdate(), -1)
+		self.assertNotIn("error", get_balance_summary(self.company, "Customer", self.party, self.receivable, yesterday, self.target))
+
+	def test_historical_balance_conversion_posts_with_the_past_date(self):
+		receipt = self.credit_receipt(HUNDRED_M, posting_date=add_days(nowdate(), -2))
+		yesterday = add_days(nowdate(), -1)
+		conversion = self.balance("40000000", posting_date=yesterday)
+		self.assertEqual(getdate(conversion.posting_date), getdate(yesterday))
+		(leg,) = conversion.legs
+		self.assertEqual(leg.source_posting, self.source_posting(receipt))
+		self.assertEqual({getdate(row.posting_date) for row in self.gl(conversion)}, {getdate(yesterday)})
+		self.assertEqual(self.converted(receipt), D("40000000"))
+
+	def test_today_posting_still_works_and_future_is_rejected(self):
+		self.credit_receipt(HUNDRED_M)
+		self.balance("10000000")
+		with self.assertRaisesRegex(frappe.ValidationError, "future posting date"):
+			self.balance("10000000", submit=False, posting_date=add_days(nowdate(), 1))
 
 	def test_rejected_balance_conversions(self):
 		self.credit_receipt(HUNDRED_M)
 		cases = (
-			("only today's posting date", {"posting_date": add_days(nowdate(), -1)}),
+			("future posting date", {"posting_date": add_days(nowdate(), 1)}),
 			("differ from the Company currency", {"target_currency": self.base}),
 			("greater than zero|Mandatory|Value missing", {"target_rate": 0}),
 			("Target Account currency", {"target_party_type": None, "target_party": None, "target_account": self.receivable}),

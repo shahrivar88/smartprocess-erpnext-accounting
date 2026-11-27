@@ -10,9 +10,9 @@ const spReceiptNumbers = {
 	// Both Pair sides: Receipt rows edit credit_*, Payment rows edit debit_*.
 	GRID_FIELDS: [
 		"credit_amount", "credit_exchange_rate", "credit_company_amount",
-		"debit_amount", "debit_exchange_rate", "debit_company_amount",
+		"debit_amount", "debit_exchange_rate", "debit_company_amount", "payment_fee",
 	],
-	LIVE_FIELDS: ["credit_amount", "credit_exchange_rate", "debit_amount", "debit_exchange_rate", "receipt_payer_exchange_rate"],
+	LIVE_FIELDS: ["credit_amount", "credit_exchange_rate", "debit_amount", "debit_exchange_rate", "receipt_payer_exchange_rate", "payment_fee"],
 
 	compact(formatted, df, doc) {
 		const numeric = window.smartprocessAccounting?.numeric;

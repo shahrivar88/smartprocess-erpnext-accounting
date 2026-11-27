@@ -110,6 +110,10 @@ const spReceiptSummary = {
 		const payers = (result.payer_totals || []).map((total) =>
 			row("sp-receipt-payer-values", [escape(total.currency), number(total.amount), number(total.rate), base(total.base_amount)]),
 		);
+		const feeTotal = Number(result.fee_total || 0);
+		const fee = feeTotal
+			? `<tbody class="sp-receipt-fee"><tr><th colspan="3">کارمزد پرداخت</th><td>${base(result.fee_total)}</td></tr></tbody>`
+			: "";
 		const text = spFlowText.of(doc);
 		const receiverCurrency = result.receiver_currency || doc.receipt_payer_currency || "";
 		const receiver = result.receiver_account || doc.receipt_payer_account || "";
@@ -118,6 +122,7 @@ const spReceiptSummary = {
 			<table class="table table-bordered">
 				<thead><tr><th>ارز</th><th>جمع به همان ارز</th><th>میانگین موزون نرخ</th><th>جمع به ارز پایه</th></tr></thead>
 				<tbody class="sp-receipt-payers">${payers.join("") || row("sp-receipt-payer-values", ["—", "—", "—", "—"])}</tbody>
+				${fee}
 				<tbody class="sp-receipt-receiver">
 					<tr class="sp-receipt-receiver-title"><th colspan="4">${receiverTitle}</th></tr>
 					<tr class="sp-receipt-receiver-head"><th>${text.headerCurrency}</th><th>${text.headerAmount}</th><th>نرخ مؤثر</th><th>مبلغ به ارز پایه</th></tr>

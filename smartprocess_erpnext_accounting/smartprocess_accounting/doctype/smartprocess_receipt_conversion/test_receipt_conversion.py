@@ -536,8 +536,10 @@ class TestReceiptConversion(ConversionFixtures):
 		self.simulate_balance_consumption(receipt, payer="30000000")
 		picture = balance_conversion_sources(self.company, "Customer", customer, self.receivable)
 		self.assertEqual((picture.as_of_balance, picture.max_convertible), (Decimal("-80000000"), Decimal("30000000")))
-		with self.assertRaisesRegex(frappe.ValidationError, "only today's posting date"):
-			balance_conversion_sources(self.company, "Customer", customer, self.receivable, add_days(nowdate(), -1))
+		past = balance_conversion_sources(self.company, "Customer", customer, self.receivable, add_days(nowdate(), -1))
+		self.assertEqual((past.as_of_balance, past.max_convertible), (Decimal("0"), Decimal("0")))
+		with self.assertRaisesRegex(frappe.ValidationError, "future posting date"):
+			balance_conversion_sources(self.company, "Customer", customer, self.receivable, add_days(nowdate(), 1))
 
 	def test_omitted_side_does_not_touch_receipt_or_remaining(self):
 		receipt = self.submitted_receipt()

@@ -1053,6 +1053,35 @@ test("34 Transfer renders the Receipt grid", () => {
 	assert.deepEqual(transferGrid, receiptGrid);
 });
 
+test("35 Payment shows the fee column while Receipt and Transfer hide it", () => {
+	const fee = (grid, property) =>
+		grid.filter(([field, prop]) => field === "payment_fee" && prop === property).pop()?.[2];
+	const payment = spReceiptForm.receiptGridProperties({ operation_type: "Payment" });
+	assert.equal(fee(payment, "hidden"), 0);
+	assert.equal(fee(payment, "in_list_view"), 1);
+	for (const operation_type of ["Receipt", "Transfer"]) {
+		const grid = spReceiptForm.receiptGridProperties({ operation_type });
+		assert.equal(fee(grid, "hidden"), 1, operation_type);
+		assert.equal(fee(grid, "in_list_view"), 0, operation_type);
+	}
+	assert.equal(pairField("payment_fee").fieldtype, "Currency");
+	assert.equal(pairField("payment_fee").default, "0");
+});
+
+test("36 the preview names the fee only when the Payment carries one", () => {
+	const doc = { operation_type: "Payment", receipt_payer_currency: "IRR" };
+	const withFee = spReceiptSummary.html(
+		{ company_currency: "IRR", receiver_currency: "IRR", receiver_amount: "105", fee_total: "5" },
+		doc,
+	);
+	assert.ok(withFee.includes("کارمزد پرداخت"));
+	const withoutFee = spReceiptSummary.html(
+		{ company_currency: "IRR", receiver_currency: "IRR", receiver_amount: "100", fee_total: "0" },
+		doc,
+	);
+	assert.ok(!withoutFee.includes("کارمزد پرداخت"));
+});
+
 test("modules stay small and are included by the form", () => {
 	for (const file of Object.values(MODULES)) {
 		const lines = read(path.join(RECEIPT_DIR, file)).split("\n").length;

@@ -45,6 +45,7 @@ const SP_RECEIPT_ROW_LABELS = {
 	source_bank: "بانک مبدأ",
 	target_bank: "بانک مقصد",
 	details_note: "شرح",
+	payment_fee: "کارمزد",
 };
 const spReceiptOwnedGrids = new WeakSet();
 
@@ -159,6 +160,7 @@ const spReceiptForm = {
 	// row form, never as a grid column. The header side is never edited in a row.
 	receiptGridProperties(doc = {}) {
 		const side = spReceiptConfig.rowSide(doc);
+		const isPayment = doc.operation_type === spReceiptConfig.PAYMENT;
 		const headerSide = side === "credit" ? "debit" : "credit";
 		const row = (name) => `${side}_${name}`;
 		const text = spFlowText.of(doc);
@@ -200,6 +202,9 @@ const spReceiptForm = {
 			properties.push([fieldname, "reqd", 1]);
 		}
 		properties.push(
+			["payment_fee", "hidden", isPayment ? 0 : 1],
+			["payment_fee", "in_list_view", isPayment ? 1 : 0],
+			["payment_fee", "columns", 2],
 			["receipt_currency", "read_only", 1],
 			[row("exchange_rate"), "hidden", 0],
 			[row("exchange_rate"), "in_list_view", spReceiptConfig.isForeignPayer(doc) ? 1 : 0],

@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 
 import erpnext
 import frappe
+from erpnext.accounts.general_ledger import make_gl_entries, make_reverse_gl_entries
+from erpnext.controllers.accounts_controller import AccountsController
 from frappe import _
 from frappe.model.meta import get_field_precision
 from frappe.utils import cint, getdate
-
-from erpnext.accounts.general_ledger import make_gl_entries, make_reverse_gl_entries
-from erpnext.controllers.accounts_controller import AccountsController
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.decimal_utils import (
 	calculate_company_amount,
@@ -33,7 +32,6 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.v2_validation impor
 	validate_party,
 	validate_party_ledger_currency,
 )
-
 
 SETTINGS_DOCTYPE = "SmartProcess Accounting Settings"
 # Operation types that post one date-grouped posting unit per row date.
@@ -55,6 +53,7 @@ class PostingLine:
 	company_amount: Decimal
 	remarks: str | None
 	against: str
+	cost_center: str | None = None
 	against_voucher_type: str | None = None
 	against_voucher: str | None = None
 
@@ -66,7 +65,7 @@ def validate_document(doc) -> list[PostingLine]:
 	if not rows:
 		frappe.throw(_("At least one Operational Pair is required."))
 
-	account_details = get_accounts(_account_names(rows))
+	account_details = get_accounts(_account_names(doc, rows))
 	party_currency_entries = []
 	lines = []
 	total_debit = Decimal("0")
@@ -82,14 +81,16 @@ def validate_document(doc) -> list[PostingLine]:
 		)
 		if debit is None or credit is None:
 			_pair_error(number, _("Pair"), _("Side"), _("Both Debit and Credit sides are required."))
-		if debit.company_amount != credit.company_amount:
+		fee = _validate_fee(doc, row, number, debit, credit, posting_date, account_details)
+		pair_debit = debit.company_amount + (fee.company_amount if fee else Decimal("0"))
+		if pair_debit != credit.company_amount:
 			_pair_error(
 				number,
 				_("Pair"),
 				_("Company Currency Amount"),
 				_("Debit and Credit must balance exactly after Company-currency rounding."),
 			)
-		if doc.operation_type in FLOW_OPERATIONS and not _conserves_currency(debit, credit):
+		if doc.operation_type in FLOW_OPERATIONS and not _conserves_currency(debit, credit, fee):
 			_pair_error(
 				number,
 				_("Pair"),
@@ -97,7 +98,9 @@ def validate_document(doc) -> list[PostingLine]:
 				_("Both sides in the same currency must carry the same amount at the same rate."),
 			)
 		lines.extend((debit, credit))
-		total_debit += debit.company_amount
+		if fee:
+			lines.append(fee)
+		total_debit += pair_debit
 		total_credit += credit.company_amount
 
 	assert_one_currency_per_party(party_currency_entries)
@@ -106,10 +109,88 @@ def validate_document(doc) -> list[PostingLine]:
 	return lines
 
 
-def _conserves_currency(debit: PostingLine, credit: PostingLine) -> bool:
+def _conserves_currency(debit: PostingLine, credit: PostingLine, fee: PostingLine | None = None) -> bool:
 	if debit.account_currency != credit.account_currency:
 		return True
-	return debit.amount == credit.amount and debit.exchange_rate == credit.exchange_rate
+	row_amount = debit.amount + (fee.amount if fee else Decimal("0"))
+	return row_amount == credit.amount and debit.exchange_rate == credit.exchange_rate
+
+
+def _validate_fee(doc, row, number, debit, credit, posting_date, account_details) -> PostingLine | None:
+	"""Build the Payment fee expense debit; the pair stays balanced with it."""
+	if doc.operation_type != "Payment":
+		return None
+	value = row.get("payment_fee")
+	if value in (None, ""):
+		return None
+	fee = to_decimal(value, _("Payment Fee"))
+	if fee < 0:
+		_pair_error(number, _("Payment Fee"), _("Amount"), _("Payment Fee cannot be negative."))
+	if fee == 0:
+		return None
+	account_name = frappe.get_single_value(SETTINGS_DOCTYPE, "payment_fee_account")
+	if not account_name:
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Account"),
+			_("Set the Payment Fee Account in SmartProcess Accounting Settings."),
+		)
+	account = validate_account(account_name, doc.company, account_details.get(account_name))
+	if account.root_type != "Expense":
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Account"),
+			_("The Payment Fee Account must be an Expense account."),
+		)
+	if account.account_currency != credit.account_currency:
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Account Currency"),
+			account_currency_mismatch_message(account.name, account.account_currency, credit.account_currency),
+		)
+	places = _account_currency_precision(credit.account_currency)
+	if max(0, -fee.normalize().as_tuple().exponent) > places:
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Amount"),
+			_("Payment Fee accepts at most {0} decimal places in {1}.").format(places, credit.account_currency),
+		)
+	cost_center = frappe.get_cached_value("Company", doc.company, "cost_center")
+	if not cost_center:
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Cost Center"),
+			_("Set a default Cost Center for Company {0} before using a Payment Fee.").format(doc.company),
+		)
+	company_amount = credit.company_amount - debit.company_amount
+	if company_amount <= 0:
+		_pair_error(
+			number,
+			_("Payment Fee"),
+			_("Company Currency Amount"),
+			_("Payment Fee is too small to change the Company-currency amount after rounding."),
+		)
+	return PostingLine(
+		pair_number=number,
+		side="debit",
+		voucher_detail_no=row.name,
+		posting_date=posting_date,
+		account=account.name,
+		account_currency=account.account_currency,
+		party_type=None,
+		party=None,
+		amount=fee,
+		exchange_rate=credit.exchange_rate,
+		company_amount=company_amount,
+		remarks=_("Payment Fee"),
+		against=row.credit_account,
+		cost_center=cost_center,
+	)
 
 
 def require_posting_enabled() -> None:
@@ -333,6 +414,8 @@ def _make_gl_entry(doc, line: PostingLine):
 		},
 		account_currency=line.account_currency,
 	)
+	if line.cost_center:
+		entry["cost_center"] = line.cost_center
 	entry.update(
 		{
 			"transaction_currency": line.account_currency,
@@ -362,13 +445,23 @@ def _company_currency_precision(currency: str) -> int:
 	return get_field_precision(field, currency=currency)
 
 
-def _account_names(rows) -> set[str]:
-	return {
+def _account_currency_precision(currency: str) -> int:
+	field = frappe.get_meta("GL Entry").get_field("debit_in_account_currency")
+	return get_field_precision(field, currency=currency)
+
+
+def _account_names(doc, rows) -> set[str]:
+	names = {
 		account
 		for row in rows
 		for account in (row.debit_account, row.credit_account)
 		if account
 	}
+	if doc.operation_type == "Payment" and any(row.get("payment_fee") for row in rows):
+		fee_account = frappe.get_single_value(SETTINGS_DOCTYPE, "payment_fee_account")
+		if fee_account:
+			names.add(fee_account)
+	return names
 
 
 def _effective_posting_date(doc, row):

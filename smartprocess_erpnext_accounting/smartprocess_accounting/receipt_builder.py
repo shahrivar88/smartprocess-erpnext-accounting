@@ -20,11 +20,11 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.receipt_contract im
 	PAYER_HEADER_CURRENCY_FIELD,
 	PAYER_TYPES,
 	RATE_PLACES,
+	RECEIPT_TEXT,
 	RECEIVER_ACCOUNT_FIELD,
 	RECEIVER_CURRENCY_FIELD,
 	RECEIVER_KINDS,
 	RECEIVER_RATE_FIELD,
-	RECEIPT_TEXT,
 	CanonicalReceipt,
 	CanonicalReceiver,
 	CanonicalRow,
@@ -52,6 +52,7 @@ class ReceiptBuilder:
 		self.row_amount = f"{self.ROW_SIDE}_amount"
 		self.row_rate = f"{self.ROW_SIDE}_exchange_rate"
 		self.row_input_fields = ("receipt_recipient_type", "receipt_recipient", self.row_account, self.row_amount)
+		self.fee_enabled = bool(getattr(self, "FEE_ENABLED", False))
 
 	def text(self, key: str) -> str:
 		return _(self.TEXT[key])
@@ -191,12 +192,65 @@ class ReceiptBuilder:
 		posting_date = self._date(row_date, "receipt_posting_date", number) if row_date else self.posting_date
 		payer = self._payer(number, row, payer_type, currency) if payer_type in PAYER_TYPES else None
 		base_amount = self._base_amount(number, amount, rate)
-		if None in (currency, rate, payer, amount, base_amount, posting_date):
+		fee, fee_base = self._fee(number, row)
+		if None in (currency, rate, payer, amount, base_amount, fee, fee_base, posting_date):
 			return None
 		account, party_type, party = payer
 		return CanonicalRow(
-			number, payer_type, currency, account, party_type, party, amount, rate, base_amount, posting_date
+			number,
+			payer_type,
+			currency,
+			account,
+			party_type,
+			party,
+			amount,
+			rate,
+			base_amount,
+			posting_date,
+			fee_amount=fee,
+			fee_base=fee_base,
 		)
+
+	def _fee(self, number: int, row):
+		"""Payment row fee in the header Payer currency; zero for other operations."""
+		if not self.fee_enabled:
+			return Decimal("0"), Decimal("0")
+		fee = _decimal(row.get("payment_fee"))
+		if fee is None:
+			fee = Decimal("0")
+		if fee < 0:
+			return self._issue(self.text("fee_negative"), "payment_fee", number), None
+		if fee == 0:
+			return Decimal("0"), Decimal("0")
+		if self.receiver_rate is None or not self.receiver_currency:
+			return self._issue(self.text("fee_account_required"), "payment_fee", number), None
+		account_name = frappe.get_single_value("SmartProcess Accounting Settings", "payment_fee_account")
+		if not account_name:
+			return self._issue(self.text("fee_account_required"), "payment_fee", number), None
+		ok, details = self._call(lambda: self.lookups.accounts({account_name}), "payment_fee", number)
+		details = (details or {}).get(account_name) if ok else None
+		if not details or details.company != self.company:
+			return self._issue(self.text("fee_account_expense"), "payment_fee", number), None
+		if details.disabled or details.is_group or details.root_type != "Expense":
+			return self._issue(self.text("fee_account_expense"), "payment_fee", number), None
+		if details.account_currency != self.receiver_currency:
+			return self._issue(
+				self.text("fee_account_currency").format(details.account_currency, self.receiver_currency),
+				"payment_fee",
+				number,
+			), None
+		places = self.lookups.amount_precision(self.receiver_currency)
+		if _places(fee) > places:
+			return self._issue(
+				_("کارمزد برای ارز {0} حداکثر {1} رقم اعشار می‌پذیرد.").format(self.receiver_currency, places),
+				"payment_fee",
+				number,
+			), None
+		base_places = self.lookups.company_precision(self.company_currency)
+		fee_base = (fee * self.receiver_rate).quantize(Decimal("1").scaleb(-base_places), rounding=ROUND_HALF_UP)
+		if fee_base <= 0:
+			return self._issue(_("مبلغ پایه کارمزد باید بزرگ‌تر از صفر باشد."), "payment_fee", number), None
+		return fee, fee_base
 
 	def _row_currency(self, number: int, row):
 		"""Every row inherits the header row currency; a stored row mirror must agree."""
@@ -285,7 +339,7 @@ class ReceiptBuilder:
 			self.lookups.amount_precision(self.receiver_currency),
 			self.lookups.company_precision(self.company_currency),
 		)
-		bases = [row.base_amount for row in rows]
+		bases = [row.base_amount + row.fee_base for row in rows]
 		receiver_amount = allocation.total(bases)
 		if receiver_amount <= 0:
 			self._issue(self.text("header_amount_zero").format(self.receiver_currency), RECEIVER_RATE_FIELD)
@@ -304,8 +358,15 @@ class ReceiptBuilder:
 		for row in rows:
 			if row.exchange_rate != self.receiver_rate:
 				self._issue(self.text("same_currency_rate").format(self.receiver_rate), self.row_rate, row.number)
-		allocated = [replace(row, receiver_amount=row.amount, receiver_rate=row.exchange_rate) for row in rows]
-		return sum((row.amount for row in rows), Decimal("0")), allocated
+		allocated = [
+			replace(
+				row,
+				receiver_amount=row.amount + row.fee_amount,
+				receiver_rate=row.exchange_rate,
+			)
+			for row in rows
+		]
+		return sum((row.amount + row.fee_amount for row in rows), Decimal("0")), allocated
 
 	def _bank_ledger(self, bank_account, fieldname: str, row: int | None = None):
 		if not bank_account:
