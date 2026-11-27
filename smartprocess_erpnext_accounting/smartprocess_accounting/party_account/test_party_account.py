@@ -979,7 +979,10 @@ class TestAccountLedgerMode(unittest.TestCase):
 		self.assertTrue(scope.by_account)
 		self.assertIsNone(scope.party_table)
 		self.assertEqual(scope.key_column, f"{GL}.account")
-		self.assertNotIn("party", scope.where, "rows without a party are part of the account ledger")
+		# Rows without a party stay in the account ledger; only hidden party types are excluded.
+		self.assertIn("ifnull(`tabGL Entry`.party, '') = ''", scope.where)
+		self.assertIn("excluded_party_types", scope.where)
+		self.assertIn("Employee", scope.params["excluded_party_types"])
 		self.assertIn("`sp_account`.account_type = %(scope_account_type)s", scope.where)
 		self.assertEqual(scope.params["scope_account_type"], "Bank")
 		self.assertIn("`sp_account`.account_number like %(scope_search)s", scope.where)
@@ -1364,3 +1367,48 @@ class TestInvoiceItemSearchGuardOnSite(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestEmployeeConfidentiality(unittest.TestCase):
+	"""Employee financial rows never reach the public Party Account Explorer."""
+
+	def test_employee_is_not_an_explorer_party_type(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.overview import (
+			explorer_party_types,
+		)
+
+		self.assertNotIn("Employee", explorer_party_types())
+
+	def test_employee_report_access_is_denied_server_side(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.access import (
+			assert_report_access,
+		)
+
+		with self.assertRaises(frappe.PermissionError):
+			assert_report_access("_Test Company", "Employee", "HR-EMP-00001")
+
+	def test_employee_party_profile_is_denied(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account.party_profile import (
+			get_party_profile,
+		)
+
+		with self.assertRaises(frappe.PermissionError):
+			get_party_profile("Employee", "HR-EMP-00001")
+
+	def test_mixed_document_loses_its_open_link(self):
+		from smartprocess_erpnext_accounting.smartprocess_accounting.party_account import (
+			document_details,
+		)
+
+		with patch.object(document_details.frappe.db, "exists", side_effect=[True]):
+			self.assertTrue(
+				document_details._has_hidden_party(
+					{"doctype": "SmartProcess Accounting Document", "name": "SP-REC-TEST"}
+				)
+			)
+		with patch.object(document_details.frappe.db, "exists", side_effect=[False, False]):
+			self.assertFalse(
+				document_details._has_hidden_party(
+					{"doctype": "SmartProcess Accounting Document", "name": "SP-REC-TEST"}
+				)
+			)

@@ -7,6 +7,7 @@
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_payer_header.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_queries.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_row_events.js" %}
+{% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_table_type.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_validation_ui.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/receipt_summary.js" %}
 {% include "smartprocess_erpnext_accounting/smartprocess_accounting/doctype/smartprocess_accounting_document/receipt/settlement.js" %}
@@ -15,7 +16,8 @@
 frappe.ui.form.on("SmartProcess Accounting Document", {
 	setup(frm) {
 		spReceiptForm.setup(frm);
-		for (const side of ["debit", "credit"]) {
+
+for (const side of ["debit", "credit"]) {
 			frm.set_query(`${side}_account`, "operational_pairs", (doc, cdt, cdn) => {
 				const row = frappe.get_doc(cdt, cdn);
 				if (isFlowForm(frm) && side === spReceiptConfig.rowSide(frm.doc)) {
@@ -55,6 +57,9 @@ frappe.ui.form.on("SmartProcess Accounting Document", {
 	},
 	operation_type(frm) {
 		return spReceiptOperation.changed(frm);
+	},
+	receipt_row_party_type(frm) {
+		return spReceiptTableType.changed(frm);
 	},
 	async company(frm) {
 		const currency = frm.doc.company
@@ -250,7 +255,10 @@ const pairEvents = {
 	operational_pairs_add(frm, cdt, cdn) {
 		return spReceiptRowEvents.rowAdded(frm, cdt, cdn);
 	},
-	operational_pairs_remove: receiptPreviewChanged,
+	operational_pairs_remove(frm) {
+		receiptPreviewChanged(frm);
+		return spReceiptTableType.rowRemoved(frm);
+	},
 	receipt_recipient_type(frm, cdt, cdn) {
 		return spReceiptRowEvents.payerTypeChanged(frm, cdt, cdn);
 	},
@@ -259,6 +267,7 @@ const pairEvents = {
 	},
 	receipt_posting_date: receiptPreviewChanged,
 };
+
 for (const side of ["debit", "credit"]) {
 	// In a Receipt / Payment only the row side is edited; the server fills the other.
 	const rowChange = (frm) => side === spReceiptConfig.rowSide(frm.doc) && receiptPreviewChanged(frm);

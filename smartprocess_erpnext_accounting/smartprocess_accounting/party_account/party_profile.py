@@ -14,7 +14,7 @@ from frappe import _
 from frappe.contacts.address_and_contact import delete_contact_and_address, load_address_and_contact
 from frappe.utils import today
 
-from .access import ACCOUNT_CURRENCY, GL, GLScope, assert_report_access, is_party_type, party_type_label
+from .access import ACCOUNT_CURRENCY, GL, HIDDEN_PARTY_TYPES, GLScope, assert_report_access, is_party_type, party_type_label
 from .gl_period import Period, balance_columns, balance_values
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, voucher_label
 from .voucher_links import readable_rows
@@ -161,6 +161,8 @@ def first_reference(party_type, party):
 def get_party_profile(party_type, party):
 	"""Read-only form panel: GL balances per Company + Account and related documents.
 	Balances are None when the user may not read GL."""
+	if party_type in HIDDEN_PARTY_TYPES:
+		frappe.throw(_("اطلاعات مالی این نوع طرف حساب در این گزارش ارائه نمی‌شود."), frappe.PermissionError)
 	if not is_party_type(party_type):
 		frappe.throw(_("نوع طرف حساب معتبر نیست."))
 	frappe.get_doc(party_type, party).check_permission("read")

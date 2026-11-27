@@ -12,6 +12,9 @@ const spReceiptConfig = {
 	OTHER_RECEIVER: "سایر حساب‌ها",
 	PARTY_TYPES: ["Customer", "Supplier", "Employee", "SmartProcess Financial Intermediary", "Shareholder"],
 	RECEIVER_ACCOUNT_TYPES: { "بانک": "Bank", "صندوق": "Cash" },
+	// Intermediaries and partners keep one current account per currency; its
+	// balance may be debit or credit, so both ledger types are valid.
+	BOTH_DIRECTIONS: ["SmartProcess Financial Intermediary", "Shareholder"],
 	PARTY_ACCOUNT_TYPES: {
 		Customer: "Receivable",
 		"SmartProcess Financial Intermediary": "Receivable",
@@ -174,6 +177,13 @@ const spReceiptConfig = {
 		return filters;
 	},
 
+	partyAccountType(partyType) {
+		if (this.BOTH_DIRECTIONS.includes(partyType)) {
+			return ["in", ["Receivable", "Payable"]];
+		}
+		return this.PARTY_ACCOUNT_TYPES[partyType] || null;
+	},
+
 	receiverAccountType(receiverKind) {
 		if (this.RECEIVER_ACCOUNT_TYPES[receiverKind]) {
 			return this.RECEIVER_ACCOUNT_TYPES[receiverKind];
@@ -181,7 +191,7 @@ const spReceiptConfig = {
 		if (receiverKind === this.OTHER_RECEIVER) {
 			return ["not in", this.NON_GENERIC_ACCOUNT_TYPES];
 		}
-		return this.PARTY_ACCOUNT_TYPES[receiverKind] || null;
+		return this.partyAccountType(receiverKind);
 	},
 
 	payerAccountType(payerType) {
@@ -191,7 +201,7 @@ const spReceiptConfig = {
 		if (payerType === this.ACCOUNT_PAYER) {
 			return ["not in", ["Receivable", "Payable"]];
 		}
-		return this.PARTY_ACCOUNT_TYPES[payerType] || null;
+		return this.partyAccountType(payerType);
 	},
 };
 

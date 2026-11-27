@@ -104,7 +104,17 @@ def validate_party(party_type: str | None, party: str | None, account_type: str 
 	if not frappe.has_permission(party_type, "read", doc=party):
 		frappe.throw(_("You do not have permission to use Party {0}.").format(party), frappe.PermissionError)
 	party_account_type = frappe.get_cached_value("Party Type", party_type, "account_type")
-	if account_type not in ("Receivable", "Payable") or party_account_type != account_type:
+	# A current account serves both directions: an intermediary or a partner may
+	# carry a Receivable or a Payable ledger without being forced to switch.
+	both_directions = party_type in ("SmartProcess Financial Intermediary", "Shareholder")
+	if both_directions:
+		if account_type not in ("Receivable", "Payable"):
+			frappe.throw(
+				_("Party Type {0} requires a Receivable or Payable Account, not {1}.").format(
+					party_type, account_type or _("blank")
+				)
+			)
+	elif account_type not in ("Receivable", "Payable") or party_account_type != account_type:
 		frappe.throw(
 			_("Party Type {0} requires an Account of type {1}, not {2}.").format(
 				party_type,

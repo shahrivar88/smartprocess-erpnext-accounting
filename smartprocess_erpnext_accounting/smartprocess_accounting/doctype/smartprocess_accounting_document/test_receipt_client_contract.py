@@ -36,6 +36,7 @@ HEADER_ORDER = (
 	"posting_date",
 	"general_description",
 	"pairs_section",
+	"receipt_row_party_type",
 	"receipt_credit_currency",
 	"operational_pairs",
 )
@@ -81,7 +82,8 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(tuple(definition["field_order"][: len(HEADER_ORDER)]), HEADER_ORDER)
 		# The row-side currency lives in its own section, directly above the rows.
 		order = definition["field_order"]
-		self.assertEqual(order[order.index("pairs_section") + 1], "receipt_credit_currency")
+		self.assertEqual(order[order.index("pairs_section") + 1], "receipt_row_party_type")
+		self.assertEqual(order[order.index("receipt_row_party_type") + 1], "receipt_credit_currency")
 		self.assertEqual(order[order.index("receipt_credit_currency") + 1], "operational_pairs")
 		meta = frappe.get_meta(DOCTYPE)
 		self.assertEqual(meta.get_field("receipt_payer_currency").label, "ارز دریافت‌کننده")

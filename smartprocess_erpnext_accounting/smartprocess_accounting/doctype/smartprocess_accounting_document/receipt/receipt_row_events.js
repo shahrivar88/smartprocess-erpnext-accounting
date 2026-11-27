@@ -152,6 +152,7 @@ const spReceiptRowEvents = {
 		const index = rows.findIndex((candidate) => candidate.name === cdn);
 		const previous = index > 0 ? rows[index - 1] : null;
 		const row = frappe.get_doc(cdt, cdn);
+		await spReceiptTableType.rowAdded(frm, row);
 		const copied = SP_RECEIPT_COPIED_FIELDS.map((name) => (name.startsWith("receipt_") ? name : spReceiptConfig.rowField(frm.doc, name)));
 		await spReceiptForm.quietly(frm, async () => {
 			for (const fieldname of previous ? copied : []) {
@@ -182,6 +183,7 @@ const spReceiptRowEvents = {
 			await this.setRowValue(row, "receipt_recipient", "");
 			await this.setRowValue(row, spReceiptConfig.rowField(frm.doc, "account"), "");
 		});
+		await spReceiptTableType.rowTypeChanged(frm, row);
 		spReceiptSummary.schedule(frm);
 	},
 

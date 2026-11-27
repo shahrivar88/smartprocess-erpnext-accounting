@@ -452,3 +452,27 @@ body[data-route="party-account-explorer"] .main-section {
 body[data-route*="Unallocatable"] .dt-cell:not(.dt-cell--header) .dt-cell__content {
 	font-weight: 400;
 }
+
+/* Printing the explorer keeps the statement, not the page chrome. Scoped to the
+   explorer route so no other page's print layout changes. */
+@media print {
+	body[data-route*="party-account-explorer"] .page-head,
+	body[data-route*="party-account-explorer"] .page-form,
+	body[data-route*="party-account-explorer"] .sp-ledger-toolbar,
+	body[data-route*="party-account-explorer"] .sp-pager,
+	body[data-route*="party-account-explorer"] .sp-col-resizer,
+	body[data-route*="party-account-explorer"] .sp-detail-btn {
+		display: none !important;
+	}
+	body[data-route*="party-account-explorer"] .sp-table-wrap {
+		overflow: visible !important;
+	}
+	body[data-route*="party-account-explorer"] .sp-table {
+		width: 100% !important;
+	}
+	body[data-route*="party-account-explorer"] .sp-table th,
+	body[data-route*="party-account-explorer"] .sp-table td {
+		white-space: normal;
+		word-break: break-word;
+	}
+}

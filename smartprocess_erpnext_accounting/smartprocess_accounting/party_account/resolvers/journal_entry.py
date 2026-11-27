@@ -5,6 +5,7 @@
 
 from frappe.utils import flt
 
+from ..access import HIDDEN_PARTY_TYPES
 from ..labels import docstatus_label, voucher_label
 from .common import column, document, item, link, party_title, party_titles, payload, readable_doc, section
 
@@ -24,7 +25,7 @@ ACCOUNT_COLUMNS = [
 
 def resolve_journal_entry(gl, context):
 	doc = readable_doc("Journal Entry", gl.voucher_no)
-	accounts = list(doc.get("accounts") or [])
+	accounts = [row for row in (doc.get("accounts") or []) if row.get("party_type") not in HIDDEN_PARTY_TYPES]
 	current = matching_row(accounts, gl)
 	titles = party_titles(accounts)
 	return payload(

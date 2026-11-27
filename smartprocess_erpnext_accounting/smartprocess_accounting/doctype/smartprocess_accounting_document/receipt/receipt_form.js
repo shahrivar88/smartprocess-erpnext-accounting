@@ -12,7 +12,6 @@ const SP_ROW_SIDE_VISIBLE_FIELDS = ["account", "amount", "exchange_rate", "compa
 // Column sizes only; the column order stays the Pair metadata order. The row
 // Exchange Rate column joins them only for a foreign row currency.
 const SP_RECEIPT_LIST_COLUMNS = [
-	["receipt_recipient_type", 2],
 	["receipt_recipient", 4],
 	["account", 3],
 	["amount", 2],
@@ -108,6 +107,7 @@ const spReceiptForm = {
 		}
 		spReceiptHeader.configure(frm, isFlow);
 		this.configureGrid(frm, isFlow);
+		await spReceiptTableType.initialize(frm);
 		if (!isFlow) {
 			frm.fields_dict.receipt_summary?.$wrapper.empty();
 			return;
@@ -117,6 +117,7 @@ const spReceiptForm = {
 		spReceiptRowQueries.installPayerTypeOrder(frm);
 		await spReceiptHeader.initialize(frm);
 		await spReceiptRowEvents.initializeRows(frm);
+		await spReceiptTableType.syncFromLastRow(frm);
 		this.configureGrid(frm, isFlow);
 		spReceiptSummary.render(frm);
 		spReceiptSummary.schedule(frm, 0);
@@ -178,7 +179,7 @@ const spReceiptForm = {
 		for (const fieldname of SP_RECEIPT_GRID_FIELDS) {
 			properties.push([fieldname, "hidden", 0]);
 		}
-		for (const fieldname of ["receipt_posting_date", "receipt_currency", row("description")]) {
+		for (const fieldname of ["receipt_posting_date", "receipt_currency", "receipt_recipient_type", row("description")]) {
 			properties.push([fieldname, "in_list_view", 0]);
 		}
 		for (const [name, columns] of SP_RECEIPT_LIST_COLUMNS) {

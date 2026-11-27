@@ -6,6 +6,7 @@ user sees the SmartProcess Accounting Document and the exact Pair of the GL line
 
 import frappe
 
+from ..access import HIDDEN_PARTY_TYPES
 from ..labels import (
 	ACCOUNTING_DOCUMENT,
 	ACCOUNTING_POSTING,
@@ -90,6 +91,8 @@ def pair_items(gl, pair, numbers, titles):
 		return []
 	side = line_side(gl)
 	party_type, party = pair.get(f"{side}_party_type"), pair.get(f"{side}_party")
+	if party_type in HIDDEN_PARTY_TYPES:
+		return []
 	currency = pair.get(f"{side}_account_currency")
 	return [
 		item("ردیف", numbers.get(pair.name)),
@@ -108,6 +111,8 @@ def pair_items(gl, pair, numbers, titles):
 def line_rows(gl, lines, pairs, numbers, titles):
 	rows = []
 	for line in lines:
+		if line.get("party_type") in HIDDEN_PARTY_TYPES:
+			continue
 		side = line_side(line)
 		pair = pairs.get(line.voucher_detail_no) or {}
 		rows.append(

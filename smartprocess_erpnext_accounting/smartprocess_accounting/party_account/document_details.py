@@ -11,7 +11,7 @@ is resolved from that GL line."""
 import frappe
 from frappe import _
 
-from .access import ACCOUNT_LEDGER, GL, GLScope, assert_report_access, can_read, deny
+from .access import ACCOUNT_LEDGER, HIDDEN_PARTY_TYPES, GL, GLScope, assert_report_access, can_read, deny
 from .labels import ACCOUNTING_DOCUMENT, ACCOUNTING_POSTING, RECEIPT_CONVERSION, voucher_label
 from .resolvers import RESOLVERS, resolve_generic
 
@@ -72,6 +72,21 @@ def get_document_detail(gl_entry, company, party_type, party=None, account=None)
 	return secure_links(detail, gl)
 
 
+def _has_hidden_party(document_row):
+	if not document_row or document_row.get("doctype") != ACCOUNTING_DOCUMENT:
+		return False
+	return bool(
+		frappe.db.exists(
+			"SmartProcess Accounting Pair",
+			{"parent": document_row.get("name"), "debit_party_type": ["in", HIDDEN_PARTY_TYPES]},
+		)
+		or frappe.db.exists(
+			"SmartProcess Accounting Pair",
+			{"parent": document_row.get("name"), "credit_party_type": ["in", HIDDEN_PARTY_TYPES]},
+		)
+	)
+
+
 def verified_gl_line(gl_entry, company, party_type, party, account):
 	if not gl_entry:
 		frappe.throw(_("ردیف دفتر کل مشخص نیست."))
@@ -79,12 +94,16 @@ def verified_gl_line(gl_entry, company, party_type, party, account):
 	rows = scope.query(GL_FIELDS, f" and {GL}.name = %(gl_entry)s", gl_entry=gl_entry)
 	if not rows:
 		deny(_("این ردیف دفتر کل به حساب انتخاب‌شده تعلق ندارد یا اجازه مشاهده آن را ندارید."))
+	if rows[0].get("party_type") in HIDDEN_PARTY_TYPES:
+		deny(_("اطلاعات مالی این نوع طرف حساب در این گزارش ارائه نمی‌شود."))
 	return rows[0]
 
 
 def secure_links(detail, gl):
 	"""Keep only openable links to whitelisted types the user may read."""
 	primary = detail.get("document") or {}
+	if _has_hidden_party(primary):
+		detail["document"] = {**primary, "no_link": True}
 	seen = {(primary.get("doctype"), primary.get("name"))}
 	related = []
 	for entry in detail.get("related") or []:

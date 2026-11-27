@@ -691,7 +691,7 @@ class PartyAccountExplorer {
 			.then((detail) => {
 				dialog.set_title(pae_detail_view.title(detail));
 				$body.html(pae_detail_view.html(detail));
-				if (detail.document) {
+				if (detail.document && !detail.document.no_link) {
 					dialog.set_primary_action(__("باز کردن سند کامل"), () => {
 						dialog.hide();
 						frappe.set_route("Form", detail.document.doctype, detail.document.name);

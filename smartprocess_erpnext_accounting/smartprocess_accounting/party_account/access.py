@@ -20,6 +20,9 @@ from .labels import ACCOUNT_LEDGER_CHOICES, PARTY_TYPE_LABELS
 ACCOUNT_LEDGER = "Account"
 ACCOUNT_TYPES = tuple(account_type for account_type, _label in ACCOUNT_LEDGER_CHOICES if account_type)
 GL = "`tabGL Entry`"
+# Employee financial rows are confidential in the public explorer; the forms and
+# HRMS keep their own permissions.
+HIDDEN_PARTY_TYPES = ("Employee",)
 # The ledger's Account; its currency is the report currency of every GL row on it.
 ACCOUNT = "`sp_account`"
 ACCOUNT_CURRENCY = f"{ACCOUNT}.account_currency"
@@ -57,7 +60,11 @@ def configured_party_types():
 
 def readable_party_types():
 	"""Configured Party Types the session user may read, in Party Type order."""
-	return [name for name in configured_party_types() if frappe.has_permission(name, "read")]
+	return [
+		name
+		for name in configured_party_types()
+		if name not in HIDDEN_PARTY_TYPES and frappe.has_permission(name, "read")
+	]
 
 
 def assert_report_access(company, party_type, party=None, account=None, account_type=None):
@@ -72,6 +79,8 @@ def assert_report_access(company, party_type, party=None, account=None, account_
 			frappe.throw(_("نوع حساب معتبر نیست."))
 		if party:
 			frappe.throw(_("گردش حساب دفتر کل طرف حساب نمی‌گیرد."))
+	elif party_type in HIDDEN_PARTY_TYPES:
+		deny(_("گردش حساب این نوع طرف حساب در این گزارش ارائه نمی‌شود."))
 	elif not is_party_type(party_type):
 		frappe.throw(_("نوع طرف حساب معتبر نیست."))
 	elif not frappe.has_permission(party_type, "read"):
@@ -128,11 +137,11 @@ class GLScope:
 			search_columns = (f"{GL}.account", f"{ACCOUNT}.account_name", f"{ACCOUNT}.account_number")
 			match_doctypes = ("GL Entry", "Account")
 			filters = ((f"{GL}.account", account), (ACCOUNT_CURRENCY, currency), (f"{ACCOUNT}.account_type", account_type))
-			if exclude_party_types:
-				self.params["excluded_party_types"] = tuple(exclude_party_types)
-				conditions.append(
-					f"(ifnull({GL}.party, '') = '' or ifnull({GL}.party_type, '') not in %(excluded_party_types)s)"
-				)
+			excluded = tuple({*(exclude_party_types or ()), *HIDDEN_PARTY_TYPES})
+			self.params["excluded_party_types"] = excluded
+			conditions.append(
+				f"(ifnull({GL}.party, '') = '' or ifnull({GL}.party_type, '') not in %(excluded_party_types)s)"
+			)
 		else:
 			self.party_table = f"`tab{party_type}`"
 			self.key_column = f"{GL}.party"

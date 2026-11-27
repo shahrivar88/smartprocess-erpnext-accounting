@@ -16,6 +16,7 @@ const MODULES = {
 	spReceiptPayerHeader: "receipt_payer_header.js",
 	spReceiptRowQueries: "receipt_row_queries.js",
 	spReceiptRowEvents: "receipt_row_events.js",
+	spReceiptTableType: "receipt_table_type.js",
 	spReceiptValidation: "receipt_validation_ui.js",
 	spReceiptSummary: "receipt_summary.js",
 	spReceiptSettlement: "settlement.js",
@@ -116,7 +117,14 @@ function form(values = {}, rows = []) {
 			},
 		},
 		set_df_property() {},
-		refresh_field() {},
+		set_query() {},
+		get_value(fieldname) {
+			return doc[fieldname];
+		},
+		async set_value(fieldname, value) {
+			calls.setValue.push({ name: doc.name, fieldname, value });
+			doc[fieldname] = value;
+		},
 		refresh_field() {},
 		refresh_fields() {
 			calls.refreshFields = (calls.refreshFields || 0) + 1;
@@ -226,6 +234,8 @@ test("5 row Account query uses the header Payer Currency", () => {
 	);
 	assert.equal(filters("Customer").account_type, "Receivable");
 	assert.equal(filters("Employee").account_type, "Payable");
+	assert.deepEqual(filters("SmartProcess Financial Intermediary").account_type, ["in", ["Receivable", "Payable"]]);
+	assert.deepEqual(filters("Shareholder").account_type, ["in", ["Receivable", "Payable"]]);
 	assert.equal(filters("Bank Account").account_type, "Bank");
 	assert.deepEqual(filters("Account").account_type, ["not in", ["Receivable", "Payable"]]);
 	assert.deepEqual([filters("Account").disabled, filters("Account").is_group], [0, 0]);
@@ -235,8 +245,9 @@ test("6 one header Payer Currency; the row Currency is a read-only mirror outsid
 	reset();
 	const header = docField("receipt_credit_currency");
 	assert.deepEqual([header.fieldtype, header.label], ["Select", "ارز پرداخت‌کننده"]);
-	// The row-side currency now sits in the payers section, directly above the rows.
-	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("pairs_section") + 1);
+	// The payers section holds the helper type and the row currency above the rows.
+	assert.equal(docMeta.field_order.indexOf("receipt_row_party_type"), docMeta.field_order.indexOf("pairs_section") + 1);
+	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("receipt_row_party_type") + 1);
 	assert.equal(docMeta.field_order.indexOf("operational_pairs"), docMeta.field_order.indexOf("receipt_credit_currency") + 1);
 	assert.equal(Boolean(evalDepends(docField("company_currency").depends_on, { operation_type: "Receipt" })), false);
 	const currency = pairField("receipt_currency");
@@ -588,6 +599,67 @@ test("17 read-only Base Amount cell drops trailing zeros only when the global se
 	} finally {
 		delete frappe.boot;
 	}
+});
+
+test("6a the party type above the rows mirrors the last row and is not a grid column", async () => {
+	assert.equal(gridProperty("receipt_recipient_type", "in_list_view", { operation_type: "Receipt" }), 0);
+	const first = row("tt-1", {
+		receipt_recipient_type: "Customer", receipt_recipient: "C1", credit_account: "AR", credit_amount: 10, credit_description: "one",
+	});
+	const frm = form({ receipt_credit_currency: "IRR" }, [first]);
+	await spReceiptTableType.initialize(frm);
+	assert.equal(frm.doc.receipt_row_party_type, "Customer");
+	assert.equal(first.receipt_recipient_type, "Customer");
+});
+
+test("6b changing the top type changes only the last row and keeps its amount", async () => {
+	const first = row("tt-2", {
+		receipt_recipient_type: "Customer", receipt_recipient: "C1", credit_account: "AR", credit_amount: 10, credit_description: "one",
+	});
+	const second = row("tt-3", {
+		receipt_recipient_type: "Customer", receipt_recipient: "C2", credit_account: "AR", credit_amount: 20, credit_description: "two",
+	});
+	const frm = form({}, [first, second]);
+	await spReceiptTableType.initialize(frm);
+	frm.doc.receipt_row_party_type = "Employee";
+	await spReceiptTableType.changed(frm);
+	assert.deepEqual(
+		[first.receipt_recipient_type, first.receipt_recipient, first.credit_account, first.credit_amount],
+		["Customer", "C1", "AR", 10],
+	);
+	assert.deepEqual(
+		[second.receipt_recipient_type, second.receipt_recipient, second.credit_account, second.credit_amount, second.credit_description],
+		["Employee", "", "", 20, "two"],
+	);
+});
+
+test("6c the same type clears nothing; row events and removal keep the helper in sync", async () => {
+	const only = row("tt-4", { receipt_recipient_type: "Customer", receipt_recipient: "C1", credit_account: "AR" });
+	const frm = form({}, [only]);
+	await spReceiptTableType.initialize(frm);
+	frm.doc.receipt_row_party_type = "Customer";
+	await spReceiptTableType.changed(frm);
+	assert.deepEqual([only.receipt_recipient, only.credit_account], ["C1", "AR"]);
+
+	const added = row("tt-5", {});
+	frm.doc.receipt_row_party_type = "Supplier";
+	frm.doc.operational_pairs = [only, added];
+	await spReceiptTableType.rowAdded(frm, added);
+	assert.equal(added.receipt_recipient_type, "Supplier");
+	assert.equal(frm.doc.receipt_row_party_type, "Supplier");
+
+	const earlier = row("tt-6", { receipt_recipient_type: "Customer" });
+	frm.doc.operational_pairs = [earlier, only, added];
+	earlier.receipt_recipient_type = "Employee";
+	await spReceiptTableType.rowTypeChanged(frm, earlier);
+	assert.equal(frm.doc.receipt_row_party_type, "Supplier", "an earlier row never moves the helper");
+	added.receipt_recipient_type = "Account";
+	await spReceiptTableType.rowTypeChanged(frm, added);
+	assert.equal(frm.doc.receipt_row_party_type, "Account", "editing the last row moves the helper");
+
+	frm.doc.operational_pairs = [earlier, only];
+	await spReceiptTableType.rowRemoved(frm);
+	assert.equal(frm.doc.receipt_row_party_type, "Customer", "removing the last row follows the new last row");
 });
 
 test("18 Payment rows edit the debit side; the Receipt grid stays on the credit side", () => {

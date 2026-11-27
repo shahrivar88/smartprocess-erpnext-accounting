@@ -6,6 +6,7 @@ voucher_detail_no is the conversion leg, so the exact leg is highlighted."""
 
 import frappe
 
+from ..access import HIDDEN_PARTY_TYPES
 from ..labels import (
 	ACCOUNTING_DOCUMENT,
 	ACCOUNTING_POSTING,
@@ -47,7 +48,12 @@ LEG_COLUMNS = [
 
 def resolve_receipt_conversion(gl, context):
 	doc = readable_doc(RECEIPT_CONVERSION, gl.voucher_no)
-	legs = list(doc.legs)
+	legs = [
+		leg
+		for leg in doc.legs
+		if leg.get("source_party_type") not in HIDDEN_PARTY_TYPES
+		and leg.get("target_party_type") not in HIDDEN_PARTY_TYPES
+	]
 	titles = party_titles(legs, "source_party_type", "source_party")
 	titles.update(party_titles(legs, "target_party_type", "target_party"))
 	current = next((leg for leg in legs if leg.name == gl.voucher_detail_no), None)
