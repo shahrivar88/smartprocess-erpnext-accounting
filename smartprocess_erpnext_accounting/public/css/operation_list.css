@@ -1,0 +1,28 @@
+/* Readable default widths for the derived operation totals. Frappe keeps any
+   width the user resizes and saves through its own list column settings. */
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="payer_total_amount"],
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="receiver_total_amount"] {
+	min-width: 8rem !important;
+}
+
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="payer_currency"],
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="receiver_currency"] {
+	min-width: 5rem !important;
+}
+
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="payer_exchange_rate"],
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="receiver_exchange_rate"] {
+	min-width: 9rem !important;
+}
+
+.sp-operation-list .list-row-container .level-left .list-row-col[data-fieldname="payment_fee_total"] {
+	min-width: 6rem !important;
+}
+
+.sp-operation-list .list-row-col[data-fieldname="payer_total_amount"],
+.sp-operation-list .list-row-col[data-fieldname="receiver_total_amount"],
+.sp-operation-list .list-row-col[data-fieldname="payment_fee_total"],
+.sp-operation-list .list-row-col[data-fieldname="payer_exchange_rate"],
+.sp-operation-list .list-row-col[data-fieldname="receiver_exchange_rate"] {
+	white-space: nowrap;
+}

@@ -8,6 +8,7 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.audit_trail import 
 from smartprocess_erpnext_accounting.smartprocess_accounting.correction import (
 	start_correction as create_correction,
 )
+from smartprocess_erpnext_accounting.smartprocess_accounting.display_totals import apply_display_totals
 from smartprocess_erpnext_accounting.smartprocess_accounting.incomplete_operation_rules import (
 	submit_block_reason,
 )
@@ -57,11 +58,13 @@ class SmartProcessAccountingDocument(AccountsController):
 	def validate(self):
 		self._guard_lab_writer()
 		self._validate_accounting()
+		apply_display_totals(self)
 
 	def before_submit(self):
 		self._reject_incomplete_submit()
 		require_posting_enabled()
 		self._validate_accounting()
+		apply_display_totals(self)
 		if self.operation_type in FLOW_OPERATIONS:
 			post_document(self)
 

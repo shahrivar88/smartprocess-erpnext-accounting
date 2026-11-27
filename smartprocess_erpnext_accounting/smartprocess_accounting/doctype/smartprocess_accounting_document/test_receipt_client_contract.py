@@ -77,6 +77,27 @@ class TestReceiptClientContract(unittest.TestCase):
 	def tearDown(self):
 		self.assertEqual(frappe.db.transaction_writes, self.writes)
 
+	def test_operation_list_exposes_the_role_totals(self):
+		meta = frappe.get_meta(DOCTYPE)
+		visible = (
+			"payer_total_amount",
+			"payer_currency",
+			"payer_exchange_rate",
+			"receiver_total_amount",
+			"receiver_currency",
+			"receiver_exchange_rate",
+			"payment_fee_total",
+		)
+		for fieldname in visible:
+			df = meta.get_field(fieldname)
+			self.assertIsNotNone(df, fieldname)
+			self.assertEqual((df.in_list_view, df.in_standard_filter), (1, 1), fieldname)
+			self.assertEqual(df.read_only, 1, fieldname)
+		for fieldname in ("payer_rate_is_weighted", "receiver_rate_is_weighted"):
+			df = meta.get_field(fieldname)
+			self.assertEqual((df.fieldtype, df.hidden), ("Check", 1), fieldname)
+		self.assertIn("payment_fee_total", FORM_DIR.joinpath("smartprocess_accounting_document_list.js").read_text(encoding="utf-8"))
+
 	def test_header_keeps_the_layout_order(self):
 		definition = json.loads((FORM_DIR / "smartprocess_accounting_document.json").read_text(encoding="utf-8"))
 		self.assertEqual(tuple(definition["field_order"][: len(HEADER_ORDER)]), HEADER_ORDER)

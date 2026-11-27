@@ -224,7 +224,7 @@ class ReceiptBuilder:
 			return Decimal("0"), Decimal("0")
 		if self.receiver_rate is None or not self.receiver_currency:
 			return self._issue(self.text("fee_account_required"), "payment_fee", number), None
-		account_name = frappe.get_single_value("SmartProcess Accounting Settings", "payment_fee_account")
+		account_name = self.lookups.payment_fee_account()
 		if not account_name:
 			return self._issue(self.text("fee_account_required"), "payment_fee", number), None
 		ok, details = self._call(lambda: self.lookups.accounts({account_name}), "payment_fee", number)
@@ -233,9 +233,11 @@ class ReceiptBuilder:
 			return self._issue(self.text("fee_account_expense"), "payment_fee", number), None
 		if details.disabled or details.is_group or details.root_type != "Expense":
 			return self._issue(self.text("fee_account_expense"), "payment_fee", number), None
-		if details.account_currency != self.receiver_currency:
+		if details.account_currency not in (self.receiver_currency, self.company_currency):
 			return self._issue(
-				self.text("fee_account_currency").format(details.account_currency, self.receiver_currency),
+				self.text("fee_account_currency").format(
+					details.account_currency, self.receiver_currency, self.company_currency
+				),
 				"payment_fee",
 				number,
 			), None

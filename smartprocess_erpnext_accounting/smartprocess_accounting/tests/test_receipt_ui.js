@@ -286,8 +286,9 @@ test("7 row rate: base Payer Currency is 1 and hidden from the grid; foreign rat
 	const baseRow = row("row-r3", { credit_exchange_rate: 5 });
 	await spReceiptRowEvents.rateChanged(form({}, [baseRow]), baseRow.doctype, baseRow.name);
 	assert.equal(baseRow.credit_exchange_rate, 1);
-	const payload = spReceiptSummary.payload({ receipt_credit_currency: "USD", operational_pairs: [first] });
+	const payload = spReceiptSummary.payload({ receipt_credit_currency: "USD", operational_pairs: [{ ...first, payment_fee: 5 }] });
 	assert.deepEqual([payload.receipt_credit_currency, payload.operational_pairs[0].credit_exchange_rate], ["USD", 1600000]);
+	assert.equal(payload.operational_pairs[0].payment_fee, 5);
 });
 
 test("7b Payer Currency change asks first, then clears only rows filled in the old currency", async () => {

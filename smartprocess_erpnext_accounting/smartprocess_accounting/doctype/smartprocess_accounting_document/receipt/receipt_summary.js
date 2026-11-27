@@ -27,6 +27,7 @@ const spReceiptSummary = {
 				receipt_recipient_type: row.receipt_recipient_type,
 				receipt_recipient: row.receipt_recipient,
 				receipt_currency: row.receipt_currency,
+				payment_fee: row.payment_fee,
 				...Object.fromEntries(["account", "amount", "exchange_rate", "description"].map((name) => [field(name), row[field(name)]])),
 			})),
 		};

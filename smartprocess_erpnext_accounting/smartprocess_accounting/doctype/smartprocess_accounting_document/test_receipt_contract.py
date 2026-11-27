@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 import frappe
 
 from smartprocess_erpnext_accounting.smartprocess_accounting.payment import (
+	PaymentValidationError,
 	build_canonical_payment,
 	canonicalize_payment,
 )
@@ -49,9 +50,15 @@ class FakeLookups:
 				("Receivable Other", OTHER, "Receivable"),
 				("Clearing Base", BASE, ""),
 				("Clearing Foreign", FOREIGN, ""),
+				("Expense Base", BASE, ""),
+				("Expense Foreign", FOREIGN, ""),
+				("Expense Other", OTHER, ""),
 				("Disabled Base", BASE, ""),
 			)
 		}
+		self.account_rows["Expense Base"].root_type = "Expense"
+		self.account_rows["Expense Foreign"].root_type = "Expense"
+		self.account_rows["Expense Other"].root_type = "Expense"
 		self.party_currencies = {
 			("Customer", "CUST-BASE"): BASE,
 			("Customer", "CUST-FOREIGN"): FOREIGN,
@@ -74,6 +81,9 @@ class FakeLookups:
 
 	def accounts(self, names):
 		return {name: self.account_rows[name] for name in names if name in self.account_rows}
+
+	def payment_fee_account(self):
+		return "Expense Base"
 
 	def validate_account(self, name, company, details=None):
 		account = details or self.account_rows.get(name)
@@ -476,6 +486,49 @@ class TestReceiptIssueReporting(ReceiptContractCase):
 
 	def test_non_receipt_documents_are_ignored(self):
 		self.assertIsNone(self.canonicalize(receipt_doc(operation_type="Transfer")))
+
+
+class TestPaymentFeeCurrency(ReceiptContractCase):
+	def payment_doc(self, fee="5"):
+		row = receipt_row(
+			receipt_recipient="CUST-FOREIGN",
+			credit_account="Receivable Foreign",
+			credit_amount="500",
+			credit_exchange_rate="2",
+			payment_fee=fee,
+		)
+		doc = receipt_doc(
+			[row],
+			payer=FOREIGN,
+			operation_type="Payment",
+			receipt_payer_currency=FOREIGN,
+			receipt_credit_currency=FOREIGN,
+			receipt_receiver_kind="سایر حساب‌ها",
+			receipt_payer_account="Clearing Foreign",
+			receipt_payer_exchange_rate="2",
+			receipt_bank_account=None,
+		)
+		return as_payment(doc)
+
+	def test_company_currency_fee_account_posts_the_base_equivalent(self):
+		doc = self.payment_doc()
+		canonicalize_payment(doc, FakeLookups())
+		pair = doc.operational_pairs[0]
+		self.assertEqual(
+			(pair.debit_account, pair.debit_account_currency, pair.debit_amount, pair.debit_company_amount),
+			("Receivable Foreign", FOREIGN, "500", "1000"),
+		)
+		self.assertEqual(
+			(pair.credit_account, pair.credit_account_currency, pair.credit_amount, pair.credit_company_amount),
+			("Clearing Foreign", FOREIGN, "505", "1010"),
+		)
+
+	def test_a_fee_account_in_another_foreign_currency_is_rejected(self):
+		lookups = FakeLookups()
+		lookups.payment_fee_account = lambda: "Expense Other"
+		doc = self.payment_doc()
+		with self.assertRaises(PaymentValidationError):
+			canonicalize_payment(doc, lookups)
 
 
 def as_payment(doc):

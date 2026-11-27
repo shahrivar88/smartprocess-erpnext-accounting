@@ -112,6 +112,9 @@ def validate_document(doc) -> list[PostingLine]:
 def _conserves_currency(debit: PostingLine, credit: PostingLine, fee: PostingLine | None = None) -> bool:
 	if debit.account_currency != credit.account_currency:
 		return True
+	if fee and fee.account_currency != debit.account_currency:
+		# The fee sits in Company currency; its amount is not comparable here.
+		return debit.exchange_rate == credit.exchange_rate
 	row_amount = debit.amount + (fee.amount if fee else Decimal("0"))
 	return row_amount == credit.amount and debit.exchange_rate == credit.exchange_rate
 
@@ -144,12 +147,14 @@ def _validate_fee(doc, row, number, debit, credit, posting_date, account_details
 			_("Account"),
 			_("The Payment Fee Account must be an Expense account."),
 		)
-	if account.account_currency != credit.account_currency:
+	if account.account_currency not in (credit.account_currency, doc.company_currency):
 		_pair_error(
 			number,
 			_("Payment Fee"),
 			_("Account Currency"),
-			account_currency_mismatch_message(account.name, account.account_currency, credit.account_currency),
+			_(
+				"Payment Fee Account currency {0} must match the payer currency {1} or the company currency {2}."
+			).format(account.account_currency, credit.account_currency, doc.company_currency),
 		)
 	places = _account_currency_precision(credit.account_currency)
 	if max(0, -fee.normalize().as_tuple().exponent) > places:
@@ -175,6 +180,11 @@ def _validate_fee(doc, row, number, debit, credit, posting_date, account_details
 			_("Company Currency Amount"),
 			_("Payment Fee is too small to change the Company-currency amount after rounding."),
 		)
+	if account.account_currency == credit.account_currency:
+		fee_amount, fee_rate = fee, credit.exchange_rate
+	else:
+		# A Company-currency expense account carries the base equivalent of the fee.
+		fee_amount, fee_rate = company_amount, Decimal("1")
 	return PostingLine(
 		pair_number=number,
 		side="debit",
@@ -184,8 +194,8 @@ def _validate_fee(doc, row, number, debit, credit, posting_date, account_details
 		account_currency=account.account_currency,
 		party_type=None,
 		party=None,
-		amount=fee,
-		exchange_rate=credit.exchange_rate,
+		amount=fee_amount,
+		exchange_rate=fee_rate,
 		company_amount=company_amount,
 		remarks=_("Payment Fee"),
 		against=row.credit_account,

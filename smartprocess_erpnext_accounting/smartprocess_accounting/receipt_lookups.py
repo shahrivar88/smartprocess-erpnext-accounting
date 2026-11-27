@@ -31,6 +31,9 @@ class ReceiptLookups:
 	def accounts(self, names: set[str]) -> dict:
 		return get_accounts(names)
 
+	def payment_fee_account(self) -> str | None:
+		return frappe.get_single_value("SmartProcess Accounting Settings", "payment_fee_account")
+
 	def validate_account(self, name: str, company: str, details=None):
 		return validate_account(name, company, details)
 
