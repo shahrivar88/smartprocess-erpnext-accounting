@@ -246,9 +246,12 @@ test("6 one header Payer Currency; the row Currency is a read-only mirror outsid
 	const header = docField("receipt_credit_currency");
 	assert.deepEqual([header.fieldtype, header.label], ["Select", "ارز پرداخت‌کننده"]);
 	// The payers section holds the helper type and the row currency above the rows.
-	assert.equal(docMeta.field_order.indexOf("receipt_row_party_type"), docMeta.field_order.indexOf("pairs_section") + 1);
-	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("receipt_row_party_type") + 1);
-	assert.equal(docMeta.field_order.indexOf("operational_pairs"), docMeta.field_order.indexOf("receipt_credit_currency") + 1);
+	assert.equal(docMeta.field_order.indexOf("receipt_row_party_type"), docMeta.field_order.indexOf("row_meta_section") + 1);
+	assert.equal(docMeta.field_order.indexOf("row_meta_column_1"), docMeta.field_order.indexOf("receipt_row_party_type") + 1);
+	assert.equal(docMeta.field_order.indexOf("receipt_credit_currency"), docMeta.field_order.indexOf("row_meta_column_1") + 1);
+	assert.equal(docMeta.field_order.indexOf("row_meta_column_2"), docMeta.field_order.indexOf("receipt_credit_currency") + 1);
+	assert.equal(docMeta.field_order.indexOf("pairs_section"), docMeta.field_order.indexOf("row_meta_column_2") + 1);
+	assert.equal(docMeta.field_order.indexOf("operational_pairs"), docMeta.field_order.indexOf("pairs_section") + 1);
 	assert.equal(Boolean(evalDepends(docField("company_currency").depends_on, { operation_type: "Receipt" })), false);
 	const currency = pairField("receipt_currency");
 	assert.deepEqual([currency.hidden, currency.read_only, currency.in_list_view], [undefined, 1, undefined]);
@@ -1081,6 +1084,8 @@ test("35 Payment shows the fee column while Receipt and Transfer hide it", () =>
 	}
 	assert.equal(pairField("payment_fee").fieldtype, "Currency");
 	assert.equal(pairField("payment_fee").default, "0");
+	assert.equal(pairMeta.field_order.indexOf("payment_fee"), pairMeta.field_order.indexOf("debit_amount") + 1);
+	assert.ok(pairMeta.field_order.indexOf("debit_company_amount") > pairMeta.field_order.indexOf("payment_fee"));
 });
 
 test("36 the preview names the fee only when the Payment carries one", () => {

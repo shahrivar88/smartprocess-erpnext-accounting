@@ -698,7 +698,7 @@ class TestExports(unittest.TestCase):
 		self.assertEqual(list(table[0]), ["Customer 1", "USD", 900, 0, 900, 10, 0, 10], "no party code and no account column")
 		self.assertEqual([(entry.kind, entry[1], entry[7]) for entry in table[1:]], [("total", "USD", 10), ("total", "IRR", 5)])
 		mixed_headers, mixed_table = overview_table([{**row, "ledger_label": "مشتری"}], totals, "IRR", mixed=True)
-		self.assertEqual(mixed_headers[0], "نوع طرف حساب / حساب")
+		self.assertEqual(mixed_headers[0], "نوع حساب")
 		self.assertEqual(list(mixed_table[0])[:3], ["مشتری", "Customer 1", "USD"])
 
 	def test_document_and_posting_cells_are_plain_text(self):

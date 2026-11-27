@@ -13,10 +13,14 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 RATE_PLACES = 12
 FLOW_OPERATIONS = ("Receipt", "Payment", "Transfer")
 TOTAL_FIELDS = (
+	"payer_party",
+	"payer_account",
 	"payer_total_amount",
 	"payer_currency",
 	"payer_exchange_rate",
 	"payer_rate_is_weighted",
+	"receiver_party",
+	"receiver_account",
 	"receiver_total_amount",
 	"receiver_currency",
 	"receiver_exchange_rate",
@@ -40,6 +44,12 @@ def apply_display_totals(doc) -> None:
 	rows = list(doc.get("operational_pairs") or [])
 	payer = _side(rows, payer_side, company_currency, header=payer_side == header_side, doc=doc)
 	receiver = _side(rows, receiver_side, company_currency, header=receiver_side == header_side, doc=doc)
+	payer_party, payer_account = _identity(rows, payer_side, header=payer_side == header_side, doc=doc)
+	receiver_party, receiver_account = _identity(rows, receiver_side, header=receiver_side == header_side, doc=doc)
+	_put(doc, "payer_party", payer_party)
+	_put(doc, "payer_account", payer_account)
+	_put(doc, "receiver_party", receiver_party)
+	_put(doc, "receiver_account", receiver_account)
 	_put(doc, "payer_total_amount", payer["amount"])
 	_put(doc, "payer_currency", payer["currency"])
 	_put(doc, "payer_exchange_rate", payer["rate"])
@@ -51,6 +61,35 @@ def apply_display_totals(doc) -> None:
 	_put(doc, "receiver_rate_is_weighted", 1 if receiver["weighted"] else 0)
 	_put(doc, "receiver_is_mixed_currency", 1 if receiver["mixed"] else 0)
 	_put(doc, "payment_fee_total", _fee_total(rows) if operation == "Payment" else "0")
+
+
+def _identity(rows, side, *, header, doc):
+	if header:
+		party = doc.get("receipt_payer") or doc.get("receipt_bank_account") or ""
+		return party, doc.get("receipt_payer_account") or ""
+	parties = {
+		value
+		for value in (row.get(f"{side}_party") or row.get("receipt_recipient") for row in rows)
+		if isinstance(value, str) and value
+	}
+	accounts = {
+		value
+		for value in (row.get(f"{side}_account") for row in rows)
+		if isinstance(value, str) and value
+	}
+	if len(parties) > 1:
+		party = "چندطرفه"
+	elif parties:
+		party = next(iter(parties))
+	else:
+		party = ""
+	if len(accounts) > 1:
+		account = "چندحسابی"
+	elif accounts:
+		account = next(iter(accounts))
+	else:
+		account = ""
+	return party, account
 
 
 def _side(rows, side, company_currency, *, header, doc):
@@ -146,7 +185,7 @@ def _empty_side(*, mixed: bool = False) -> dict:
 
 def _clear(doc) -> None:
 	for fieldname in TOTAL_FIELDS:
-		if fieldname in ("payer_currency", "receiver_currency"):
+		if fieldname in ("payer_currency", "receiver_currency", "payer_party", "payer_account", "receiver_party", "receiver_account"):
 			_put(doc, fieldname, "")
 		elif fieldname in (
 			"payer_rate_is_weighted",

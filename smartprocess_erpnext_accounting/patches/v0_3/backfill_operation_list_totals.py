@@ -14,10 +14,14 @@ from smartprocess_erpnext_accounting.smartprocess_accounting.display_totals impo
 
 DOCTYPE = "SmartProcess Accounting Document"
 FIELDS = (
+	"payer_party",
+	"payer_account",
 	"payer_total_amount",
 	"payer_currency",
 	"payer_exchange_rate",
 	"payer_rate_is_weighted",
+	"receiver_party",
+	"receiver_account",
 	"receiver_total_amount",
 	"receiver_currency",
 	"receiver_exchange_rate",

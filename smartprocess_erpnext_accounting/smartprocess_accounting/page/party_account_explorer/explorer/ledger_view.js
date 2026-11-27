@@ -219,7 +219,7 @@ const pae_ledger_view = {
 	overview_columns(by_account, mixed) {
 		const columns = [];
 		if (mixed) {
-			columns.push({ key: "ledger_kind", label: __("نوع طرف حساب / حساب"), width: 160, sortable: true });
+			columns.push({ key: "ledger_kind", label: __("نوع حساب"), width: 160, sortable: true });
 		}
 		columns.push(
 			{ key: "party", label: by_account && !mixed ? __("حساب") : __("طرف حساب"), width: 240, sortable: true },

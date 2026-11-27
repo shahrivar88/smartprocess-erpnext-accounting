@@ -199,7 +199,7 @@ class TestCombinedOverview(PartyAccountCase):
 		self.gl(self.receivable, "1999-07-01", debit=10)
 		data = get_balance_overview(self.company, "", FROM, TO, hide_zero=1, page_length=500)
 		headers, table = overview_table(data["rows"], data["totals"], data["company_currency"], mixed=True)
-		self.assertEqual(headers[0], "نوع طرف حساب / حساب")
+		self.assertEqual(headers[0], "نوع حساب")
 		self.assertTrue(any(row[0] == "مشتری" and self.customer in str(row[1]) or row[0] == "مشتری" for row in table if getattr(row, "kind", "line") == "line"))
 
 

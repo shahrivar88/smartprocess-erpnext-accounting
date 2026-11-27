@@ -48,7 +48,7 @@ def overview_headers(company_currency, entity_label="طرف حساب", mixed=Fal
 		"مانده ارزی",
 	]
 	if mixed:
-		headers.insert(0, "نوع طرف حساب / حساب")
+		headers.insert(0, "نوع حساب")
 	return headers
 
 

@@ -52,6 +52,39 @@ class TestDisplayTotals(unittest.TestCase):
 		)
 		self.assertEqual((doc["payment_fee_total"], doc["payer_rate_is_weighted"]), ("5", 0))
 
+	def test_identity_columns_follow_the_operation_roles(self):
+		payment = Doc(
+			operation_type="Payment",
+			company_currency="XBS",
+			receipt_payer="Sponsor",
+			receipt_payer_account="Sponsor Ledger",
+			receipt_payer_currency="XFR",
+			receipt_payer_exchange_rate="2",
+			receipt_credit_currency="XFR",
+			operational_pairs=[payment_row(10, 0, 2)],
+		)
+		apply_display_totals(payment)
+		self.assertEqual((payment["payer_party"], payment["payer_account"]), ("Sponsor", "Sponsor Ledger"))
+		self.assertEqual((payment["receiver_party"], payment["receiver_account"]), ("", ""))
+
+	def test_identity_columns_summarize_several_parties(self):
+		doc = Doc(
+			operation_type="Receipt",
+			company_currency="XBS",
+			receipt_payer="Bank",
+			receipt_payer_account="Bank Ledger",
+			receipt_payer_currency="XBS",
+			receipt_payer_exchange_rate="1",
+			receipt_credit_currency="XBS",
+			operational_pairs=[
+				row(credit_party="Customer A", credit_account="Receivable A", credit_amount="10", credit_exchange_rate="1", credit_company_amount="10", credit_account_currency="XBS", debit_amount="10", debit_exchange_rate="1", debit_company_amount="10", debit_account_currency="XBS"),
+				row(credit_party="Customer B", credit_account="Receivable B", credit_amount="10", credit_exchange_rate="1", credit_company_amount="10", credit_account_currency="XBS", debit_amount="10", debit_exchange_rate="1", debit_company_amount="10", debit_account_currency="XBS"),
+			],
+		)
+		apply_display_totals(doc)
+		self.assertEqual((doc["payer_party"], doc["payer_account"]), ("چندطرفه", "چندحسابی"))
+		self.assertEqual((doc["receiver_party"], doc["receiver_account"]), ("Bank", "Bank Ledger"))
+
 	def test_base_currency_shows_rate_one(self):
 		doc = Doc(
 			operation_type="Receipt",

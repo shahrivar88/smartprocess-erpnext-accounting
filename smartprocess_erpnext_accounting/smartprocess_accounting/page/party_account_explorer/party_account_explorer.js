@@ -87,7 +87,7 @@ class PartyAccountExplorer {
 		});
 		this.party_type = this.page.add_field({
 			fieldname: "party_type",
-			label: __("نوع طرف حساب / حساب"),
+			label: __("نوع حساب"),
 			fieldtype: "Select",
 			options: [
 				{ value: PAE_ALL, label: __("همه انواع") },

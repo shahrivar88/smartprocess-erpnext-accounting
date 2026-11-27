@@ -34,10 +34,28 @@ HEADER_ORDER = (
 	"header_column_2",
 	"company_currency",
 	"posting_date",
+	"payer_party",
+	"payer_account",
+	"payer_total_amount",
+	"payer_currency",
+	"payer_exchange_rate",
+	"payer_rate_is_weighted",
+	"payer_is_mixed_currency",
+	"receiver_party",
+	"receiver_account",
+	"receiver_total_amount",
+	"receiver_currency",
+	"receiver_exchange_rate",
+	"receiver_rate_is_weighted",
+	"receiver_is_mixed_currency",
+	"payment_fee_total",
 	"general_description",
-	"pairs_section",
+	"row_meta_section",
 	"receipt_row_party_type",
+	"row_meta_column_1",
 	"receipt_credit_currency",
+	"row_meta_column_2",
+	"pairs_section",
 	"operational_pairs",
 )
 APP = "smartprocess_erpnext_accounting"
@@ -80,9 +98,13 @@ class TestReceiptClientContract(unittest.TestCase):
 	def test_operation_list_exposes_the_role_totals(self):
 		meta = frappe.get_meta(DOCTYPE)
 		visible = (
+			"payer_party",
+			"payer_account",
 			"payer_total_amount",
 			"payer_currency",
 			"payer_exchange_rate",
+			"receiver_party",
+			"receiver_account",
 			"receiver_total_amount",
 			"receiver_currency",
 			"receiver_exchange_rate",
@@ -108,9 +130,11 @@ class TestReceiptClientContract(unittest.TestCase):
 		self.assertEqual(tuple(definition["field_order"][: len(HEADER_ORDER)]), HEADER_ORDER)
 		# The row-side currency lives in its own section, directly above the rows.
 		order = definition["field_order"]
-		self.assertEqual(order[order.index("pairs_section") + 1], "receipt_row_party_type")
-		self.assertEqual(order[order.index("receipt_row_party_type") + 1], "receipt_credit_currency")
-		self.assertEqual(order[order.index("receipt_credit_currency") + 1], "operational_pairs")
+		self.assertEqual(order[order.index("row_meta_section") + 1], "receipt_row_party_type")
+		self.assertEqual(order[order.index("receipt_row_party_type") + 1], "row_meta_column_1")
+		self.assertEqual(order[order.index("row_meta_column_1") + 1], "receipt_credit_currency")
+		self.assertEqual(order[order.index("receipt_credit_currency") + 1], "row_meta_column_2")
+		self.assertEqual(order[order.index("row_meta_column_2") + 1], "pairs_section")
 		meta = frappe.get_meta(DOCTYPE)
 		self.assertEqual(meta.get_field("receipt_payer_currency").label, "ارز دریافت‌کننده")
 		self.assertEqual(meta.get_field("receipt_payer_exchange_rate").label, "نرخ ارز دریافت‌کننده")
