@@ -634,6 +634,20 @@ test("6b changing the top type changes only the last row and keeps its amount", 
 	);
 });
 
+test("6d the top type controls only the last row in Receipt, Transfer and Payment", async () => {
+	for (const operation_type of ["Receipt", "Transfer", "Payment"]) {
+		reset();
+		const first = row(`first-${operation_type}`, { receipt_recipient_type: "Customer", credit_amount: 10, debit_amount: 10 });
+		const last = row(`last-${operation_type}`, { receipt_recipient_type: "Customer", credit_amount: 20, debit_amount: 20 });
+		const frm = form({ operation_type }, [first, last]);
+		frm.doc.receipt_row_party_type = "Supplier";
+		await spReceiptTableType.changed(frm);
+		assert.equal(first.receipt_recipient_type, "Customer", operation_type);
+		assert.equal(last.receipt_recipient_type, "Supplier", operation_type);
+		assert.equal(last.credit_amount ?? last.debit_amount, 20, operation_type);
+	}
+});
+
 test("6c the same type clears nothing; row events and removal keep the helper in sync", async () => {
 	const only = row("tt-4", { receipt_recipient_type: "Customer", receipt_recipient: "C1", credit_account: "AR" });
 	const frm = form({}, [only]);

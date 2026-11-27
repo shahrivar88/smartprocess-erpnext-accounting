@@ -8,7 +8,7 @@
  "document_type": "Document",
  "editable_grid": 1,
  "engine": "InnoDB",
- "field_order": ["naming_series", "operation_type", "receipt_receiver_kind", "receipt_payer_account", "header_column", "company", "receipt_payer_type", "receipt_bank_account", "receipt_payer", "receipt_payer_currency", "receipt_payer_exchange_rate", "header_column_2", "company_currency", "posting_date", "general_description", "pairs_section", "receipt_row_party_type", "receipt_credit_currency", "operational_pairs", "receipt_summary", "settlement_section", "settlement_mode", "settlement_payment_entry", "settlement_summary", "settlement_allocations", "supplementary_section", "general_reference", "payer_total_amount", "payer_currency", "payer_exchange_rate", "payer_rate_is_weighted", "receiver_total_amount", "receiver_currency", "receiver_exchange_rate", "receiver_rate_is_weighted", "payment_fee_total", "correction_reason", "amended_from"],
+ "field_order": ["naming_series", "operation_type", "receipt_receiver_kind", "receipt_payer_account", "header_column", "company", "receipt_payer_type", "receipt_bank_account", "receipt_payer", "receipt_payer_currency", "receipt_payer_exchange_rate", "header_column_2", "company_currency", "posting_date", "general_description", "pairs_section", "receipt_row_party_type", "receipt_credit_currency", "operational_pairs", "receipt_summary", "settlement_section", "settlement_mode", "settlement_payment_entry", "settlement_summary", "settlement_allocations", "supplementary_section", "general_reference", "payer_total_amount", "payer_currency", "payer_exchange_rate", "payer_rate_is_weighted", "payer_is_mixed_currency", "receiver_total_amount", "receiver_currency", "receiver_exchange_rate", "receiver_rate_is_weighted", "receiver_is_mixed_currency", "payment_fee_total", "correction_reason", "amended_from"],
  "fields": [
   {"fieldname":"naming_series","fieldtype":"Data","hidden":1,"label":"Naming Series","no_copy":1,"set_only_once":1},
   {"fieldname":"operation_type","fieldtype":"Select","in_list_view":1,"label":"نوع","options":"Transfer\nReceipt\nPayment\nCurrency Conversion","reqd":1},
@@ -42,10 +42,12 @@
   {"fieldname":"payer_currency","fieldtype":"Link","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"ارز پرداخت‌کننده","no_copy":1,"options":"Currency","read_only":1},
   {"fieldname":"payer_exchange_rate","fieldtype":"Float","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"نرخ ارز پرداخت‌کننده","no_copy":1,"precision":"12","read_only":1},
   {"fieldname":"payer_rate_is_weighted","fieldtype":"Check","hidden":1,"label":"نرخ ترکیبی پرداخت‌کننده","no_copy":1,"read_only":1},
+  {"fieldname":"payer_is_mixed_currency","fieldtype":"Check","hidden":1,"label":"پرداخت‌کننده چندارزی","no_copy":1,"read_only":1},
   {"fieldname":"receiver_total_amount","fieldtype":"Currency","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"جمع دریافت‌کننده","no_copy":1,"options":"receiver_currency","precision":"9","read_only":1},
   {"fieldname":"receiver_currency","fieldtype":"Link","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"ارز دریافت‌کننده","no_copy":1,"options":"Currency","read_only":1},
   {"fieldname":"receiver_exchange_rate","fieldtype":"Float","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"نرخ ارز دریافت‌کننده","no_copy":1,"precision":"12","read_only":1},
   {"fieldname":"receiver_rate_is_weighted","fieldtype":"Check","hidden":1,"label":"نرخ ترکیبی دریافت‌کننده","no_copy":1,"read_only":1},
+  {"fieldname":"receiver_is_mixed_currency","fieldtype":"Check","hidden":1,"label":"دریافت‌کننده چندارزی","no_copy":1,"read_only":1},
   {"fieldname":"payment_fee_total","fieldtype":"Currency","hidden":1,"in_list_view":1,"in_standard_filter":1,"label":"جمع کارمزد","no_copy":1,"options":"payer_currency","precision":"9","read_only":1},
   {"fieldname":"amended_from","fieldtype":"Link","hidden":1,"label":"Amended From","no_copy":1,"options":"SmartProcess Accounting Document","print_hide":1,"read_only":1}
  ],
@@ -53,7 +55,7 @@
  "links": [
   {"group":"Accounting","link_doctype":"SmartProcess Accounting Posting","link_fieldname":"source_document"}
  ],
- "modified": "2026-11-27 12:00:00.000000",
+ "modified": "2026-11-27 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "SmartProcess Accounting",
  "name": "SmartProcess Accounting Document",

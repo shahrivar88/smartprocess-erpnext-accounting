@@ -35,4 +35,9 @@ assert.equal(receiverRate(1, { fieldtype: "Float" }, { receiver_rate_is_weighted
 assert.ok(receiverRate(2.5, { fieldtype: "Float" }, { receiver_rate_is_weighted: 1 }).includes("ترکیبی وزنی"));
 assert.equal(receiverRate(null, { fieldtype: "Float" }, {}), "");
 
-console.log("operation_list: 9 tests passed");
+assert.equal(settings.formatters.payer_currency("", {}, { payer_is_mixed_currency: 1 }), "چندارزی");
+assert.equal(settings.formatters.receiver_currency("", {}, { receiver_is_mixed_currency: 1 }), "چندارزی");
+assert.equal(settings.formatters.payer_total_amount(0, { fieldtype: "Currency" }, { payer_is_mixed_currency: 1 }), "");
+assert.equal(settings.formatters.payer_exchange_rate(0, { fieldtype: "Float" }, { payer_is_mixed_currency: 1 }), "");
+
+console.log("operation_list: 13 tests passed");

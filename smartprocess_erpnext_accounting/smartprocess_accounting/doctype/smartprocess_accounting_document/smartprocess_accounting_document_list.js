@@ -27,12 +27,32 @@ frappe.listview_settings["SmartProcess Accounting Document"] = {
 			return frappe.format(value ?? 0, df, { inline: true }, doc);
 		},
 
+		payer_total_amount(value, df, doc) {
+			return doc.payer_is_mixed_currency ? "" : frappe.format(value, df, { inline: true }, doc);
+		},
+
+		receiver_total_amount(value, df, doc) {
+			return doc.receiver_is_mixed_currency ? "" : frappe.format(value, df, { inline: true }, doc);
+		},
+
+		payer_currency(value, df, doc) {
+			return doc.payer_is_mixed_currency ? "چندارزی" : (value || "");
+		},
+
+		receiver_currency(value, df, doc) {
+			return doc.receiver_is_mixed_currency ? "چندارزی" : (value || "");
+		},
+
 		payer_exchange_rate(value, df, doc) {
-			return spOperationList.rate(value, df, doc, doc.payer_rate_is_weighted);
+			return doc.payer_is_mixed_currency
+				? ""
+				: spOperationList.rate(value, df, doc, doc.payer_rate_is_weighted);
 		},
 
 		receiver_exchange_rate(value, df, doc) {
-			return spOperationList.rate(value, df, doc, doc.receiver_rate_is_weighted);
+			return doc.receiver_is_mixed_currency
+				? ""
+				: spOperationList.rate(value, df, doc, doc.receiver_rate_is_weighted);
 		},
 	},
 

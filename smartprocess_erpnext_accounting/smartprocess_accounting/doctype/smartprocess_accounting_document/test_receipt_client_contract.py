@@ -93,7 +93,12 @@ class TestReceiptClientContract(unittest.TestCase):
 			self.assertIsNotNone(df, fieldname)
 			self.assertEqual((df.in_list_view, df.in_standard_filter), (1, 1), fieldname)
 			self.assertEqual(df.read_only, 1, fieldname)
-		for fieldname in ("payer_rate_is_weighted", "receiver_rate_is_weighted"):
+		for fieldname in (
+			"payer_rate_is_weighted",
+			"receiver_rate_is_weighted",
+			"payer_is_mixed_currency",
+			"receiver_is_mixed_currency",
+		):
 			df = meta.get_field(fieldname)
 			self.assertEqual((df.fieldtype, df.hidden), ("Check", 1), fieldname)
 		self.assertIn("payment_fee_total", FORM_DIR.joinpath("smartprocess_accounting_document_list.js").read_text(encoding="utf-8"))

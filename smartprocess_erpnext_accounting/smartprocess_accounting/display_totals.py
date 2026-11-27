@@ -21,6 +21,8 @@ TOTAL_FIELDS = (
 	"receiver_currency",
 	"receiver_exchange_rate",
 	"receiver_rate_is_weighted",
+	"payer_is_mixed_currency",
+	"receiver_is_mixed_currency",
 	"payment_fee_total",
 )
 
@@ -42,17 +44,19 @@ def apply_display_totals(doc) -> None:
 	_put(doc, "payer_currency", payer["currency"])
 	_put(doc, "payer_exchange_rate", payer["rate"])
 	_put(doc, "payer_rate_is_weighted", 1 if payer["weighted"] else 0)
+	_put(doc, "payer_is_mixed_currency", 1 if payer["mixed"] else 0)
 	_put(doc, "receiver_total_amount", receiver["amount"])
 	_put(doc, "receiver_currency", receiver["currency"])
 	_put(doc, "receiver_exchange_rate", receiver["rate"])
 	_put(doc, "receiver_rate_is_weighted", 1 if receiver["weighted"] else 0)
+	_put(doc, "receiver_is_mixed_currency", 1 if receiver["mixed"] else 0)
 	_put(doc, "payment_fee_total", _fee_total(rows) if operation == "Payment" else "0")
 
 
 def _side(rows, side, company_currency, *, header, doc):
 	currencies = _currencies(rows, side)
 	if len(currencies) > 1:
-		return _empty_side()
+		return _empty_side(mixed=True)
 	if not currencies:
 		fallback = doc.get("receipt_payer_currency" if header else "receipt_credit_currency")
 		if fallback:
@@ -63,7 +67,7 @@ def _side(rows, side, company_currency, *, header, doc):
 	amount = _sum(_decimal(row.get(f"{side}_amount")) for row in rows)
 	base = _sum(_company_amount(row, side) for row in rows)
 	if currency == company_currency:
-		return {"amount": _text(amount) or "0", "currency": currency, "rate": "1", "weighted": False}
+		return {"amount": _text(amount) or "0", "currency": currency, "rate": "1", "weighted": False, "mixed": False}
 	if header:
 		rate = _decimal(doc.get("receipt_payer_exchange_rate"))
 		return {
@@ -71,6 +75,7 @@ def _side(rows, side, company_currency, *, header, doc):
 			"currency": currency,
 			"rate": _text(rate) if rate and rate > 0 else "0",
 			"weighted": False,
+			"mixed": False,
 		}
 	rates = {
 		rate
@@ -78,11 +83,17 @@ def _side(rows, side, company_currency, *, header, doc):
 		if rate is not None and rate > 0
 	}
 	if len(rates) == 1:
-		return {"amount": _text(amount), "currency": currency, "rate": _text(rates.pop()), "weighted": False}
+		return {
+			"amount": _text(amount) or "0",
+			"currency": currency,
+			"rate": _text(rates.pop()),
+			"weighted": False,
+			"mixed": False,
+		}
 	if amount > 0 and base > 0:
 		effective = (base / amount).quantize(Decimal("1").scaleb(-RATE_PLACES), rounding=ROUND_HALF_UP)
-		return {"amount": _text(amount) or "0", "currency": currency, "rate": _text(effective), "weighted": True}
-	return {"amount": "0", "currency": currency, "rate": "0", "weighted": False}
+		return {"amount": _text(amount) or "0", "currency": currency, "rate": _text(effective), "weighted": True, "mixed": False}
+	return {"amount": "0", "currency": currency, "rate": "0", "weighted": False, "mixed": False}
 
 
 def _currencies(rows, side) -> set[str]:
@@ -129,15 +140,20 @@ def _text(value: Decimal | None) -> str | None:
 	return text or "0"
 
 
-def _empty_side() -> dict:
-	return {"amount": "0", "currency": "", "rate": "0", "weighted": False}
+def _empty_side(*, mixed: bool = False) -> dict:
+	return {"amount": "0", "currency": "", "rate": "0", "weighted": False, "mixed": mixed}
 
 
 def _clear(doc) -> None:
 	for fieldname in TOTAL_FIELDS:
 		if fieldname in ("payer_currency", "receiver_currency"):
 			_put(doc, fieldname, "")
-		elif fieldname in ("payer_rate_is_weighted", "receiver_rate_is_weighted"):
+		elif fieldname in (
+			"payer_rate_is_weighted",
+			"receiver_rate_is_weighted",
+			"payer_is_mixed_currency",
+			"receiver_is_mixed_currency",
+		):
 			_put(doc, fieldname, 0)
 		else:
 			_put(doc, fieldname, "0")

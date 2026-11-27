@@ -124,6 +124,7 @@ class TestDisplayTotals(unittest.TestCase):
 		self.assertEqual(doc["payer_total_amount"], "0")
 		self.assertEqual(doc["receiver_total_amount"], "0")
 		self.assertEqual(doc["payer_exchange_rate"], "0")
+		self.assertEqual((doc["payer_is_mixed_currency"], doc["receiver_is_mixed_currency"]), (1, 1))
 
 	def test_non_flow_clears_every_total(self):
 		doc = Doc(operation_type="Currency Conversion", payer_total_amount="10", payment_fee_total="2")

@@ -22,6 +22,8 @@ FIELDS = (
 	"receiver_currency",
 	"receiver_exchange_rate",
 	"receiver_rate_is_weighted",
+	"payer_is_mixed_currency",
+	"receiver_is_mixed_currency",
 	"payment_fee_total",
 )
 
